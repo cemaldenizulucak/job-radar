@@ -1,0 +1,31 @@
+---
+description: Conventional commits, focused diffs, and files that must never be committed
+alwaysApply: true
+---
+
+# Git
+
+Use **conventional commits**. Subject in imperative, lowercase, no trailing period. One logical change per commit.
+
+Examples:
+
+```text
+feat: add saved search module
+fix: prevent duplicate notification
+refactor: extract job source adapter
+test: add search matcher tests
+docs: update architecture
+```
+
+Also valid: `chore:`, `style:`, `perf:`, `ci:`, `build:`.
+
+Keep commits **focused**. Do not mix feature work with unrelated formatting, dependency bumps, or docs unless they are required for that change.
+
+## Never commit
+
+- Secrets or credential files
+- Local env files (`.env`, `.env.local`, `.env.*` except committed `.env.example` with empty values)
+- Generated artifacts (`dist`, `build`, `coverage`, `.expo`, `node_modules`)
+- Service-role keys, source cookies, or dump files of `raw_payload`
+
+Do not update git config, skip hooks, or force-push unless the user explicitly asks. Do not commit unless the user asks.

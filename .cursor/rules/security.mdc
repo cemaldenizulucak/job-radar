@@ -1,0 +1,28 @@
+---
+description: Secrets, mobile vs API credentials, validation, and server-side authz
+alwaysApply: true
+---
+
+# Security
+
+- **Never commit secrets.** No API keys, JWTs, service-role keys, or source credentials in git. `.env` is gitignored; only empty `.env.example` placeholders.
+- **Never expose backend-only credentials to mobile.** Mobile may use public `API_BASE_URL` and Supabase anon key. Never ship `DATABASE_URL`, service role, OpenAI keys, or job-source credentials in Expo config or client bundles.
+- Use **environment variables** for secrets. Do not hardcode.
+- **Authentication and authorization are enforced server-side.** NestJS verifies Supabase JWTs and checks ownership. Do not trust client-sent `userId` as authorization.
+- Job feed, search CRUD, favorites, and applications must be scoped to the current user. Unknown job ids return **404**, not 403 (no catalog probing).
+- `raw_payload` and adapter debug fields are not sent on public GETs.
+
+## Untrusted input
+
+Validate **all** external input (HTTP bodies, query params) with Zod (`packages/validation` where shared).
+
+**Validate job-source data before storing it.** Adapter output is untrusted: schema-check, drop invalid items, never persist half-rows.
+
+Treat scraped/external content as untrusted: do not `eval`, do not inject HTML unsanitized into WebViews, do not follow source URLs as auth callbacks.
+
+```text
+❌ Insert adapter JSON straight into job_listings
+✅ Zod parse → normalize → upsert
+```
+
+Mobile never talks to job sources. Discovery, matching, and secrets stay on `apps/api`.

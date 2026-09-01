@@ -1,0 +1,27 @@
+---
+description: What to test for matching, duplicates, adapters, and mobile flows
+alwaysApply: true
+---
+
+# Testing
+
+Add tests for **business-critical logic**, not for trivial getters or framework wiring.
+
+Must have (API, Vitest):
+
+- **Search matching** — one listing, many saved searches; no match when criteria fail; inactive searches not used for fetch.
+- **Duplicate detection** — two source listings grouped; **neither row deleted**; ungrouped listing unchanged.
+- **Upsert identity** — same source + external id/url updates `last_seen_at`, does not duplicate the row; different sources stay two rows.
+- **Source adapters** — testable independently with fakes. Orchestrator tests use a mock adapter; they must not hit LinkedIn or Kariyer.net.
+
+Backend feature modules should have **unit tests** for services (matcher, duplicate detector, normalizer, orchestrator failure isolation). E2e covers authenticated searches/feed/favorites/applications when those endpoints exist.
+
+Mobile: **component/integration tests** for critical flows (tab filtering, duplicate indicator still showing both jobs, favorite, auth gate). Keep screens thin so hooks are testable.
+
+## Avoid
+
+- Tests that only assert implementation details (private method order, exact SQL, snapshot of whole Nest module graphs).
+- Tests that require real job-board network access.
+- Asserting that a duplicate listing was removed — that is a product bug.
+
+Prefer testing observable behavior: “All count is 1, Frontend and Angular tabs both include the job.”

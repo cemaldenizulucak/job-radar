@@ -1,0 +1,39 @@
+---
+description: JobRadar monorepo architecture, adapters, duplicates, and discovery
+alwaysApply: true
+---
+
+# Architecture
+
+Preserve the monorepo. Do not add new apps or move these roots.
+
+- `apps/mobile` — React Native + Expo (Expo Router). UI only talks to NestJS.
+- `apps/api` — NestJS backend. Owns discovery, matching, persistence, authz.
+- `packages/*` — truly shared code only (`types`, `validation`, `config`). No Nest modules, no React Native, no secrets.
+
+Use **feature-based** modules. Mobile: routes in `src/app`, behavior in `src/features`. API: one Nest module per feature (`searches`, `jobs`, `discovery`, `sources`, …).
+
+## Job sources
+
+Integrations use an **adapter** (`JobSourceAdapter` + `SourceRegistry`).
+
+```text
+❌ JobsService / mobile fetching LinkedIn HTML or Kariyer.net APIs
+✅ sources/adapters/* only; core pipeline calls the registry
+```
+
+Source-specific scraping or API logic must never leak into matching, duplicates, favorites, applications, or the mobile app. LinkedIn and Kariyer.net stay unimplemented until an access method is explicitly decided; stubs must `isEnabled() === false` (no network).
+
+## Data rules
+
+- Duplicate listings are **never** automatically deleted or merged away.
+- Duplicate relationships live in `duplicate_groups` / `duplicate_group_members`, not on `job_listings`.
+- One listing may match **many** saved searches (`job_search_matches`).
+- Favorites and application status are **per user**, never columns on the listing.
+- Feed visibility is via the current user’s matches (or favorite/application).
+
+## Scheduling
+
+Scheduled discovery runs **on the backend** (08:00 / 13:00 / 19:00). Do not use Expo background fetch as the source of truth. Mobile only `GET /v1/jobs`.
+
+Follow `docs/ARCHITECTURE.md`, `docs/DATABASE.md`, `docs/API.md`, `docs/PRD.md`.

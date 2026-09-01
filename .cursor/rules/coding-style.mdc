@@ -1,0 +1,31 @@
+---
+description: TypeScript style, layering, naming, and dependency discipline
+alwaysApply: true
+---
+
+# Coding style
+
+- TypeScript everywhere. `strict` stays on. **Avoid `any`** (and unjustified `as any`). Use `unknown` and narrow.
+- Prefer **explicit types** on public APIs: Nest controllers/DTOs, exported package types, adapter interfaces, React props for feature components.
+- Keep functions small and focused. One obvious job per function; extract when a block has its own name.
+- Meaningful names (`matchListingToSavedSearches`, not `process` / `data2`).
+- Do not modify unrelated files. No drive-by refactors, formatting-only churn, or extra docs unless asked.
+- Avoid premature abstractions. Two similar call sites can wait; do not add a generic “source engine” before a second real adapter exists.
+- Do not introduce dependencies without a clear need. PRD stack (Zustand, TanStack Query, Zod, etc.) is planned; do not add extra libraries for convenience.
+
+## Layering
+
+Separate **UI**, **business logic**, and **data access**.
+
+```text
+❌ Screen component upserts jobs and detects duplicates
+✅ Screen → query/hook → API; matcher/duplicate detector in Nest services
+```
+
+Mobile: TanStack Query for server state, Zustand for UI-only tab/filter state, RHF + Zod for forms. Shared Zod lives in `packages/validation`.
+
+API: ESM NestJS (`type: module`, NodeNext). Keep existing `.js` import specifiers in `apps/api`. Controllers stay thin; services own rules; adapters own source I/O.
+
+## Shared code
+
+Put a type or schema in `packages/*` only if **both** api and mobile need it. API-internal types stay in `apps/api`.
