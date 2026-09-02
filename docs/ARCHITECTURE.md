@@ -8,6 +8,7 @@ Related documents:
 - [DATABASE.md](./DATABASE.md) — entities and relationships
 - [API.md](./API.md) — HTTP API surface
 - [ROADMAP.md](./ROADMAP.md) — implementation phases
+- [SOURCE_INTEGRATIONS.md](./SOURCE_INTEGRATIONS.md) — job-source providers
 
 ---
 
@@ -109,7 +110,7 @@ Architectural style:
 └──────────────────────────┘
 ```
 
-**Mobile never talks to job sources.** It only talks to the NestJS API.
+**Mobile never talks to job sources.** It only talks to the NestJS API (plus Supabase Auth for login/session). Saved searches, jobs, favorites, applications, notifications, and profiles go through Nest.
 
 **Supabase is infrastructure**, not the application layer: PostgreSQL, Auth, and later optional Realtime. All job-discovery business rules run inside NestJS.
 
@@ -234,15 +235,28 @@ Core job logic must not contain LinkedIn- or Kariyer.net-specific HTTP, HTML, or
 
 ```text
 JobSourceAdapter
-  sourceId: SourceId          # 'linkedin' | 'kariyer_net' | future ids
+  sourceId: SourceId
   displayName: string
-  isEnabled(): boolean        # false until access method is decided
-  search(query): Promise<SourceSearchResult>
+  capabilities:
+    supportsKeywordSearch
+    supportsLocation
+    supportsRemoteFilter
+    supportsExperienceLevel
+  isEnabled(): boolean
+  search(query: SourceSearchQuery): Promise<SourceSearchResult>
 ```
 
-`SourceSearchQuery` is already normalized (keywords, technologies, locations, work models). Adapters translate that into whatever the source needs. They return raw source items plus a stable external identity when available.
+`SourceSearchQuery` is already normalized (keywords, technologies, locations, work models, experience levels). Adapters translate that into whatever the source needs.
 
-A **normalizer** (owned by `DiscoveryModule` or `SourcesModule`, not by individual adapters) maps raw items into a `JobListingDraft` and validates with Zod before persistence.
+`SourceSearchResult` is `{ sourceId, jobs }` where each `SourceJobRaw` includes:
+
+- source-specific `sourceJobId`
+- `canonicalUrl`
+- `title`, `companyName`
+- optional `location`, `workModel`, `description`, `publishedAt`
+- optional `rawMetadata` for adapter-only debug (not returned on public GETs; the normalizer does not persist it on job rows)
+
+A **normalizer** (owned by `DiscoveryModule` / `SourcesModule`, not by individual adapters) maps raw items into a `JobListingDraft` / `NormalizedJob` and validates before persistence.
 
 ### 6.2 Registry
 
@@ -258,14 +272,11 @@ Adding a source later means:
 
 Both ids belong in the source catalog so the product model is complete.
 
-Both adapters are **disabled / unimplemented**. They must not scrape, call unofficial APIs, or store credentials in this phase.
+**LinkedIn** uses a provider behind `JobSourceAdapter`. Default `LINKEDIN_PROVIDER=disabled` contributes zero jobs and does not abort discovery. `mock` serves development fixtures. `live` uses `LinkedInWebProvider` (low-volume public `/jobs/search/` HTML) and never falls back to mock fixtures. See [SOURCE_INTEGRATIONS.md](./SOURCE_INTEGRATIONS.md).
 
-Until an access method is approved, `search()` either:
+**Kariyer.net** uses a provider behind `JobSourceAdapter`. Default `KARIYER_NET_PROVIDER=mock` serves development fixtures. `live` uses `KariyerNetWebProvider` (low-volume public listing HTML) and never falls back to mock fixtures. See [SOURCE_INTEGRATIONS.md](./SOURCE_INTEGRATIONS.md).
 
-- is never invoked because `isEnabled()` is false, or
-- fails closed with a structured “source unavailable” result that the orchestrator records on the discovery run
-
-A development **mock adapter** may be added in a later implementation phase to exercise the pipeline. It is not a production source and is not in this documentation phase.
+When a real access method is added, keep the same `JobSourceAdapter` surface. Source-specific HTTP, cookies, and credentials stay inside `sources/kariyer-net/*` (or `sources/adapters/*`) and environment variables — never in mobile or public GET responses.
 
 ---
 
@@ -273,13 +284,13 @@ A development **mock adapter** may be added in a later implementation phase to e
 
 Scheduled processing happens only on the backend.
 
-Default cadence (configurable later): **08:00, 13:00, 19:00** in the user’s timezone (see open decisions). The phone being closed or offline must not stop discovery.
+Default cadence: **every 2 hours** (`0 */2 * * *`) in **Europe/Istanbul**. Configurable via `DISCOVERY_INTERVAL_HOURS`. The phone being closed or offline must not stop discovery.
 
 Pipeline, aligned with the PRD:
 
 ```text
-1. Scheduler starts a discovery run
-2. Load active saved searches (all users)
+1. Scheduler starts a discovery run every 2 hours, or a saved-search create/update triggers an immediate run for that search
+2. Load the target saved searches (all active searches for scheduled runs; one search for immediate runs)
 3. For each search, load selected sources
 4. For each enabled adapter, query with the search criteria
 5. Validate and normalize source payloads
@@ -408,12 +419,23 @@ Business rules (matching, duplicates, scheduling) stay on the server. The app do
 
 ## 11. Auth, secrets, configuration
 
-Recommended pattern (decision still open — see §14):
+Recommended implemented pattern:
 
-1. User signs up / logs in via **Supabase Auth**.
-2. Mobile sends `Authorization: Bearer <access_token>` to NestJS.
-3. `AuthGuard` verifies the JWT (JWKS) and loads `profiles`.
-4. NestJS uses a **server-only** database connection (service role or direct Postgres URL).
+```text
+Mobile (Supabase Auth)
+  ↓ Authorization: Bearer <access_token>
+NestJS AuthGuard
+  ↓ verified user id on request
+Feature services
+  ↓ service-role Supabase client
+PostgreSQL
+```
+
+1. User signs up / logs in via **Supabase Auth** in the mobile app.
+2. The shared mobile API client attaches `Authorization: Bearer <access_token>`.
+3. `AuthGuard` verifies the JWT (`SUPABASE_JWT_SECRET` HS256 when configured, otherwise `supabase.auth.getUser`).
+4. Controllers read the authenticated user from request context. Client-sent `userId` is ignored.
+5. NestJS uses the **server-only** service-role key. Mobile never receives it.
 
 The mobile app must never receive:
 
@@ -422,11 +444,11 @@ The mobile app must never receive:
 - OpenAI keys
 - Adapter implementation details
 
-Required env groups (names illustrative; files not created in this phase):
+Required env groups:
 
-- API: `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET` or JWKS URL, `PORT`
-- Mobile: public `API_BASE_URL`, public Supabase URL + anon key (anon key is not a secret in the Supabase model, but still not a service role)
-- Later: source credentials, `OPENAI_API_KEY`, Expo push credentials
+- API: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, optional `SUPABASE_JWT_SECRET`, `JOB_NEW_WINDOW_HOURS` (default 24), `ENABLE_DEV_ENDPOINTS` (default `false`), `PORT`
+- Mobile: public `EXPO_PUBLIC_API_BASE_URL`, public Supabase URL + publishable/anon key
+- Later: source credentials, `OPENAI_API_KEY`
 
 `.env` remains gitignored. `.env.example` may be added in the foundation phase with empty placeholders.
 
@@ -438,9 +460,11 @@ Discovery **must** be a backend concern.
 
 Recommended MVP approach: NestJS in-process scheduler (`DiscoveryScheduler`) invoking `DiscoveryOrchestrator`.
 
+Production cron (Europe/Istanbul): `0 */2 * * *` (`DISCOVERY_INTERVAL_HOURS=2`). Enable with `DISCOVERY_SCHEDULER_ENABLED=true`. Local default is `false`. See [SCHEDULER.md](./SCHEDULER.md).
+
 Implications:
 
-- The API process must be **always on**. Serverless sleep would skip 08:00 / 13:00 / 19:00.
+- The API process must be **always on**. Serverless sleep would skip the interval.
 - Hosting choice (Fly, Railway, Render, VPS, NestJS Mau, etc.) is deferred.
 - Alternatives if the API cannot stay warm: Postgres `pg_cron`, Supabase scheduled functions, or a queue worker. Those are later decisions; they must still call into the same orchestrator, not into mobile.
 

@@ -96,7 +96,7 @@ Owned by the user application row, not the listing.
 
 ### `notification_type`
 
-MVP: `new_jobs_digest`
+MVP: `JOB_DISCOVERY` (digest of new matches from a discovery run)
 
 Future: `high_relevance_digest` (AI)
 

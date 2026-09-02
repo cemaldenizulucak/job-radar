@@ -1,0 +1,199 @@
+import { z } from 'zod';
+
+import { ApiClientError, apiGet, apiPatch, apiPost, apiDelete } from '@/lib/api-client';
+
+import type { SavedSearch, SavedSearchWriteInput, SearchSourceId, WorkType } from '../types/search.types';
+import {
+  savedSearchWriteSchema,
+  SEARCH_SOURCE_IDS,
+  WORK_TYPES,
+} from '../validation/search.schema';
+import type { SearchDiscoveryResult } from '../utils/search-write';
+
+export class SavedSearchServiceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SavedSearchServiceError';
+  }
+}
+
+export type SavedSearchWriteResult = {
+  search: SavedSearch;
+  discovery: SearchDiscoveryResult;
+};
+
+const savedSearchApiSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  name: z.string(),
+  isActive: z.boolean(),
+  keywords: z.array(z.string()),
+  technologies: z.array(z.string()),
+  locations: z.array(z.string()),
+  workTypes: z.array(z.string()),
+  experienceLevels: z.array(z.string()),
+  sources: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const searchDiscoveryApiSchema = z.object({
+  status: z.enum(['completed', 'partial', 'failed', 'skipped']),
+  jobsFetched: z.number(),
+  matchesCreated: z.number(),
+});
+
+const savedSearchWriteApiSchema = z.object({
+  search: savedSearchApiSchema,
+  discovery: searchDiscoveryApiSchema,
+});
+
+const savedSearchListSchema = z.object({
+  items: z.array(savedSearchApiSchema),
+});
+
+function isSearchSourceId(value: string): value is SearchSourceId {
+  return (SEARCH_SOURCE_IDS as readonly string[]).includes(value);
+}
+
+function isWorkType(value: string): value is WorkType {
+  return (WORK_TYPES as readonly string[]).includes(value);
+}
+
+function mapSearch(row: z.infer<typeof savedSearchApiSchema>): SavedSearch {
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    isActive: row.isActive,
+    keywords: row.keywords,
+    technologies: row.technologies,
+    locations: row.locations,
+    workTypes: row.workTypes.filter(isWorkType),
+    experienceLevels: row.experienceLevels,
+    sources: row.sources.filter(isSearchSourceId),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mapWriteResult(
+  row: z.infer<typeof savedSearchWriteApiSchema>,
+): SavedSearchWriteResult {
+  return {
+    search: mapSearch(row.search),
+    discovery: row.discovery,
+  };
+}
+
+function toServiceError(error: unknown): SavedSearchServiceError {
+  if (error instanceof SavedSearchServiceError) {
+    return error;
+  }
+
+  if (error instanceof ApiClientError) {
+    return new SavedSearchServiceError(error.message);
+  }
+
+  if (error instanceof z.ZodError) {
+    return new SavedSearchServiceError('Unexpected response from the searches API.');
+  }
+
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return new SavedSearchServiceError(error.message);
+  }
+
+  return new SavedSearchServiceError('Couldn’t update this search.');
+}
+
+export async function listSavedSearches(): Promise<SavedSearch[]> {
+  try {
+    return savedSearchListSchema
+      .parse(await apiGet('/v1/searches'))
+      .items.map(mapSearch);
+  } catch (error) {
+    throw toServiceError(error);
+  }
+}
+
+export async function getSavedSearch(id: string): Promise<SavedSearch> {
+  try {
+    return mapSearch(
+      savedSearchApiSchema.parse(
+        await apiGet(`/v1/searches/${encodeURIComponent(id)}`),
+      ),
+    );
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 404) {
+      throw new SavedSearchServiceError('Search not found.');
+    }
+
+    throw toServiceError(error);
+  }
+}
+
+export async function createSavedSearch(
+  input: SavedSearchWriteInput,
+): Promise<SavedSearchWriteResult> {
+  try {
+    const parsed = savedSearchWriteSchema.parse(input);
+    return mapWriteResult(
+      savedSearchWriteApiSchema.parse(await apiPost('/v1/searches', parsed)),
+    );
+  } catch (error) {
+    throw toServiceError(error);
+  }
+}
+
+export async function updateSavedSearch(
+  id: string,
+  input: SavedSearchWriteInput,
+): Promise<SavedSearchWriteResult> {
+  try {
+    const parsed = savedSearchWriteSchema.parse(input);
+    return mapWriteResult(
+      savedSearchWriteApiSchema.parse(
+        await apiPatch(`/v1/searches/${encodeURIComponent(id)}`, parsed),
+      ),
+    );
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 404) {
+      throw new SavedSearchServiceError('Search not found.');
+    }
+
+    throw toServiceError(error);
+  }
+}
+
+export async function toggleSavedSearchActive(
+  id: string,
+  isActive: boolean,
+): Promise<SavedSearchWriteResult> {
+  try {
+    return mapWriteResult(
+      savedSearchWriteApiSchema.parse(
+        await apiPatch(`/v1/searches/${encodeURIComponent(id)}/toggle`, {
+          isActive,
+        }),
+      ),
+    );
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 404) {
+      throw new SavedSearchServiceError('Search not found.');
+    }
+
+    throw toServiceError(error);
+  }
+}
+
+export async function deleteSavedSearch(id: string): Promise<void> {
+  try {
+    await apiDelete(`/v1/searches/${encodeURIComponent(id)}`);
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 404) {
+      throw new SavedSearchServiceError('Search not found.');
+    }
+
+    throw toServiceError(error);
+  }
+}

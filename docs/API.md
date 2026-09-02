@@ -1,14 +1,64 @@
 # JobRadar — HTTP API
 
-Public API served by `apps/api` (NestJS). Mobile is the only planned client for MVP. This is a contract proposal; endpoints are not implemented in this phase.
+Public API served by `apps/api` (NestJS). Mobile is the only planned client for MVP.
 
-Base path: `/v1`
+Auth: `Authorization: Bearer <Supabase access token>` on all routes except the liveness root and explicitly marked temporary development endpoints.
 
-Auth: `Authorization: Bearer <Supabase access token>` on all routes except health and auth bootstrap (if any).
+```text
+Mobile
+  ↓ Bearer JWT
+NestJS
+  ↓ service role
+Supabase Postgres
+```
+
+The API derives the user from the token. Query/body `userId` is not trusted on protected routes.
 
 Content type: `application/json`.
 
-Errors: NestJS-style body `{ "statusCode": number, "message": string | string[], "error": string }` plus a stable `code` string when we implement (e.g. `SOURCE_DISABLED`).
+Errors: NestJS-style body `{ "statusCode": number, "message": string | string[], "error": string }`.
+
+### Implemented MVP routes
+
+Liveness (no JWT):
+
+| Method | Path |
+| --- | --- |
+| GET | `/` |
+
+Protected (JWT required). The user is taken from the token; client `userId` is ignored.
+
+| Method | Path |
+| --- | --- |
+| GET | `/v1/jobs` |
+| GET | `/v1/jobs/tabs` |
+| GET | `/v1/jobs/:id` |
+| PATCH | `/v1/jobs/:id/seen` |
+| GET/POST/DELETE | `/v1/favorites`, `/v1/favorites/:jobId` |
+| GET/POST/PATCH/DELETE | `/v1/applications`, `/v1/applications/:id` |
+| GET/PATCH | `/v1/notifications`, `/v1/notifications/:id/read` |
+| GET/PATCH | `/v1/profiles` |
+| POST/DELETE | `/v1/push-tokens` |
+| GET/POST/PATCH/DELETE | `/v1/searches`, `/v1/searches/:id`, `/v1/searches/:id/toggle` |
+
+Temporary development helpers (not used by mobile). Disabled unless `ENABLE_DEV_ENDPOINTS=true`. When disabled they return **404** and must stay off in production.
+
+- `POST /v1/discovery/run`
+- `POST /v1/scheduler/run`
+- `POST /v1/notifications/test`
+
+Job feed fields:
+
+- `isSeen` — true after `PATCH /v1/jobs/:id/seen` for this user (`user_job_states`).
+- `isNew` — true when the user's first `job_search_matches.matched_at` (or `discovered_at` if there is no match row) falls within `JOB_NEW_WINDOW_HOURS` (default 24) **and** the job is not seen.
+
+`GET /v1/jobs?matchedOnly=true` returns only listings that match at least one of the current user's saved searches. `matchedOnly=false` returns active jobs in the source max-age window (default 30 days) and includes `isMatched` so unmatched collected jobs stay visible. Mobile Jobs defaults to Matched (`matchedOnly=true`) and can switch to All Results.
+
+Required SQL for mark-seen: [USER_JOB_STATES.sql](./USER_JOB_STATES.sql).
+
+---
+
+The remainder of this document is the original contract proposal. Live paths in the table above win when they differ.
 
 ---
 
@@ -27,15 +77,16 @@ Errors: NestJS-style body `{ "statusCode": number, "message": string | string[],
 
 | Area | Prefix | Module |
 | --- | --- | --- |
-| Health | `/health` | HealthModule |
-| Current user | `/v1/me` | UsersModule |
+| Health | `/` | AppModule liveness |
 | Saved searches | `/v1/searches` | SearchesModule |
 | Jobs feed + detail | `/v1/jobs` | JobsModule |
 | Favorites | `/v1/favorites` | FavoritesModule |
 | Applications | `/v1/applications` | ApplicationsModule |
 | Notifications | `/v1/notifications` | NotificationsModule |
-| Devices | `/v1/devices` | NotificationsModule |
-| Internal discovery | `/v1/internal/discovery` | DiscoveryModule |
+| Push tokens | `/v1/push-tokens` | PushTokensModule |
+| Profiles | `/v1/profiles` | ProfilesModule |
+| Temporary discovery | `/v1/discovery` | DiscoveryModule (`ENABLE_DEV_ENDPOINTS`) |
+| Temporary scheduler | `/v1/scheduler` | SchedulerModule (`ENABLE_DEV_ENDPOINTS`) |
 
 ---
 
@@ -60,11 +111,13 @@ Types will live in `packages/types`. Fields below are logical.
 | `publishedAt` | nullable |
 | `firstDiscoveredAt` | |
 | `canonicalUrl` | |
-| `matchedSearchIds` | One or more saved search UUIDs |
+| `matchedSearchIds` | Saved search UUIDs for the current user; empty when unmatched |
+| `isMatched` | `true` when `matchedSearchIds` is non-empty |
 | `duplicateGroupSize` | `1` if ungrouped; `N` if related listings exist |
 | `isFavorite` | Current user |
 | `applicationStatus` | Current user, nullable if not tracking |
-| `isNew` | Current user |
+| `isNew` | Current user; false once seen |
+| `isSeen` | Current user; persisted in `user_job_states` |
 | `relevanceScore` | nullable; always null in MVP |
 
 ### `JobDetail` extends list item
@@ -148,9 +201,26 @@ List current user’s searches, newest first.
 
 #### `POST /v1/searches`
 
-Body: `name`, `keywords`, `technologies`, `locations`, `workModels`, `sourceIds`, optional `isActive` (default true).
+Body: `name`, `keywords`, `technologies`, `locations`, `workTypes`, `sources`, optional `isActive` (default true).
 
-Validate with shared Zod. `sourceIds` must be non-empty and members of the catalog. Unknown sources are rejected. Disabled-but-catalogued sources (LinkedIn, Kariyer.net) **are allowed on the search** so the user can express intent; discovery will skip them until adapters are enabled.
+Validate with shared Zod. `sources` must be non-empty and members of the catalog. Unknown sources are rejected. Disabled-but-catalogued sources (LinkedIn, Kariyer.net) **are allowed on the search** so the user can express intent; discovery will skip them until adapters are enabled.
+
+If `isActive` is true, the API runs discovery **for that saved search only** (LinkedIn and Kariyer.net according to `sources`) before returning. Other users’ searches are not scanned. Source failures do not roll back the created search.
+
+Response:
+
+```json
+{
+  "search": { "id": "...", "name": "angular", "isActive": true },
+  "discovery": {
+    "status": "completed",
+    "jobsFetched": 12,
+    "matchesCreated": 4
+  }
+}
+```
+
+`discovery.status` is `completed`, `partial`, `failed`, or `skipped` (inactive search). Mobile waits for this response so it knows the initial scan finished.
 
 #### `GET /v1/searches/:id`
 
@@ -158,7 +228,13 @@ Validate with shared Zod. `sourceIds` must be non-empty and members of the catal
 
 #### `PATCH /v1/searches/:id`
 
-Partial update of the same fields as create.
+Full replacement of the same fields as create. Response shape matches create (`search` + `discovery`).
+
+Immediate discovery runs when the search stays (or becomes) active and any of these change: `keywords`, `technologies`, `locations`, `workTypes`, `experienceLevels`, `sources`. Activating a paused search also runs discovery. Renaming only, or pausing a search, does not rescan.
+
+#### `PATCH /v1/searches/:id/toggle`
+
+Body: `{ "isActive": boolean }`. Same `{ search, discovery }` response. Activating triggers discovery; pausing does not.
 
 #### `DELETE /v1/searches/:id`
 
@@ -178,13 +254,14 @@ Query:
 | --- | --- |
 | `sourceId` | Filter to one source; omit or `all` for every source |
 | `savedSearchId` | Filter to one saved search tab |
+| `matchedOnly` | `true` = only jobs matched to the current user's saved searches; `false` = all active jobs in the 30-day window |
 | `q` | Optional text filter on title/company (later; not required for MVP) |
 | `cursor` | Opaque pagination cursor |
 | `limit` | Default 20, max 50 |
 
-`sourceId` and `savedSearchId` compose: a listing must match the user, and both filters if present.
+`sourceId` and `savedSearchId` compose. With `matchedOnly=true`, a listing must match the user, and both filters if present. With `matchedOnly=false`, unmatched collected jobs are included; a `savedSearchId` still scopes to that search's matches.
 
-Sort: `first_discovered_at DESC` (newest discovered first). Alternative sorts (published date, relevance) are later.
+Sort: `published_at DESC` (unknown dates last), then `discovered_at DESC`.
 
 Response:
 
@@ -209,9 +286,11 @@ Includes `matchedSearches` (this user only) and `duplicateJobs` (siblings; each 
 
 There is **no** endpoint that removes a listing because a duplicate exists.
 
-#### `POST /v1/jobs/:id/view` (optional MVP)
+#### `PATCH /v1/jobs/:id/seen`
 
-Marks `is_new` false for this user. Can be folded into GET detail instead. Decision later.
+Persists `user_job_states.seen_at` for the current user. Returns the same `JobDetail` with `isSeen: true` and `isNew: false`. Unknown ids are 404.
+
+Mobile calls this after Job Detail loads successfully. The NEW badge stays until this write succeeds.
 
 ---
 
@@ -277,11 +356,19 @@ Unregister.
 
 Not called by the mobile app.
 
-#### `POST /v1/internal/discovery/run`
+#### `POST /v1/discovery/run`
 
-Protected by a server secret or admin-only auth (mechanism later). Starts one discovery run asynchronously or synchronously (decision later).
+Returns a `DiscoveryRunSummary`, including Kariyer.net rolling-collection fields:
 
-Response: `{ discoveryRunId, status }`.
+- `kariyerNetPagesFetched`
+- `kariyerNetJobsCollected`
+- `stopReason` (`max_age` | `no_results` | `max_pages` | `blocked_after_success` | `null`)
+
+`blocked_after_success` means a later page was blocked after at least one successful page; accumulated jobs were kept.
+
+#### `POST /v1/scheduler/run`
+
+Unavailable (404) unless `ENABLE_DEV_ENDPOINTS=true`. Default is disabled. Do not enable in production.
 
 Used for local testing and as a hook if an external cron pings the API. The production path is still the **in-process scheduler**.
 
@@ -331,10 +418,10 @@ Adapter output is validated with a **separate** Zod schema (`SourceJobRaw`) befo
 
 ## 8. Notifications to mobile behavior
 
-Push payload (later) should be enough to open the Jobs tab:
+Push payload is enough to open the Jobs tab:
 
 ```text
-{ "type": "new_jobs_digest", "discoveryRunId": "...", "jobCount": 5 }
+{ "type": "JOB_DISCOVERY", "route": "/jobs" }
 ```
 
 The listing data is always loaded via `GET /v1/jobs`, not embedded in the push.

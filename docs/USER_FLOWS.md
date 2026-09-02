@@ -243,14 +243,14 @@ User taps **Create search**.
    - Work models (optional; empty means any)
    - Sources: at least one of LinkedIn, Kariyer.net (catalog sources are selectable even if adapters are not implemented yet)
 3. User leaves **Active** on (default `isActive: true`).
-4. User taps **Save**.
-5. Client validates with shared Zod (name required, `sourceIds` non-empty, known source ids only).
-6. Mobile `POST /v1/searches`.
-7. API persists `saved_searches` and `saved_search_sources`.
-8. App returns to **Search detail** or **Searches list** showing the new search.
-9. Jobs **saved-search tabs** gain a new clickable tab (count 0 until matches exist).
+4. User taps **Create search**.
+5. Client validates with shared Zod (name required, `sources` non-empty, known source ids only). Duplicate taps are ignored while the request is in flight.
+6. Mobile `POST /v1/searches` and shows **Searching LinkedIn and Kariyer.net...**
+7. API persists `saved_searches`, then runs backend discovery **for that search only** (same pipeline as the 2-hour scheduler).
+8. When discovery finishes, the app opens **Jobs** filtered to the new search and refreshes counts.
+9. If a source could not be scanned, the search is still kept and the app shows: “Search saved. Some sources could not be scanned right now.”
 
-The new search is included in the **next** backend discovery run. Creating a search does **not** scrape sources on the device and does **not** require a manual “Run now” for MVP.
+Scheduled discovery continues every 2 hours for all active searches. Creating a search does **not** scrape sources on the device and does **not** require `POST /v1/discovery/run`.
 
 ### Alternative flow
 
