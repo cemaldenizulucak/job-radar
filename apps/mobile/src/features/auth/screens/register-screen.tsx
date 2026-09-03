@@ -6,7 +6,6 @@ import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
-import { updateProfile } from '@/features/profile/services/profile.service';
 import { useTheme } from '@/hooks/use-theme';
 
 import { AuthScreenLayout } from '../components/auth-screen-layout';
@@ -34,8 +33,6 @@ export function RegisterScreen() {
       name: '',
       email: '',
       password: '',
-      country: '',
-      city: '',
     },
   });
 
@@ -52,16 +49,6 @@ export function RegisterScreen() {
 
       if (!useAuthStore.getState().isAuthenticated) {
         setConfirmationMessage(authCopy.confirmation);
-        return;
-      }
-
-      try {
-        await updateProfile({
-          country: values.country.trim(),
-          city: values.city.trim() || null,
-        });
-      } catch {
-        // Location setup after login still collects this if the patch fails.
       }
     } catch (error) {
       setAuthError(getAuthErrorMessage(error, 'signUp'));
@@ -121,38 +108,6 @@ export function RegisterScreen() {
               onBlur={onBlur}
               onChangeText={onChange}
               error={errors.password?.message}
-            />
-          )}
-        />
-        <Controller
-          control={control}
-          name="country"
-          render={({ field: { onChange, onBlur, value } }) => (
-            <AuthTextField
-              label={authCopy.country}
-              placeholder={authCopy.countryPlaceholder}
-              autoCapitalize="words"
-              textContentType="countryName"
-              value={value}
-              onBlur={onBlur}
-              onChangeText={onChange}
-              error={errors.country?.message}
-            />
-          )}
-        />
-        <Controller
-          control={control}
-          name="city"
-          render={({ field: { onChange, onBlur, value } }) => (
-            <AuthTextField
-              label={authCopy.city}
-              placeholder={authCopy.cityPlaceholder}
-              autoCapitalize="words"
-              textContentType="addressCity"
-              value={value}
-              onBlur={onBlur}
-              onChangeText={onChange}
-              error={errors.city?.message}
             />
           )}
         />

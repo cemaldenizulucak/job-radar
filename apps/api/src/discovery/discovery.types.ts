@@ -11,6 +11,7 @@ export type ImmediateDiscoveryResult = {
 };
 
 export type DiscoveryRunSummary = {
+  usersProcessed: number;
   searchesProcessed: number;
   jobsFetched: number;
   jobsInserted: number;
@@ -28,6 +29,7 @@ export type DiscoveryRunSummary = {
 };
 
 export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
+  usersProcessed: 0,
   searchesProcessed: 0,
   jobsFetched: 0,
   jobsInserted: 0,

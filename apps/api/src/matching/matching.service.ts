@@ -1,11 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 
 import { normalizeForSearch } from '../common/normalize-text.js';
 import {
   jobLocationMatchResult,
-  resolveEffectiveSearchLocation,
-  type ProfileLocation,
+  resolveSavedSearchLocation,
 } from '../common/search-location.js';
+import { LocationsService } from '../locations/locations.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { logMatchDecision } from './matching-dev-log.js';
 import { jobSearchableText, queryAppearsIn } from './match-text.js';
@@ -20,7 +20,7 @@ import type {
  * Profession-agnostic matching.
  *
  * Keywords (and optional technologies) are OR'd against searchable job text.
- * Location / source / work model / experience remain optional filters.
+ * Empty optional filters never reject. Work model is never a match criterion.
  * Score is for sorting only and never excludes a textual match.
  */
 export const MATCH_SCORE = {
@@ -34,20 +34,19 @@ export const MATCH_SCORE_THRESHOLD = 0;
 
 @Injectable()
 export class MatchingService {
+  constructor(
+    @Optional() private readonly locationsService: LocationsService | null = null,
+  ) {}
+
   matchJobsToSearches(
     jobs: readonly MatchableJob[],
     searches: readonly SavedSearch[],
-    profilesByUserId?: ReadonlyMap<string, ProfileLocation>,
   ): JobSearchMatch[] {
     const matches: JobSearchMatch[] = [];
 
     for (const job of jobs) {
       for (const search of searches) {
-        const decision = this.evaluateMatch(
-          job,
-          search,
-          profilesByUserId?.get(search.userId),
-        );
+        const decision = this.evaluateMatch(job, search);
         if (decision.matched) {
           matches.push({
             jobId: job.id,
@@ -60,35 +59,26 @@ export class MatchingService {
     return matches;
   }
 
-  jobMatchesSearch(
-    job: MatchableJob,
-    search: SavedSearch,
-    profile?: ProfileLocation | null,
-  ): boolean {
-    return this.evaluateMatch(job, search, profile).matched;
+  jobMatchesSearch(job: MatchableJob, search: SavedSearch): boolean {
+    return this.evaluateMatch(job, search).matched;
   }
 
-  evaluateMatch(
-    job: MatchableJob,
-    search: SavedSearch,
-    profile?: ProfileLocation | null,
-  ): MatchDecision {
+  evaluateMatch(job: MatchableJob, search: SavedSearch): MatchDecision {
     const terms = collectSearchTerms(search);
     const searchable = jobSearchableText(job);
     const keyword = this.keywordResult(searchable, terms);
     const titleMatch = fieldContainsAny(job.title, terms);
     const descriptionMatch = fieldContainsAny(job.description ?? '', terms);
-    const location = this.locationResult(job, search, profile);
+    const location = this.locationResult(job, search);
     const technology = this.optionalTagResult(job, search);
     const experience = this.experienceResult(job, search);
-    const workModel = this.workModelResult(job, search);
+    const workModel = this.workModelResult();
     const reasons = rejectionReasons({
       isActive: search.isActive,
       sourceAllowed: this.matchesSources(job, search),
       keyword,
       location,
       experience,
-      workModel,
     });
     const matched = reasons.length === 0;
     const score = matched ? scoreTextMatch(job, terms) : 0;
@@ -176,25 +166,20 @@ export class MatchingService {
   private locationResult(
     job: MatchableJob,
     search: SavedSearch,
-    profile?: ProfileLocation | null,
   ): MatchFieldResult {
-    const resolved = resolveEffectiveSearchLocation(search.locations, profile);
-    return jobLocationMatchResult(job.location, resolved);
+    const aliases = search.countryCode
+      ? (this.locationsService?.getCachedSubdivisionNames(search.countryCode) ??
+        [])
+      : [];
+
+    return jobLocationMatchResult(
+      job.location,
+      resolveSavedSearchLocation(search, aliases),
+    );
   }
 
-  private workModelResult(
-    job: MatchableJob,
-    search: SavedSearch,
-  ): MatchFieldResult {
-    if (search.workTypes.length === 0) {
-      return 'skipped';
-    }
-
-    if (!job.workModel || job.workModel === 'unknown') {
-      return 'unknown';
-    }
-
-    return search.workTypes.includes(job.workModel) ? 'pass' : 'fail';
+  private workModelResult(): MatchFieldResult {
+    return 'skipped';
   }
 
   private experienceResult(
@@ -277,7 +262,6 @@ function rejectionReasons(input: {
   keyword: MatchFieldResult;
   location: MatchFieldResult;
   experience: MatchFieldResult;
-  workModel: MatchFieldResult;
 }): string[] {
   const reasons: string[] = [];
 
@@ -299,10 +283,6 @@ function rejectionReasons(input: {
 
   if (input.experience === 'fail') {
     reasons.push('experience conflict');
-  }
-
-  if (input.workModel === 'fail') {
-    reasons.push('work model conflict');
   }
 
   return reasons;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SavedSearch, SavedSearchWriteInput } from '../types/search.types';
+import { formValuesToWriteInput } from '../validation/search.schema';
 import {
   createSubmitLock,
   DELETE_SAVED_SEARCH_MESSAGE,
@@ -20,6 +21,10 @@ function search(overrides: Partial<SavedSearch> = {}): SavedSearch {
     keywords: ['angular'],
     technologies: [],
     locations: ['istanbul'],
+    countryCode: null,
+    countryName: null,
+    subdivisionCode: null,
+    subdivisionName: null,
     workTypes: [],
     experienceLevels: [],
     sources: ['linkedin', 'kariyer_net'],
@@ -40,6 +45,10 @@ function writeInput(
     keywords: ['angular'],
     technologies: [],
     locations: ['istanbul'],
+    countryCode: null,
+    countryName: null,
+    subdivisionCode: null,
+    subdivisionName: null,
     workTypes: [],
     experienceLevels: [],
     sources: ['linkedin', 'kariyer_net'],
@@ -83,6 +92,51 @@ describe('search write helpers', () => {
   });
 });
 
+describe('formValuesToWriteInput', () => {
+  it('derives locations from optional country and subdivision dropdowns', () => {
+    expect(
+      formValuesToWriteInput({
+        name: 'Frontend',
+        keywords: 'Frontend Developer',
+        technologies: '',
+        countryCode: 'TR',
+        countryName: 'Türkiye',
+        subdivisionCode: '35',
+        subdivisionName: 'İzmir',
+        experienceLevels: '',
+        workTypes: [],
+        sources: ['linkedin', 'kariyer_net'],
+        isActive: true,
+      }),
+    ).toMatchObject({
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+      locations: ['İzmir', 'İzmir, Türkiye'],
+      workTypes: [],
+    });
+  });
+
+  it('never sends a work model filter', () => {
+    expect(
+      formValuesToWriteInput({
+        name: 'Frontend',
+        keywords: 'Frontend Developer',
+        technologies: '',
+        countryCode: '',
+        countryName: '',
+        subdivisionCode: '',
+        subdivisionName: '',
+        experienceLevels: '',
+        workTypes: ['remote'],
+        sources: ['linkedin', 'kariyer_net'],
+        isActive: true,
+      }).workTypes,
+    ).toEqual([]);
+  });
+});
+
 describe('shouldRefreshAfterSearchWrite', () => {
   it('refreshes when creating an active search', () => {
     expect(shouldRefreshAfterSearchWrite(null, writeInput())).toBe(true);
@@ -93,6 +147,16 @@ describe('shouldRefreshAfterSearchWrite', () => {
       shouldRefreshAfterSearchWrite(
         search(),
         writeInput({ locations: ['izmir'] }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRefreshAfterSearchWrite(
+        search(),
+        writeInput({
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          locations: ['Türkiye'],
+        }),
       ),
     ).toBe(true);
   });

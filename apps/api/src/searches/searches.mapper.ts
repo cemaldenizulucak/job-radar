@@ -2,7 +2,7 @@ import type { SourceId, WorkModel } from '../common/domain.types.js';
 import type { SavedSearch } from './searches.types.js';
 
 export const SAVED_SEARCH_SELECT =
-  'id, user_id, name, is_active, keywords, technologies, locations, work_types, experience_levels, sources, created_at, updated_at';
+  'id, user_id, name, is_active, keywords, technologies, locations, country_code, country_name, subdivision_code, subdivision_name, work_types, experience_levels, sources, created_at, updated_at';
 
 export function mapSavedSearchRows(value: unknown): SavedSearch[] {
   if (!Array.isArray(value)) {
@@ -43,6 +43,10 @@ export function mapSavedSearchRow(value: unknown): SavedSearch | null {
     keywords: readStringArray(value, 'keywords'),
     technologies: readStringArray(value, 'technologies'),
     locations: readStringArray(value, 'locations'),
+    countryCode: readString(value, 'country_code'),
+    countryName: readString(value, 'country_name'),
+    subdivisionCode: readString(value, 'subdivision_code'),
+    subdivisionName: readString(value, 'subdivision_name'),
     workTypes: readStringArray(value, 'work_types').filter(isWorkModel),
     experienceLevels: readStringArray(value, 'experience_levels'),
     sourceIds: readStringArray(value, 'sources').filter(isSourceId),

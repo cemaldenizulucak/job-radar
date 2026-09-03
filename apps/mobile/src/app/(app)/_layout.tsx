@@ -1,73 +1,19 @@
 import { Tabs } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useState } from 'react';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { LoadingState } from '@/components/loading-state';
-import { ThemedView } from '@/components/themed-view';
 import { Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { usePushNotifications } from '@/features/notifications/hooks/usePushNotifications';
-import { LocationSetupScreen } from '@/features/profile/screens/location-setup-screen';
-import { getProfile } from '@/features/profile/services/profile.service';
 import { useTheme } from '@/hooks/use-theme';
-import { hasProfileCountry } from '@/lib/search-location';
 
 export const unstable_settings = {
   initialRouteName: 'jobs',
 };
 
-type LocationGate = 'loading' | 'setup' | 'ready';
-
 export default function AppTabsLayout() {
   const theme = useTheme();
   const { user } = useAuth();
   usePushNotifications(user?.id);
-  const [locationGate, setLocationGate] = useState<LocationGate>('loading');
-
-  useEffect(() => {
-    if (!user) {
-      setLocationGate('loading');
-      return;
-    }
-
-    let cancelled = false;
-    setLocationGate('loading');
-
-    void getProfile()
-      .then((profile) => {
-        if (!cancelled) {
-          setLocationGate(hasProfileCountry(profile) ? 'ready' : 'setup');
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLocationGate('ready');
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
-
-  const handleLocationReady = useCallback(() => {
-    setLocationGate('ready');
-  }, []);
-
-  if (locationGate === 'loading') {
-    return (
-      <ThemedView style={{ flex: 1 }}>
-        <SafeAreaView style={{ flex: 1, justifyContent: 'center' }}>
-          <LoadingState />
-        </SafeAreaView>
-      </ThemedView>
-    );
-  }
-
-  if (locationGate === 'setup') {
-    return <LocationSetupScreen onComplete={handleLocationReady} />;
-  }
 
   return (
     <Tabs

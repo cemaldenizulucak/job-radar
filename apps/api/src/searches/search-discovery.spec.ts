@@ -13,6 +13,10 @@ function search(overrides: Partial<SavedSearch> = {}): SavedSearch {
     keywords: ['angular'],
     technologies: [],
     locations: ['izmir'],
+    countryCode: null,
+    countryName: null,
+    subdivisionCode: null,
+    subdivisionName: null,
     workTypes: [],
     experienceLevels: [],
     sourceIds: ['linkedin', 'kariyer_net'],
@@ -65,6 +69,16 @@ describe('shouldTriggerSavedSearchDiscovery', () => {
       shouldTriggerSavedSearchDiscovery(
         search(),
         search({ locations: ['istanbul'] }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldTriggerSavedSearchDiscovery(
+        search(),
+        search({
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          locations: ['Türkiye'],
+        }),
       ),
     ).toBe(true);
   });

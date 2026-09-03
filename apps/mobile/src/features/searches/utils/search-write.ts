@@ -58,10 +58,19 @@ function discoveryRelevantFieldsChanged(
     !sameNormalizedList(previous.keywords, next.keywords) ||
     !sameNormalizedList(previous.technologies, next.technologies) ||
     !sameNormalizedList(previous.locations, next.locations) ||
+    !sameOptional(previous.countryCode, next.countryCode) ||
+    !sameOptional(previous.subdivisionCode, next.subdivisionCode) ||
     !sameNormalizedList(previous.workTypes, next.workTypes) ||
     !sameNormalizedList(previous.experienceLevels, next.experienceLevels) ||
     !sameNormalizedList(previous.sources, next.sources)
   );
+}
+
+function sameOptional(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  return (left ?? '').trim().toUpperCase() === (right ?? '').trim().toUpperCase();
 }
 
 function sameNormalizedList(

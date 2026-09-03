@@ -53,6 +53,78 @@ export function toSearchLocationOrigin(
   return 'profile';
 }
 
+export type StructuredSearchLocation = {
+  locations: readonly string[];
+  countryCode?: string | null;
+  countryName?: string | null;
+  subdivisionCode?: string | null;
+  subdivisionName?: string | null;
+};
+
+export function deriveSavedSearchLocations(input: {
+  countryName?: string | null;
+  subdivisionName?: string | null;
+  locations?: readonly string[];
+}): string[] {
+  const country = trimLocation(input.countryName);
+  const subdivision = trimLocation(input.subdivisionName);
+
+  if (subdivision && country) {
+    return uniqueLocations([subdivision, `${subdivision}, ${country}`]);
+  }
+
+  if (subdivision) {
+    return [subdivision];
+  }
+
+  if (country) {
+    return [country];
+  }
+
+  return uniqueLocations(input.locations ?? []);
+}
+
+export function resolveSavedSearchLocation(
+  search: StructuredSearchLocation,
+  subdivisionAliases: readonly string[] = [],
+): ResolvedSearchLocation {
+  const country = trimLocation(search.countryName);
+  const city = trimLocation(search.subdivisionName);
+
+  if (city && country) {
+    const label = formatLocationLabel(city, country);
+    return {
+      locations: uniqueLocations([city, label]),
+      label,
+      source: 'search',
+      city,
+      country,
+    };
+  }
+
+  if (country) {
+    return {
+      locations: uniqueLocations([country, ...subdivisionAliases]),
+      label: country,
+      source: 'search',
+      city: null,
+      country,
+    };
+  }
+
+  if (city) {
+    return {
+      locations: [city],
+      label: city,
+      source: 'search',
+      city,
+      country: null,
+    };
+  }
+
+  return resolveEffectiveSearchLocation(search.locations, null);
+}
+
 export function resolveEffectiveSearchLocation(
   savedSearchLocations: readonly string[],
   profile: ProfileLocation | null | undefined,
@@ -149,7 +221,16 @@ export function jobLocationMatchResult(
   }
 
   if (resolved.country) {
-    return locationTextIncludes(jobText, resolved.country) ? 'pass' : 'fail';
+    if (locationTextIncludes(jobText, resolved.country)) {
+      return 'pass';
+    }
+
+    const aliasHit = resolved.locations.some(
+      (location) =>
+        location !== resolved.country &&
+        locationTextIncludes(jobText, location),
+    );
+    return aliasHit ? 'pass' : 'fail';
   }
 
   const matched = resolved.locations.some((location) =>
@@ -162,6 +243,23 @@ export function locationTextIncludes(haystack: string, needle: string): boolean 
   const hay = normalizeForSearch(haystack);
   const need = normalizeForSearch(needle);
   return Boolean(need) && hay.includes(need);
+}
+
+function uniqueLocations(values: readonly (string | null | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const trimmed = trimLocation(value);
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+
+  return result;
 }
 
 function completeExplicitLocation(

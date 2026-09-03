@@ -8,7 +8,7 @@ import { Spacing } from '@/constants/theme';
 import { uiCopy } from '@/constants/ui';
 import { useTheme } from '@/hooks/use-theme';
 
-import { searchesCopy, sourceName, workTypeLabel } from '../copy';
+import { searchesCopy, sourceName } from '../copy';
 import type { SavedSearch } from '../types/search.types';
 import { searchLocationDisplay } from '../utils/search-location-display';
 
@@ -33,7 +33,6 @@ function filterSummary(search: SavedSearch): string {
   const parts = [
     search.keywords.slice(0, 3).join(', ') || searchesCopy.noKeywords,
     locationLabel,
-    search.workTypes.map(workTypeLabel).join(', '),
   ].filter((part) => part.length > 0);
 
   return parts.join(' · ');

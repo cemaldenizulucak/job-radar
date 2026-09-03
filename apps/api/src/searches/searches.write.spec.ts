@@ -1,4 +1,4 @@
-import { toSavedSearchResponse } from './searches.write.js';
+import { parseSavedSearchWrite, toSavedSearchResponse } from './searches.write.js';
 import type { SavedSearch } from './searches.types.js';
 
 const search: SavedSearch = {
@@ -9,6 +9,10 @@ const search: SavedSearch = {
   keywords: ['gıda mühendisi'],
   technologies: [],
   locations: [],
+  countryCode: null,
+  countryName: null,
+  subdivisionCode: null,
+  subdivisionName: null,
   workTypes: [],
   experienceLevels: [],
   sourceIds: ['linkedin'],
@@ -24,8 +28,24 @@ describe('toSavedSearchResponse location resolution', () => {
     });
 
     expect(response.locations).toEqual([]);
+    expect(response.effectiveLocation).toBeNull();
+    expect(response.locationSource).toBe('none');
+  });
+
+  it('exposes structured country and subdivision on the response', () => {
+    const response = toSavedSearchResponse({
+      ...search,
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+      locations: ['İzmir', 'İzmir, Türkiye'],
+    });
+
+    expect(response.countryCode).toBe('TR');
+    expect(response.subdivisionName).toBe('İzmir');
     expect(response.effectiveLocation).toBe('İzmir, Türkiye');
-    expect(response.locationSource).toBe('profile');
+    expect(response.locationSource).toBe('search');
   });
 
   it('keeps an explicit search location separate from the profile default', () => {
@@ -35,7 +55,46 @@ describe('toSavedSearchResponse location resolution', () => {
     );
 
     expect(response.locations).toEqual(['İstanbul']);
-    expect(response.effectiveLocation).toBe('İstanbul, Türkiye');
+    expect(response.effectiveLocation).toBe('İstanbul');
     expect(response.locationSource).toBe('search');
+  });
+});
+
+describe('parseSavedSearchWrite', () => {
+  it('derives locations from structured country and subdivision', () => {
+    expect(
+      parseSavedSearchWrite({
+        name: 'Frontend',
+        keywords: ['frontend'],
+        sources: ['linkedin'],
+        countryCode: 'tr',
+        countryName: 'Türkiye',
+        subdivisionCode: '35',
+        subdivisionName: 'İzmir',
+      }),
+    ).toMatchObject({
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+      locations: ['İzmir', 'İzmir, Türkiye'],
+    });
+  });
+
+  it('keeps legacy locations when structured fields are omitted', () => {
+    expect(
+      parseSavedSearchWrite({
+        name: 'Frontend',
+        keywords: ['frontend'],
+        sources: ['linkedin'],
+        locations: ['istanbul'],
+      }),
+    ).toMatchObject({
+      countryCode: null,
+      countryName: null,
+      subdivisionCode: null,
+      subdivisionName: null,
+      locations: ['istanbul'],
+    });
   });
 });

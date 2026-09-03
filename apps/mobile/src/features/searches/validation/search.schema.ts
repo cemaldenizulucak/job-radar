@@ -23,7 +23,10 @@ export const savedSearchFormSchema = z.object({
     .min(1, searchesCopy.keywordRequired)
     .refine((value) => splitTags(value).length > 0, searchesCopy.keywordRequired),
   technologies: z.string(),
-  locations: z.string(),
+  countryCode: z.string(),
+  countryName: z.string(),
+  subdivisionCode: z.string(),
+  subdivisionName: z.string(),
   experienceLevels: z.string(),
   workTypes: z.array(workTypeSchema),
   sources: z
@@ -40,21 +43,63 @@ export const savedSearchWriteSchema = z.object({
   keywords: z.array(z.string().trim().min(1)).min(1, searchesCopy.keywordRequired),
   technologies: z.array(z.string().trim().min(1)),
   locations: z.array(z.string().trim().min(1)),
+  countryCode: z.string().nullable(),
+  countryName: z.string().nullable(),
+  subdivisionCode: z.string().nullable(),
+  subdivisionName: z.string().nullable(),
   workTypes: z.array(workTypeSchema),
   experienceLevels: z.array(z.string().trim().min(1)),
   sources: z.array(searchSourceSchema).min(1, searchesCopy.sourceRequired),
 });
 
+export function deriveSearchLocations(
+  countryName: string,
+  subdivisionName: string,
+): string[] {
+  const country = countryName.trim();
+  const subdivision = subdivisionName.trim();
+
+  if (subdivision && country) {
+    return [subdivision, `${subdivision}, ${country}`];
+  }
+
+  if (subdivision) {
+    return [subdivision];
+  }
+
+  if (country) {
+    return [country];
+  }
+
+  return [];
+}
+
 export function formValuesToWriteInput(
   values: SavedSearchFormValues,
 ): z.infer<typeof savedSearchWriteSchema> {
+  const countryCode = values.countryCode.trim() || null;
+  const countryName = values.countryName.trim() || null;
+  const subdivisionCode = countryCode
+    ? values.subdivisionCode.trim() || null
+    : null;
+  const subdivisionName = countryCode
+    ? values.subdivisionName.trim() || null
+    : null;
+
   return savedSearchWriteSchema.parse({
     name: values.name,
     isActive: values.isActive,
     keywords: splitTags(values.keywords),
     technologies: splitTags(values.technologies),
-    locations: splitTags(values.locations),
-    workTypes: values.workTypes,
+    locations: deriveSearchLocations(
+      countryName ?? '',
+      subdivisionName ?? '',
+    ),
+    countryCode,
+    countryName,
+    subdivisionCode,
+    subdivisionName,
+    workTypes: [],
     experienceLevels: splitTags(values.experienceLevels),
     sources: values.sources,
   });

@@ -12,6 +12,10 @@ export type SavedSearch = {
   keywords: readonly string[];
   technologies: readonly string[];
   locations: readonly string[];
+  countryCode: string | null;
+  countryName: string | null;
+  subdivisionCode: string | null;
+  subdivisionName: string | null;
   workTypes: readonly WorkType[];
   experienceLevels: readonly string[];
   sources: readonly SearchSourceId[];
@@ -27,6 +31,10 @@ export type SavedSearchWriteInput = {
   keywords: readonly string[];
   technologies: readonly string[];
   locations: readonly string[];
+  countryCode: string | null;
+  countryName: string | null;
+  subdivisionCode: string | null;
+  subdivisionName: string | null;
   workTypes: readonly WorkType[];
   experienceLevels: readonly string[];
   sources: readonly SearchSourceId[];

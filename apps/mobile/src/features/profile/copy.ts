@@ -23,7 +23,7 @@ export const profileCopy = {
   city: 'Şehir',
   countryPlaceholder: 'Türkiye',
   cityPlaceholder: 'İzmir',
-  locationHint: 'Aramalarda konum belirtmezseniz bu konum kullanılır.',
+  locationHint: 'İsteğe bağlı. Kayıtlı aramalarda konum seçmezseniz tüm lokasyonlar kabul edilir.',
   saveLocation: 'Kaydet',
   locationSaveError: 'Konum kaydedilemedi.',
   locationSaveRetry: 'Tekrar deneyin.',

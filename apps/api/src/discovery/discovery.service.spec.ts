@@ -21,6 +21,7 @@ import { LinkedInDisabledProvider } from '../sources/linkedin/linkedin-disabled.
 import { LinkedInMockProvider } from '../sources/linkedin/linkedin-mock.provider.js';
 import { SourceUnavailableError } from '../sources/source-errors.js';
 import { SourceRegistry } from '../sources/source-registry.js';
+import { LocationsService } from '../locations/locations.service.js';
 import { DiscoveryService } from './discovery.service.js';
 import { EMPTY_DISCOVERY_SUMMARY } from './discovery.types.js';
 
@@ -33,6 +34,10 @@ function search(overrides: Partial<SavedSearch> = {}): SavedSearch {
     keywords: ['frontend', 'react'],
     technologies: [],
     locations: [],
+    countryCode: null,
+    countryName: null,
+    subdivisionCode: null,
+    subdivisionName: null,
     workTypes: [],
     experienceLevels: [],
     sourceIds: ['linkedin', 'kariyer_net'],
@@ -113,6 +118,22 @@ class FakeJobsService extends JobsService {
 
   override markInactiveNotSeenSince(): Promise<number> {
     return Promise.resolve(0);
+  }
+
+  override listMatchableActiveJobs() {
+    return Promise.resolve(
+      [...this.listings.values()].map(({ id, job }) => ({
+        id,
+        sourceId: job.sourceId,
+        title: job.title,
+        companyName: job.companyName,
+        description: job.description,
+        location: job.location,
+        workModel: job.workModel,
+        experienceLevel: job.experienceLevel,
+        technologies: job.technologies,
+      })),
+    );
   }
 }
 
@@ -242,6 +263,10 @@ function createDiscovery(
     notifications,
     profiles,
     { get: () => undefined } as never,
+    {
+      primeSubdivisionCaches: vi.fn().mockResolvedValue(undefined),
+      getCachedSubdivisionNames: vi.fn().mockReturnValue(null),
+    } as unknown as LocationsService,
   );
 
   return { discovery, jobs, groups, notifications };
@@ -254,6 +279,7 @@ describe('DiscoveryService', () => {
     const result = await discovery.run();
 
     expect(result).toEqual({
+      usersProcessed: 1,
       searchesProcessed: 1,
       jobsFetched: 6,
       jobsInserted: 6,
@@ -857,7 +883,7 @@ describe('DiscoveryService', () => {
     expect(jobs.listings.size).toBeGreaterThan(0);
   });
 
-  it('passes the resolved profile location to LinkedIn and Kariyer.net adapters', async () => {
+  it('does not send profile location to adapters when the search location is empty', async () => {
     const received: SourceSearchQuery[] = [];
     const capture = (sourceId: 'linkedin' | 'kariyer_net'): JobSourceAdapter => ({
       sourceId,
@@ -878,7 +904,7 @@ describe('DiscoveryService', () => {
     const { discovery } = createDiscovery(
       [
         search({
-          keywords: ['gıda mühendisi'],
+          keywords: ['Frontend Developer'],
           locations: [],
           sourceIds: ['linkedin', 'kariyer_net'],
         }),
@@ -895,9 +921,114 @@ describe('DiscoveryService', () => {
     await discovery.run();
 
     expect(received).toHaveLength(2);
-    expect(received[0]?.locations).toEqual(['Izmir, Turkey']);
-    expect(received[1]?.locations).toEqual(['Izmir, Turkey']);
-    expect(received[0]?.keywords).toEqual(['gıda mühendisi']);
-    expect(received[1]?.keywords).toEqual(['gıda mühendisi']);
+    expect(received[0]?.locations).toEqual([]);
+    expect(received[1]?.locations).toEqual([]);
+    expect(received[0]?.workModels).toEqual([]);
+    expect(received[1]?.workModels).toEqual([]);
+    expect(received[0]?.keywords).toEqual(['Frontend Developer']);
+  });
+
+  it('includes every user active search in a scheduled run', async () => {
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      name: 'User A Frontend',
+      keywords: ['frontend'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      name: 'User B Frontend',
+      keywords: ['frontend'],
+    });
+    const { discovery, jobs } = createDiscovery([userA, userB]);
+
+    const result = await discovery.run();
+
+    expect(result.usersProcessed).toBe(2);
+    expect(result.searchesProcessed).toBe(2);
+    expect(result.matchesCreated).toBeGreaterThan(0);
+    expect(
+      jobs.matches.some(
+        (match) => match.savedSearchId === 'search-a',
+      ),
+    ).toBe(true);
+    expect(
+      jobs.matches.some(
+        (match) => match.savedSearchId === 'search-b',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches a new user search against jobs already in the catalog', async () => {
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'linkedin',
+      sourceJobId: 'existing-frontend',
+      title: 'Frontend Developer',
+      companyName: 'Catalog Co',
+      titleNormalized: 'frontend developer',
+      companyNormalized: 'catalog co',
+      location: 'Ankara',
+      workModel: 'onsite',
+      experienceLevel: 'mid',
+      technologies: [],
+      description: 'React',
+      canonicalUrl: 'https://example.com/frontend',
+      publishedAt: null,
+      isActive: true,
+    });
+
+    const emptyAdapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'linkedin', jobs: [] }),
+    };
+
+    const { discovery } = createDiscovery(
+      [
+        search({
+          id: 'search-new',
+          userId: 'user-b',
+          name: 'Frontend Developer',
+          keywords: ['Frontend Developer'],
+          locations: [],
+          workTypes: [],
+          experienceLevels: [],
+          sourceIds: ['linkedin'],
+        }),
+      ],
+      [emptyAdapter],
+      jobs,
+    );
+
+    const result = await discovery.runForSavedSearch(
+      search({
+        id: 'search-new',
+        userId: 'user-b',
+        name: 'Frontend Developer',
+        keywords: ['Frontend Developer'],
+        locations: [],
+        workTypes: [],
+        experienceLevels: [],
+        sourceIds: ['linkedin'],
+      }),
+    );
+
+    expect(result.jobsFetched).toBe(0);
+    expect(result.matchesCreated).toBe(1);
+    expect(jobs.matches).toEqual([
+      {
+        jobId: sourceListingIdentity('linkedin', 'existing-frontend'),
+        savedSearchId: 'search-new',
+      },
+    ]);
   });
 });

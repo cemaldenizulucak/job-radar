@@ -13,6 +13,10 @@ function search(overrides: Partial<SavedSearch> = {}): SavedSearch {
     keywords: ['frontend'],
     technologies: [],
     locations: [],
+    countryCode: null,
+    countryName: null,
+    subdivisionCode: null,
+    subdivisionName: null,
     workTypes: [],
     experienceLevels: [],
     sourceIds: ['linkedin', 'kariyer_net'],
@@ -197,6 +201,80 @@ describe('MatchingService generic text matching', () => {
     ).toBe(true);
   });
 
+  it('matches a structured city without rejecting other work models', () => {
+    const listing = job({
+      title: 'Gıda Mühendisi',
+      location: 'Konak / İzmir',
+      description: null,
+      technologies: [],
+    });
+
+    expect(
+      matcher.jobMatchesSearch(
+        listing,
+        search({
+          keywords: ['gıda'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          subdivisionCode: '35',
+          subdivisionName: 'İzmir',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        listing,
+        search({
+          keywords: ['gıda'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          subdivisionCode: '34',
+          subdivisionName: 'İstanbul',
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('accepts every city in a country-only structured search when aliases are cached', () => {
+    const locations = {
+      getCachedSubdivisionNames: (code: string) =>
+        code === 'TR' ? ['İstanbul', 'İzmir', 'Ankara'] : null,
+    };
+    const withAliases = new MatchingService(locations as never);
+
+    expect(
+      withAliases.jobMatchesSearch(
+        job({
+          title: 'Gıda Mühendisi',
+          location: 'İzmir',
+          description: null,
+          technologies: [],
+        }),
+        search({
+          keywords: ['gıda'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      withAliases.jobMatchesSearch(
+        job({
+          id: 'job-2',
+          title: 'Gıda Mühendisi',
+          location: 'Berlin',
+          description: null,
+          technologies: [],
+        }),
+        search({
+          keywords: ['gıda'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it('filters by location with Turkish substring matching', () => {
     const listing = job({
       title: 'Gıda Mühendisi',
@@ -305,21 +383,9 @@ describe('MatchingService generic text matching', () => {
     expect(decision.reasons).toEqual([]);
   });
 
-  it('uses profile city and country when the search location is empty', () => {
-    const profile = { country: 'Turkey', city: 'Izmir' };
+  it('accepts every location when the search location is empty', () => {
+    const saved = search({ keywords: ['gıda'], locations: [] });
 
-    expect(
-      matcher.jobMatchesSearch(
-        job({
-          title: 'Gıda Mühendisi',
-          location: 'Izmir, Turkey',
-          description: null,
-          technologies: [],
-        }),
-        search({ keywords: ['gıda'], locations: [] }),
-        profile,
-      ),
-    ).toBe(true);
     expect(
       matcher.jobMatchesSearch(
         job({
@@ -328,38 +394,19 @@ describe('MatchingService generic text matching', () => {
           description: null,
           technologies: [],
         }),
-        search({ keywords: ['gıda'], locations: [] }),
-        profile,
-      ),
-    ).toBe(false);
-  });
-
-  it('matches any city in the country when the profile has no city', () => {
-    expect(
-      matcher.jobMatchesSearch(
-        job({
-          title: 'Gıda Mühendisi',
-          location: 'Istanbul, Turkey',
-          description: null,
-          technologies: [],
-        }),
-        search({ keywords: ['gıda'], locations: [] }),
-        { country: 'Turkey', city: null },
+        saved,
       ),
     ).toBe(true);
-  });
-
-  it('allows a country-only job when city metadata is missing', () => {
     expect(
       matcher.jobMatchesSearch(
         job({
+          id: 'job-2',
           title: 'Gıda Mühendisi',
-          location: 'Türkiye',
+          location: 'Berlin',
           description: null,
           technologies: [],
         }),
-        search({ keywords: ['gıda'], locations: [] }),
-        { country: 'Türkiye', city: 'İzmir' },
+        saved,
       ),
     ).toBe(true);
   });
@@ -378,18 +425,81 @@ describe('MatchingService generic text matching', () => {
     ).toBe(true);
   });
 
-  it('still matches when the user has no profile location', () => {
+  it('matches Frontend Developer with every other filter empty', () => {
+    const saved = search({
+      keywords: ['Frontend Developer'],
+      technologies: [],
+      locations: [],
+      workTypes: [],
+      experienceLevels: [],
+    });
+
+    for (const workModel of ['remote', 'hybrid', 'onsite'] as const) {
+      expect(
+        matcher.jobMatchesSearch(
+          job({
+            id: `job-${workModel}`,
+            title: 'Frontend Developer',
+            location: 'Ankara',
+            workModel,
+            experienceLevel: 'junior',
+            technologies: [],
+            description: null,
+          }),
+          saved,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('never rejects on work model even when the search stored a work type', () => {
     expect(
       matcher.jobMatchesSearch(
         job({
-          title: 'Gıda Mühendisi',
-          location: 'Berlin',
+          title: 'Frontend Developer',
+          workModel: 'onsite',
           description: null,
           technologies: [],
         }),
-        search({ keywords: ['gıda'], locations: [] }),
-        { country: null, city: null },
+        search({ keywords: ['Frontend Developer'], workTypes: ['remote'] }),
       ),
     ).toBe(true);
+  });
+
+  it('does not reject on technologies or experience when those filters are empty', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Frontend Developer',
+          technologies: ['Vue'],
+          experienceLevel: 'intern',
+          description: null,
+        }),
+        search({
+          keywords: ['Frontend Developer'],
+          technologies: [],
+          experienceLevels: [],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('writes matches to the originating saved_search_id for each user', () => {
+    const listing = job({ title: 'Frontend Developer', description: null });
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['Frontend Developer'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['Frontend Developer'],
+    });
+
+    expect(matcher.matchJobsToSearches([listing], [userA, userB])).toEqual([
+      { jobId: 'job-1', savedSearchId: 'search-a' },
+      { jobId: 'job-1', savedSearchId: 'search-b' },
+    ]);
   });
 });

@@ -1,8 +1,12 @@
 import type { WorkModel } from '../common/domain.types.js';
+import type { MatchableJob } from '../matching/matching.types.js';
 import type { JobListItem } from './jobs.types.js';
 
 export const JOB_FEED_SELECT =
   'id, title, company, description, location, work_model, experience_level, technologies, source, source_job_id, original_url, published_at, discovered_at, duplicate_group_id, created_at';
+
+export const MATCHABLE_JOB_SELECT =
+  'id, title, company, description, location, work_model, experience_level, technologies, source';
 
 export type JobFeedRow = {
   item: JobListItem;
@@ -54,6 +58,32 @@ export function mapJobFeedRow(
       isNew: false,
       isSeen: false,
     },
+  };
+}
+
+export function mapMatchableJobRow(value: unknown): MatchableJob | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = readString(value, 'id');
+  const sourceId = readSourceId(value, 'source');
+  const title = readString(value, 'title');
+
+  if (!id || !title || !sourceId) {
+    return null;
+  }
+
+  return {
+    id,
+    sourceId,
+    title,
+    companyName: readString(value, 'company') ?? '',
+    description: readString(value, 'description'),
+    location: readString(value, 'location'),
+    workModel: readWorkModel(value, 'work_model'),
+    experienceLevel: readString(value, 'experience_level'),
+    technologies: readStringArray(value, 'technologies'),
   };
 }
 

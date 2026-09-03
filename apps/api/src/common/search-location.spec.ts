@@ -1,7 +1,9 @@
 import {
+  deriveSavedSearchLocations,
   formatLocationLabel,
   jobLocationMatchResult,
   resolveEffectiveSearchLocation,
+  resolveSavedSearchLocation,
 } from './search-location.js';
 
 describe('resolveEffectiveSearchLocation', () => {
@@ -73,6 +75,78 @@ describe('resolveEffectiveSearchLocation', () => {
       city: null,
       country: null,
     });
+  });
+});
+
+describe('resolveSavedSearchLocation', () => {
+  it('uses structured country and subdivision without profile fallback', () => {
+    expect(
+      resolveSavedSearchLocation({
+        locations: [],
+        countryName: 'Türkiye',
+        subdivisionName: 'İzmir',
+      }),
+    ).toMatchObject({
+      source: 'search',
+      city: 'İzmir',
+      country: 'Türkiye',
+      label: 'İzmir, Türkiye',
+      locations: ['İzmir', 'İzmir, Türkiye'],
+    });
+  });
+
+  it('keeps country-only searches open to every location in that country', () => {
+    const resolved = resolveSavedSearchLocation(
+      {
+        locations: [],
+        countryName: 'Türkiye',
+        subdivisionName: null,
+      },
+      ['İstanbul', 'İzmir'],
+    );
+
+    expect(resolved).toMatchObject({
+      source: 'search',
+      city: null,
+      country: 'Türkiye',
+      label: 'Türkiye',
+    });
+    expect(jobLocationMatchResult('İzmir', resolved)).toBe('pass');
+    expect(jobLocationMatchResult('Berlin', resolved)).toBe('fail');
+  });
+
+  it('falls back to legacy locations text when structured fields are empty', () => {
+    expect(
+      resolveSavedSearchLocation({
+        locations: ['İstanbul'],
+        countryName: null,
+        subdivisionName: null,
+      }),
+    ).toMatchObject({
+      source: 'search',
+      city: 'İstanbul',
+      locations: ['İstanbul'],
+    });
+  });
+});
+
+describe('deriveSavedSearchLocations', () => {
+  it('derives adapter locations from structured fields', () => {
+    expect(
+      deriveSavedSearchLocations({
+        countryName: 'Türkiye',
+        subdivisionName: 'İzmir',
+      }),
+    ).toEqual(['İzmir', 'İzmir, Türkiye']);
+    expect(
+      deriveSavedSearchLocations({
+        countryName: 'Türkiye',
+        subdivisionName: null,
+      }),
+    ).toEqual(['Türkiye']);
+    expect(deriveSavedSearchLocations({ locations: ['legacy'] })).toEqual([
+      'legacy',
+    ]);
   });
 });
 

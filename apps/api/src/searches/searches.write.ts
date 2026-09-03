@@ -3,7 +3,8 @@ import { BadRequestException } from '@nestjs/common';
 import type { SourceId, WorkModel } from '../common/domain.types.js';
 import { isRecord } from '../common/request.js';
 import {
-  resolveEffectiveSearchLocation,
+  deriveSavedSearchLocations,
+  resolveSavedSearchLocation,
   toSearchLocationOrigin,
   type ProfileLocation,
 } from '../common/search-location.js';
@@ -15,9 +16,9 @@ import type {
 
 export function toSavedSearchResponse(
   search: SavedSearch,
-  profile?: ProfileLocation | null,
+  _profile?: ProfileLocation | null,
 ): SavedSearchResponse {
-  const resolved = resolveEffectiveSearchLocation(search.locations, profile);
+  const resolved = resolveSavedSearchLocation(search);
 
   return {
     id: search.id,
@@ -27,6 +28,10 @@ export function toSavedSearchResponse(
     keywords: [...search.keywords],
     technologies: [...search.technologies],
     locations: [...search.locations],
+    countryCode: search.countryCode,
+    countryName: search.countryName,
+    subdivisionCode: search.subdivisionCode,
+    subdivisionName: search.subdivisionName,
     workTypes: [...search.workTypes],
     experienceLevels: [...search.experienceLevels],
     sources: [...search.sourceIds],
@@ -53,12 +58,32 @@ export function parseSavedSearchWrite(body: unknown): SavedSearchWriteInput {
     throw new BadRequestException('Select at least one source.');
   }
 
+  const countryCode = readOptionalCode(body.countryCode, 'countryCode');
+  const countryName = readOptionalName(body.countryName, 'countryName');
+  const subdivisionCode = readOptionalCode(
+    body.subdivisionCode,
+    'subdivisionCode',
+  );
+  const subdivisionName = readOptionalName(
+    body.subdivisionName,
+    'subdivisionName',
+  );
+  const hasStructuredLocation = Boolean(
+    countryCode || countryName || subdivisionCode || subdivisionName,
+  );
+
   return {
     name,
     isActive: typeof body.isActive === 'boolean' ? body.isActive : true,
     keywords,
     technologies: readStringArray(body.technologies, 'technologies'),
-    locations: readStringArray(body.locations, 'locations'),
+    locations: hasStructuredLocation
+      ? deriveSavedSearchLocations({ countryName, subdivisionName })
+      : readStringArray(body.locations, 'locations'),
+    countryCode,
+    countryName,
+    subdivisionCode,
+    subdivisionName,
     workTypes: readStringArray(body.workTypes, 'workTypes').filter(isWorkModel),
     experienceLevels: readStringArray(body.experienceLevels, 'experienceLevels'),
     sources,
@@ -79,6 +104,24 @@ function readRequiredString(value: unknown, field: string): string {
   }
 
   return value.trim();
+}
+
+function readOptionalName(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw new BadRequestException(`${field} must be a string.`);
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readOptionalCode(value: unknown, field: string): string | null {
+  const name = readOptionalName(value, field);
+  return name ? name.toUpperCase() : null;
 }
 
 function readStringArray(value: unknown, field: string): string[] {

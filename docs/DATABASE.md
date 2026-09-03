@@ -136,7 +136,11 @@ Add columns on live databases with [PROFILE_LOCATION.sql](./PROFILE_LOCATION.sql
 | `name` | text | e.g. “Frontend Developer” |
 | `keywords` | text[] | e.g. Frontend Developer, React Developer |
 | `technologies` | text[] | e.g. React, Next.js |
-| `locations` | text[] | e.g. Istanbul, Remote |
+| `locations` | text[] | Legacy / derived labels for adapters. Empty means any location. |
+| `country_code` | text nullable | ISO country code from location lookup, e.g. `TR` |
+| `country_name` | text nullable | Display name, e.g. Türkiye |
+| `subdivision_code` | text nullable | State / province / city code from lookup |
+| `subdivision_name` | text nullable | Display name, e.g. İzmir |
 | `work_models` | `work_model`[] | Empty means any |
 | `is_active` | boolean | Inactive searches are not fetched; existing matches remain |
 | `created_at` | timestamptz | |

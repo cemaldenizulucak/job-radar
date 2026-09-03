@@ -39,7 +39,8 @@ Protected (JWT required). The user is taken from the token; client `userId` is i
 | GET/PATCH | `/v1/notifications`, `/v1/notifications/:id/read` |
 | GET/PATCH | `/v1/profiles` | `country` and `city` are nullable. PATCH accepts any of `notificationsEnabled`, `country`, `city`. Saved search responses include `effectiveLocation` and `locationSource` (`search` / `profile` / `none`) resolved from the stored search location plus the authenticated user's profile. |
 | POST/DELETE | `/v1/push-tokens` |
-| GET/POST/PATCH/DELETE | `/v1/searches`, `/v1/searches/:id`, `/v1/searches/:id/toggle` |
+| GET | `/v1/locations/countries`, `/v1/locations/subdivisions?countryCode=` | Normalized country / subdivision lists. JWT required. Provider failures return `{ items: [] }`. |
+| GET/POST/PATCH/DELETE | `/v1/searches`, `/v1/searches/:id`, `/v1/searches/:id/toggle` | Search writes accept optional `countryCode`, `countryName`, `subdivisionCode`, `subdivisionName`. `locations[]` stays for older rows. |
 
 Temporary development helpers (not used by mobile). Disabled unless `ENABLE_DEV_ENDPOINTS=true`. When disabled they return **404** and must stay off in production.
 
@@ -79,6 +80,7 @@ The remainder of this document is the original contract proposal. Live paths in 
 | --- | --- | --- |
 | Health | `/` | AppModule liveness |
 | Saved searches | `/v1/searches` | SearchesModule |
+| Location lookup | `/v1/locations` | LocationsModule |
 | Jobs feed + detail | `/v1/jobs` | JobsModule |
 | Favorites | `/v1/favorites` | FavoritesModule |
 | Applications | `/v1/applications` | ApplicationsModule |

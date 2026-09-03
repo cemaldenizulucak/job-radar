@@ -6,6 +6,14 @@ export function searchLocationDisplay(search: SavedSearch): {
   label: string | null;
   fromProfile: boolean;
 } {
+  const structured = formatLocationLabel(
+    search.subdivisionName,
+    search.countryName,
+  );
+  if (structured) {
+    return { label: structured, fromProfile: false };
+  }
+
   if (search.locationSource === 'search') {
     return {
       label: search.effectiveLocation ?? search.locations.join(', ') ?? null,

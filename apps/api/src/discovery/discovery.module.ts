@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 
 import { DuplicatesModule } from '../duplicates/duplicates.module.js';
 import { JobsModule } from '../jobs/jobs.module.js';
+import { LocationsModule } from '../locations/locations.module.js';
 import { MatchingModule } from '../matching/matching.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ProfilesModule } from '../profiles/profiles.module.js';
@@ -18,6 +19,7 @@ import { DiscoveryService } from './discovery.service.js';
     MatchingModule,
     DuplicatesModule,
     JobsModule,
+    LocationsModule,
     NotificationsModule,
     ProfilesModule,
   ],

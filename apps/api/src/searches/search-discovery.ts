@@ -9,6 +9,8 @@ export function discoveryRelevantFieldsChanged(
     !sameNormalizedList(previous.keywords, next.keywords) ||
     !sameNormalizedList(previous.technologies, next.technologies) ||
     !sameNormalizedList(previous.locations, next.locations) ||
+    !sameOptional(previous.countryCode, next.countryCode) ||
+    !sameOptional(previous.subdivisionCode, next.subdivisionCode) ||
     !sameNormalizedList(previous.workTypes, next.workTypes) ||
     !sameNormalizedList(previous.experienceLevels, next.experienceLevels) ||
     !sameNormalizedList(previous.sourceIds, next.sourceIds)
@@ -32,6 +34,10 @@ export function shouldTriggerSavedSearchDiscovery(
   }
 
   return discoveryRelevantFieldsChanged(previous, next);
+}
+
+function sameOptional(left: string | null, right: string | null): boolean {
+  return (left ?? '').trim().toUpperCase() === (right ?? '').trim().toUpperCase();
 }
 
 function sameNormalizedList(

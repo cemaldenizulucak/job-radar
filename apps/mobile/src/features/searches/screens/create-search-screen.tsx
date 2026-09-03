@@ -7,7 +7,6 @@ import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
-import { useProfileLocation } from '@/features/profile/hooks/useProfileLocation';
 import { useTheme } from '@/hooks/use-theme';
 import { userErrorMessage } from '@/lib/api-error';
 
@@ -25,7 +24,6 @@ import {
 export function CreateSearchScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const profileLocation = useProfileLocation();
   const setSavedSearchId = useJobsFilterStore((state) => state.setSavedSearchId);
   const bumpSearchCatalog = useJobsFilterStore((state) => state.bumpSearchCatalog);
   const [formError, setFormError] = useState<string | null>(null);
@@ -65,7 +63,6 @@ export function CreateSearchScreen() {
       />
       <View>
         <SavedSearchForm
-          profileLocation={profileLocation}
           submitLabel={searchesCopy.saveSearch}
           submittingLabel={searchesCopy.scanning}
           formError={formError}

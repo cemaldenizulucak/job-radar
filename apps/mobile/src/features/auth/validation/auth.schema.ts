@@ -13,8 +13,6 @@ export const registerSchema = z.object({
   name: z.string().trim().min(1, authCopy.nameRequired),
   email: z.email(authCopy.emailInvalid),
   password: passwordSchema,
-  country: z.string().trim().min(1, authCopy.countryRequired),
-  city: z.string(),
 });
 
 export type LoginFormValues = z.infer<typeof loginSchema>;

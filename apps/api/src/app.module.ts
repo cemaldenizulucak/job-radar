@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { DuplicatesModule } from './duplicates/duplicates.module.js';
 import { DiscoveryModule } from './discovery/discovery.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
+import { LocationsModule } from './locations/locations.module.js';
 import { MailIngestionModule } from './mail-ingestion/mail-ingestion.module.js';
 import { MatchingModule } from './matching/matching.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
@@ -26,6 +27,7 @@ import { SourcesModule } from './sources/sources.module.js';
     }),
     AuthModule,
     JobsModule,
+    LocationsModule,
     SearchesModule,
     SourcesModule,
     MatchingModule,

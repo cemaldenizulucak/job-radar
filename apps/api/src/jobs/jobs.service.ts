@@ -16,13 +16,15 @@ import {
 } from '../discovery/discovery-window.js';
 import type { DuplicateCandidate } from '../duplicates/duplicates.types.js';
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
-import type { JobSearchMatch } from '../matching/matching.types.js';
+import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
 import { decideListingWrite } from './job-identity.js';
 import { applyJobNewness, resolveJobNewWindowHours } from './job-newness.js';
 import { clampJobFeedLimit, JOB_FEED_MAX_LIMIT } from './job-feed-visibility.js';
 import {
   JOB_FEED_SELECT,
+  MATCHABLE_JOB_SELECT,
   mapJobFeedRow,
+  mapMatchableJobRow,
   type JobFeedRow,
 } from './jobs.mapper.js';
 import type {
@@ -768,6 +770,33 @@ export class JobsService {
     }
 
     return candidates;
+  }
+
+  async listMatchableActiveJobs(): Promise<MatchableJob[]> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('jobs')
+      .select(MATCHABLE_JOB_SELECT)
+      .eq('is_active', true);
+
+    if (error) {
+      this.logSupabaseError(error);
+      throw new InternalServerErrorException('Failed to load job listings.');
+    }
+
+    if (!Array.isArray(data)) {
+      return [];
+    }
+
+    const jobs: MatchableJob[] = [];
+    for (const row of data) {
+      const mapped = mapMatchableJobRow(row);
+      if (mapped) {
+        jobs.push(mapped);
+      }
+    }
+
+    return jobs;
   }
 
   async saveMatches(matches: readonly JobSearchMatch[]): Promise<JobSearchMatch[]> {

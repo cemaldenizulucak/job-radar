@@ -148,10 +148,6 @@ export function ProfileScreen() {
     }
 
     const trimmedCountry = country.trim();
-    if (!trimmedCountry) {
-      setCountryError(profileCopy.countryRequired);
-      return;
-    }
 
     setCountryError(null);
     setIsSavingLocation(true);
@@ -159,7 +155,7 @@ export function ProfileScreen() {
     try {
       setProfile(
         await updateProfile({
-          country: trimmedCountry,
+          country: trimmedCountry || null,
           city: city.trim() || null,
         }),
       );

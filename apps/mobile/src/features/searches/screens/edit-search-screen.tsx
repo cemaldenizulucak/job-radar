@@ -9,7 +9,6 @@ import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
-import { useProfileLocation } from '@/features/profile/hooks/useProfileLocation';
 import { useTheme } from '@/hooks/use-theme';
 import { userErrorMessage } from '@/lib/api-error';
 
@@ -34,7 +33,6 @@ export function EditSearchScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const searchId = Array.isArray(id) ? id[0] : id;
   const { search, isLoading, error } = useSavedSearch(searchId);
-  const profileLocation = useProfileLocation();
   const [formError, setFormError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const submitLock = useRef(createSubmitLock()).current;
@@ -100,7 +98,6 @@ export function EditSearchScreen() {
         <SavedSearchForm
           key={search.updatedAt}
           initialSearch={search}
-          profileLocation={profileLocation}
           submitLabel={searchesCopy.saveChanges}
           submittingLabel={isRefreshing ? searchesCopy.scanning : searchesCopy.saveSearch}
           formError={formError}

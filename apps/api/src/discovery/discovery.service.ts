@@ -4,11 +4,9 @@ import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { SourceId } from '../common/domain.types.js';
-import {
-  resolveEffectiveSearchLocation,
-  type ProfileLocation,
-} from '../common/search-location.js';
+import { resolveSavedSearchLocation } from '../common/search-location.js';
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
+import { LocationsService } from '../locations/locations.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
 import { JobsService } from '../jobs/jobs.service.js';
 import type { NormalizedJob } from '../jobs/jobs.types.js';
@@ -38,6 +36,13 @@ import {
 } from './discovery.types.js';
 import { normalizeSourceJob } from './job-normalizer.js';
 
+type SearchSourceFetchStat = {
+  savedSearchId: string;
+  source: SourceId;
+  fetchedJobCount: number;
+  normalizedJobCount: number;
+};
+
 @Injectable()
 export class DiscoveryService {
   private readonly logger = new Logger(DiscoveryService.name);
@@ -54,7 +59,10 @@ export class DiscoveryService {
     private readonly notificationsService: NotificationsService,
     private readonly profilesService: ProfilesService,
     private readonly config: ConfigService,
-  ) {}
+    private readonly locationsService: LocationsService,
+  ) {
+    void this.profilesService;
+  }
 
   async run(): Promise<DiscoveryRunSummary> {
     return this.runGate.runExclusive(async () => {
@@ -81,8 +89,13 @@ export class DiscoveryService {
       return { ...EMPTY_DISCOVERY_SUMMARY };
     }
 
-    const profilesByUserId = await this.loadProfiles(searches);
-    const fetched = await this.fetchNormalizedJobs(searches, profilesByUserId);
+    await this.locationsService.primeSubdivisionCaches(
+      searches
+        .map((search) => search.countryCode)
+        .filter((code): code is string => Boolean(code)),
+    );
+
+    const fetched = await this.fetchNormalizedJobs(searches);
     let jobsInserted = 0;
     const persisted: MatchableJob[] = [];
     const persistedForNotification: PersistedJobForNotification[] = [];
@@ -103,10 +116,10 @@ export class DiscoveryService {
       });
     }
 
+    const matchableJobs = await this.mergeCatalogJobs(persisted);
     const matches = this.matchingService.matchJobsToSearches(
-      persisted,
+      matchableJobs,
       searches,
-      profilesByUserId,
     );
     const createdMatches = await this.jobsService.saveMatches(matches);
     const visible = selectVisibleNewMatches(
@@ -132,11 +145,16 @@ export class DiscoveryService {
       searches,
     );
 
+    const usersProcessed = new Set(searches.map((search) => search.userId)).size;
+    this.logSavedSearchOutcomes(searches, matchableJobs, fetched.perSearch);
     this.logDiscoveryCounts({
-      rawProviderJobs: fetched.rawProviderJobs,
-      normalizedJobs: fetched.uniqueJobs.length,
+      usersProcessed,
+      searchesProcessed: searches.length,
+      jobsFetched: fetched.jobsFetched,
       jobsInserted,
       matchesCreated,
+      rawProviderJobs: fetched.rawProviderJobs,
+      normalizedJobs: fetched.uniqueJobs.length,
       visibleMatchesCreated: visible.matches.length,
       notifiedJobCount,
     });
@@ -149,6 +167,7 @@ export class DiscoveryService {
     });
 
     return {
+      usersProcessed,
       searchesProcessed: searches.length,
       jobsFetched: fetched.jobsFetched,
       jobsInserted,
@@ -193,25 +212,30 @@ export class DiscoveryService {
     }
   }
 
-  private async loadProfiles(
-    searches: readonly SavedSearch[],
-  ): Promise<ReadonlyMap<string, ProfileLocation>> {
-    const userIds = [...new Set(searches.map((search) => search.userId))];
+  private async mergeCatalogJobs(
+    persisted: readonly MatchableJob[],
+  ): Promise<MatchableJob[]> {
+    const byId = new Map(persisted.map((job) => [job.id, job]));
 
     try {
-      return await this.profilesService.getLocationsByUserIds(userIds);
+      const catalog = await this.jobsService.listMatchableActiveJobs();
+      for (const job of catalog) {
+        if (!byId.has(job.id)) {
+          byId.set(job.id, job);
+        }
+      }
     } catch (error) {
       this.logger.warn({
-        message: 'Failed to load profile locations; searches will use stored location only',
+        message: 'Failed to load catalog jobs for rematch; using this run only',
         error: error instanceof Error ? error.message : 'unknown',
       });
-      return new Map();
     }
+
+    return [...byId.values()];
   }
 
   private async fetchNormalizedJobs(
     searches: readonly SavedSearch[],
-    profilesByUserId: ReadonlyMap<string, ProfileLocation>,
   ): Promise<{
     jobsFetched: number;
     uniqueJobs: NormalizedJob[];
@@ -221,6 +245,7 @@ export class DiscoveryService {
     stopReason: string | null;
     sourceAttempts: number;
     sourceFailures: number;
+    perSearch: readonly SearchSourceFetchStat[];
   }> {
     const uniqueJobs = new Map<string, NormalizedJob>();
     let jobsFetched = 0;
@@ -230,6 +255,7 @@ export class DiscoveryService {
     let stopReason: string | null = null;
     let sourceAttempts = 0;
     let sourceFailures = 0;
+    const perSearch: SearchSourceFetchStat[] = [];
     const catalogSourceIds = this.sourceRegistry
       .list()
       .map((adapter) => adapter.sourceId);
@@ -239,12 +265,13 @@ export class DiscoveryService {
         search.sourceIds.length > 0 ? search.sourceIds : catalogSourceIds;
 
       for (const sourceId of sourceIds) {
-        const fetched = await this.fetchFromSource(
-          search,
-          sourceId,
-          uniqueJobs,
-          profilesByUserId.get(search.userId),
-        );
+        const fetched = await this.fetchFromSource(search, sourceId, uniqueJobs);
+        perSearch.push({
+          savedSearchId: search.id,
+          source: sourceId,
+          fetchedJobCount: fetched.raw,
+          normalizedJobCount: fetched.accepted,
+        });
         jobsFetched += fetched.accepted;
         rawProviderJobs += fetched.raw;
         if (fetched.outcome !== 'skipped') {
@@ -273,6 +300,7 @@ export class DiscoveryService {
       stopReason,
       sourceAttempts,
       sourceFailures,
+      perSearch,
     };
   }
 
@@ -280,7 +308,6 @@ export class DiscoveryService {
     search: SavedSearch,
     sourceId: SourceId,
     uniqueJobs: Map<string, NormalizedJob>,
-    profile: ProfileLocation | undefined,
   ): Promise<{
     accepted: number;
     raw: number;
@@ -305,9 +332,7 @@ export class DiscoveryService {
     const startedAt = Date.now();
 
     try {
-      const result = await adapter.search(
-        toSourceQuery(search, this.maxAgeDays(), profile),
-      );
+      const result = await adapter.search(toSourceQuery(search, this.maxAgeDays()));
       let accepted = 0;
       const now = new Date();
 
@@ -373,14 +398,73 @@ export class DiscoveryService {
     }
   }
 
+  private logSavedSearchOutcomes(
+    searches: readonly SavedSearch[],
+    jobs: readonly MatchableJob[],
+    fetchStats: readonly SearchSourceFetchStat[],
+  ): void {
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
+
+    for (const search of searches) {
+      const sourceStats = fetchStats.filter(
+        (stat) => stat.savedSearchId === search.id,
+      );
+      let matchedCount = 0;
+      let rejectedCount = 0;
+      const rejectReasons: Record<string, number> = {};
+
+      for (const job of jobs) {
+        const decision = this.matchingService.evaluateMatch(job, search);
+        if (decision.matched) {
+          matchedCount += 1;
+          continue;
+        }
+
+        rejectedCount += 1;
+        for (const reason of decision.reasons) {
+          rejectReasons[reason] = (rejectReasons[reason] ?? 0) + 1;
+        }
+      }
+
+      for (const stat of sourceStats) {
+        this.logger.log({
+          message: 'Saved search discovery',
+          userId: search.userId,
+          savedSearchId: search.id,
+          searchName: search.name,
+          source: stat.source,
+          fetchedJobCount: stat.fetchedJobCount,
+          normalizedJobCount: stat.normalizedJobCount,
+          matchedCount,
+          rejectedCount,
+          rejectReasons,
+        });
+      }
+    }
+  }
+
   private logDiscoveryCounts(counts: {
-    rawProviderJobs: number;
-    normalizedJobs: number;
+    usersProcessed: number;
+    searchesProcessed: number;
+    jobsFetched: number;
     jobsInserted: number;
     matchesCreated: number;
+    rawProviderJobs: number;
+    normalizedJobs: number;
     visibleMatchesCreated: number;
     notifiedJobCount: number;
   }): void {
+    this.logger.log({
+      message: 'Discovery summary',
+      usersProcessed: counts.usersProcessed,
+      searchesProcessed: counts.searchesProcessed,
+      jobsFetched: counts.jobsFetched,
+      jobsInserted: counts.jobsInserted,
+      matchesCreated: counts.matchesCreated,
+    });
+
     if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'test') {
       return;
     }
@@ -446,15 +530,14 @@ function preferKariyerStopReason(
 function toSourceQuery(
   search: SavedSearch,
   maxAgeDays: number,
-  profile: ProfileLocation | undefined,
 ): SourceSearchQuery {
-  const resolved = resolveEffectiveSearchLocation(search.locations, profile);
+  const resolved = resolveSavedSearchLocation(search);
 
   return {
     keywords: search.keywords,
     technologies: search.technologies,
     locations: [...resolved.locations],
-    workModels: search.workTypes.filter((workType) => workType !== 'unknown'),
+    workModels: [],
     experienceLevels: search.experienceLevels,
     savedSearchId: search.id,
     maxAgeDays,

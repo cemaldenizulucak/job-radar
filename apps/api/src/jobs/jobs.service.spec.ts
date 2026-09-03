@@ -393,6 +393,80 @@ describe('JobsService listForUser', () => {
     expect(result.items).toEqual([]);
   });
 
+  it('does not return another user matches when matchedOnly is true', async () => {
+    const jobsQuery = chainableQuery({
+      data: [{ ...jobRow, id: 'job-a' }],
+      error: null,
+    });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-a' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-a',
+                  saved_search_id: 'search-a',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                },
+                {
+                  job_id: 'job-b',
+                  saved_search_id: 'search-b',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({
+            data: [],
+            error: null,
+          });
+          return Object.assign(result, {
+            eq: () => result,
+            in: () => result,
+          });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-a',
+      matchedOnly: true,
+    });
+
+    expect(jobsQuery.in).toHaveBeenCalledWith('id', ['job-a']);
+    expect(result.items.map((item) => item.id)).toEqual(['job-a']);
+    expect(result.items[0]?.matchedSearchIds).toEqual(['search-a']);
+  });
+
   it('does not filter is_active when includeInactive is true', async () => {
     const jobsQuery = chainableQuery({ data: [jobRow], error: null });
     const from = vi.fn((table: string) => {

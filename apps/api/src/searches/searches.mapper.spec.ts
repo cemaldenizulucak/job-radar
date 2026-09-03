@@ -23,12 +23,35 @@ describe('mapSavedSearchRow', () => {
       keywords: ['frontend'],
       technologies: ['react'],
       locations: ['Istanbul'],
+      countryCode: null,
+      countryName: null,
+      subdivisionCode: null,
+      subdivisionName: null,
       workTypes: ['remote'],
       experienceLevels: ['mid'],
       sourceIds: ['linkedin'],
       createdAt: '',
       updatedAt: '',
     });
+  });
+
+  it('maps structured location columns when present', () => {
+    expect(
+      mapSavedSearchRow({
+        ...validRow,
+        country_code: 'TR',
+        country_name: 'Türkiye',
+        subdivision_code: '35',
+        subdivision_name: 'İzmir',
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        countryCode: 'TR',
+        countryName: 'Türkiye',
+        subdivisionCode: '35',
+        subdivisionName: 'İzmir',
+      }),
+    );
   });
 
   it('drops invalid rows instead of throwing', () => {
