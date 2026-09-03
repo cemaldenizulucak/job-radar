@@ -20,27 +20,28 @@ export function jobCardAppearance(input: {
 export function jobCardAccessibilityLabel(input: {
   title: string;
   companyName: string;
+  sourceLabel: string;
   isUnread: boolean;
   isNew: boolean;
   isFavorite?: boolean;
-  matchLabel?: string;
+  relevanceLabel?: string;
 }): string {
   const parts: string[] = [];
 
   if (input.isUnread) {
-    parts.push('Unread');
+    parts.push('Okunmadı');
   }
   if (input.isNew) {
-    parts.push('New');
+    parts.push('Yeni');
   }
 
-  parts.push(`${input.title} at ${input.companyName}`);
+  parts.push(input.title, input.companyName, input.sourceLabel);
 
-  if (input.matchLabel) {
-    parts.push(input.matchLabel);
+  if (input.relevanceLabel) {
+    parts.push(input.relevanceLabel);
   }
   if (input.isFavorite) {
-    parts.push('Saved');
+    parts.push('Favori');
   }
 
   return parts.join(', ');

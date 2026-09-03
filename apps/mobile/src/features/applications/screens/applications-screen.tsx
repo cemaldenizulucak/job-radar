@@ -1,15 +1,22 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ChipTabs } from '@/components/chip-tabs';
+import { EmptyState } from '@/components/empty-state';
+import { ErrorState } from '@/components/error-state';
+import { LoadingState } from '@/components/loading-state';
+import { ScreenHeader } from '@/components/screen-header';
 import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { uiCopy } from '@/constants/ui';
 import { useAuth } from '@/features/auth/hooks/useAuth';
+import { getApplicationStatusAppearance } from '@/features/applications/utils/status-appearance';
 import { useTheme } from '@/hooks/use-theme';
 
 import { ApplicationRow } from '../components/application-row';
+import { applicationsCopy } from '../copy';
 import { useApplications } from '../hooks/useApplications';
 import {
   APPLICATION_SECTION_LABELS,
@@ -39,24 +46,23 @@ export function ApplicationsScreen() {
 
   const tabs = useMemo(
     () => [
-      { id: 'all', label: 'All', count: items.length },
+      { id: 'all', label: uiCopy.all, count: items.length },
       ...APPLICATION_SECTIONS.map((status) => ({
         id: status,
         label: APPLICATION_SECTION_LABELS[status],
         count: items.filter((item) => item.status === status).length,
+        selectedColor: getApplicationStatusAppearance(status, theme.scheme).accentColor,
       })),
     ],
-    [items],
+    [items, theme.scheme],
   );
 
   return (
     <ScreenScaffold>
-      <View style={styles.header}>
-        <ThemedText style={styles.title}>Applications</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          Status is yours only. Duplicate source listings stay separate.
-        </ThemedText>
-      </View>
+      <ScreenHeader
+        title={applicationsCopy.screenTitle}
+        subtitle={applicationsCopy.subtitle}
+      />
 
       <ChipTabs
         items={tabs}
@@ -66,32 +72,23 @@ export function ApplicationsScreen() {
         }}
       />
 
-      {isLoading ? <ActivityIndicator color={theme.accent} /> : null}
+      {isLoading ? <LoadingState /> : null}
 
       {error ? (
-        <View style={styles.state}>
-          <ThemedText style={{ color: theme.danger }}>{error}</ThemedText>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              void refetch();
-            }}
-            style={[styles.retry, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">Retry</ThemedText>
-          </Pressable>
-        </View>
+        <ErrorState
+          title={applicationsCopy.loadError}
+          onRetry={() => {
+            void refetch();
+          }}
+        />
       ) : null}
 
       {!isLoading && !error && items.length === 0 ? (
-        <ThemedText themeColor="textSecondary">
-          Track a job from its detail screen to see it here.
-        </ThemedText>
+        <EmptyState title={applicationsCopy.empty} />
       ) : null}
 
       {!isLoading && !error && items.length > 0 && visibleItems.length === 0 ? (
-        <ThemedText themeColor="textSecondary">
-          No applications with this status.
-        </ThemedText>
+        <EmptyState title={applicationsCopy.emptyFilter} />
       ) : null}
 
       {!isLoading && !error
@@ -104,19 +101,21 @@ export function ApplicationsScreen() {
               return null;
             }
 
+            const appearance = getApplicationStatusAppearance(status, theme.scheme);
+
             return (
               <View key={status} style={styles.section}>
                 <View style={styles.sectionHeader}>
-                  <ThemedText type="smallBold">
+                  <ThemedText type="sectionTitle" style={{ color: appearance.textColor }}>
                     {APPLICATION_SECTION_LABELS[status]}
                   </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
+                  <ThemedText type="meta" themeColor="textSecondary">
                     {sectionItems.length}
                   </ThemedText>
                 </View>
                 {sectionItems.length === 0 ? (
-                  <ThemedText type="small" themeColor="textSecondary">
-                    No applications in this status.
+                  <ThemedText type="meta" themeColor="textSecondary">
+                    {applicationsCopy.emptyFilter}
                   </ThemedText>
                 ) : (
                   <View style={styles.list}>
@@ -134,14 +133,6 @@ export function ApplicationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    gap: Spacing.one,
-  },
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 700,
-  },
   section: {
     gap: Spacing.two,
   },
@@ -152,14 +143,5 @@ const styles = StyleSheet.create({
   },
   list: {
     gap: Spacing.two,
-  },
-  state: {
-    gap: Spacing.two,
-  },
-  retry: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
 });

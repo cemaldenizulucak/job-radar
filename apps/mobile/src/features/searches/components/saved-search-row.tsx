@@ -1,10 +1,16 @@
 import { ActivityIndicator, Pressable, StyleSheet, Switch, View } from 'react-native';
 
+import { AppBadge } from '@/components/app-badge';
+import { AppButton } from '@/components/app-button';
+import { AppCard } from '@/components/app-card';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { uiCopy } from '@/constants/ui';
 import { useTheme } from '@/hooks/use-theme';
 
+import { searchesCopy, sourceName, workTypeLabel } from '../copy';
 import type { SavedSearch } from '../types/search.types';
+import { searchLocationDisplay } from '../utils/search-location-display';
 
 type SavedSearchRowProps = {
   search: SavedSearch;
@@ -17,14 +23,20 @@ type SavedSearchRowProps = {
   onToggleActive: (isActive: boolean) => void;
 };
 
-function sourceSummary(search: SavedSearch): string {
-  if (search.sources.length === 0) {
-    return 'No sources';
-  }
+function filterSummary(search: SavedSearch): string {
+  const location = searchLocationDisplay(search);
+  const locationLabel = location.fromProfile
+    ? location.label
+      ? `${location.label} · ${searchesCopy.profileLocationBadge}`
+      : ''
+    : location.label ?? '';
+  const parts = [
+    search.keywords.slice(0, 3).join(', ') || searchesCopy.noKeywords,
+    locationLabel,
+    search.workTypes.map(workTypeLabel).join(', '),
+  ].filter((part) => part.length > 0);
 
-  return search.sources
-    .map((source) => (source === 'linkedin' ? 'LinkedIn' : 'Kariyer.net'))
-    .join(' · ');
+  return parts.join(' · ');
 }
 
 export function SavedSearchRow({
@@ -40,31 +52,49 @@ export function SavedSearchRow({
   const theme = useTheme();
 
   return (
-    <View style={[styles.row, { backgroundColor: theme.backgroundElement }]}>
+    <AppCard>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${search.name}. View details.`}
+        accessibilityLabel={`${search.name}. ${searchesCopy.viewJobs}.`}
         disabled={disabled}
-        onPress={onPress}
-        style={({ pressed }) => [styles.copy, { opacity: pressed ? 0.85 : 1 }]}>
-        <ThemedText style={styles.name}>{search.name}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {sourceSummary(search)}
+        onPress={onPress}>
+        <View style={styles.top}>
+          <ThemedText type="cardTitle" style={styles.name}>
+            {search.name}
+          </ThemedText>
+          <AppBadge
+            label={search.isActive ? searchesCopy.active : searchesCopy.paused}
+            backgroundColor={search.isActive ? theme.successMuted : theme.backgroundSelected}
+            textColor={search.isActive ? theme.success : theme.textSecondary}
+          />
+        </View>
+        <ThemedText type="meta" themeColor="textSecondary">
+          {filterSummary(search)}
         </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {search.keywords.slice(0, 3).join(', ') || 'No keywords'}
-        </ThemedText>
-        {matchCount !== undefined ? (
-          <ThemedText type="small" themeColor="textSecondary">
-            {matchCount} matching job{matchCount === 1 ? '' : 's'}
+      </Pressable>
+      <View style={styles.sources}>
+        {search.sources.map((source) => (
+          <AppBadge
+            key={source}
+            label={sourceName(source)}
+            backgroundColor={theme.backgroundSelected}
+            textColor={theme.text}
+          />
+        ))}
+        {search.sources.length === 0 ? (
+          <ThemedText type="meta" themeColor="textSecondary">
+            {searchesCopy.noSources}
           </ThemedText>
         ) : null}
-      </Pressable>
+      </View>
+      {matchCount !== undefined ? (
+        <ThemedText type="meta" themeColor="textSecondary">
+          {searchesCopy.matchCount(matchCount)}
+        </ThemedText>
+      ) : null}
       <View style={styles.status}>
-        <ThemedText
-          type="smallBold"
-          style={{ color: search.isActive ? theme.success : theme.textSecondary }}>
-          {search.isActive ? 'Active' : 'Paused'}
+        <ThemedText type="smallBold">
+          {search.isActive ? searchesCopy.active : searchesCopy.paused}
         </ThemedText>
         <Switch
           value={search.isActive}
@@ -74,60 +104,47 @@ export function SavedSearchRow({
         />
       </View>
       <View style={styles.actions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${search.name}`}
+        <AppButton
+          label={uiCopy.edit}
+          variant="secondary"
           disabled={disabled}
           onPress={onEdit}
-          style={({ pressed }) => [
-            styles.action,
-            {
-              backgroundColor: theme.backgroundSelected,
-              opacity: disabled || pressed ? 0.7 : 1,
-            },
-          ]}>
-          <ThemedText type="smallBold">Edit</ThemedText>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Delete ${search.name}`}
+          accessibilityLabel={`${uiCopy.edit} ${search.name}`}
+          style={styles.action}
+        />
+        <AppButton
+          label={uiCopy.delete}
+          variant="ghost"
           disabled={disabled}
           onPress={onDelete}
-          style={({ pressed }) => [
-            styles.action,
-            {
-              backgroundColor: theme.backgroundSelected,
-              opacity: disabled || pressed ? 0.7 : 1,
-            },
-          ]}>
-          <ThemedText type="smallBold" style={{ color: theme.danger }}>
-            Delete
-          </ThemedText>
-        </Pressable>
+          accessibilityLabel={`${uiCopy.delete} ${search.name}`}
+          style={styles.action}
+        />
       </View>
       {isRefreshing ? (
         <View style={styles.refreshing}>
           <ActivityIndicator color={theme.accent} />
-          <ThemedText type="smallBold">Refreshing results...</ThemedText>
+          <ThemedText type="smallBold">{searchesCopy.scanning}</ThemedText>
         </View>
       ) : null}
-    </View>
+    </AppCard>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
-    borderRadius: 16,
-    padding: Spacing.three,
-    gap: Spacing.three,
-  },
-  copy: {
-    gap: Spacing.one,
+  top: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
   },
   name: {
-    fontSize: 17,
-    lineHeight: 22,
-    fontWeight: 700,
+    flex: 1,
+  },
+  sources: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.one,
   },
   status: {
     flexDirection: 'row',
@@ -141,11 +158,6 @@ const styles = StyleSheet.create({
   },
   action: {
     flex: 1,
-    minHeight: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.three,
   },
   refreshing: {
     flexDirection: 'row',

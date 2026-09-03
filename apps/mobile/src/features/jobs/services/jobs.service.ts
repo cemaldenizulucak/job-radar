@@ -22,14 +22,14 @@ function toServiceError(error: unknown): JobsServiceError {
   }
 
   if (error instanceof ZodError) {
-    return new JobsServiceError('Unexpected response from the jobs API.');
+    return new JobsServiceError('İlanlar beklenmeyen bir yanıt verdi.');
   }
 
   if (error instanceof Error && error.message.trim().length > 0) {
     return new JobsServiceError(error.message);
   }
 
-  return new JobsServiceError('Couldn’t load jobs. Try again.');
+    return new JobsServiceError('İlanlar yüklenemedi. Lütfen tekrar deneyin.');
 }
 
 export function mapJobListItem(
@@ -62,7 +62,7 @@ export async function listJobs(
   try {
     const payload = jobListResponseSchema.parse(
       await apiGet(
-        `/v1/jobs?limit=50&matchedOnly=${matchedOnly ? 'true' : 'false'}`,
+        `/v1/jobs?limit=200&matchedOnly=${matchedOnly ? 'true' : 'false'}`,
       ),
     );
     return payload.items.map(mapJobListItem);
@@ -78,7 +78,7 @@ export async function getJob(id: string): Promise<JobDetail> {
     );
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
-      throw new JobsServiceError('Job not found.');
+      throw new JobsServiceError('İlan bulunamadı.');
     }
 
     throw toServiceError(error);

@@ -282,6 +282,73 @@ describe('JobsService listForUser', () => {
     ]);
   });
 
+  it('returns a newly matched job from GET /v1/jobs?matchedOnly=true', async () => {
+    const jobsQuery = chainableQuery({ data: [jobRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-1' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-1',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-02T18:00:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({
+            data: [],
+            error: null,
+          });
+          return Object.assign(result, {
+            eq: () => result,
+            in: () => result,
+          });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      limit: 200,
+    });
+
+    expect(jobsQuery.in).toHaveBeenCalledWith('id', ['job-1']);
+    expect(jobsQuery.eq).toHaveBeenCalledWith('is_active', true);
+    expect(result.items.map((item) => item.id)).toEqual(['job-1']);
+  });
+
   it('returns an empty feed when matchedOnly is true and the user has no matches', async () => {
     const from = vi.fn((table: string) => {
       if (table === 'saved_searches') {

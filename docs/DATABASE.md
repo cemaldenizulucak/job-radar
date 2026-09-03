@@ -120,8 +120,12 @@ Application user, 1:1 with `auth.users`.
 | `display_name` | text | |
 | `timezone` | text | IANA name, e.g. `Europe/Istanbul`. Scheduling decision still open. |
 | `notifications_enabled` | boolean | Default true |
+| `country` | text | Home country. Nullable for existing accounts. Default search location when a saved search has no location. |
+| `city` | text | Home city. Nullable. Combined with `country` as the default search location. |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
+
+Add columns on live databases with [PROFILE_LOCATION.sql](./PROFILE_LOCATION.sql) (also included in [REMAINING_PERMISSIONS.sql](./REMAINING_PERMISSIONS.sql)). Existing profile rows are unchanged; both fields are nullable.
 
 ### 4.2 `saved_searches`
 

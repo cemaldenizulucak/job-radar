@@ -11,6 +11,9 @@ export type DiscoveryPushPayload = {
   userId: string;
   title: string;
   body: string;
+  discoveryRunId?: string;
+  savedSearchId?: string | null;
+  newJobCount?: number;
 };
 
 @Injectable()
@@ -37,6 +40,9 @@ export class PushNotificationsService {
         data: {
           type: JOB_DISCOVERY_PUSH_TYPE,
           route: JOB_DISCOVERY_PUSH_ROUTE,
+          discoveryRunId: input.discoveryRunId ?? null,
+          savedSearchId: input.savedSearchId ?? null,
+          newJobCount: input.newJobCount ?? null,
         },
       }));
 

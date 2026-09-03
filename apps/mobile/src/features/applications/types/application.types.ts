@@ -16,10 +16,10 @@ export const APPLICATION_SECTIONS: readonly ApplicationStatus[] = [
 ];
 
 export const APPLICATION_SECTION_LABELS: Record<ApplicationStatus, string> = {
-  NEW: 'New',
-  REVIEWING: 'Reviewing',
-  APPLIED: 'Applied',
-  INTERVIEW: 'Interview',
-  OFFER: 'Offer',
-  REJECTED: 'Rejected',
+  NEW: 'Yeni',
+  REVIEWING: 'İnceleniyor',
+  APPLIED: 'Başvuruldu',
+  INTERVIEW: 'Mülakat',
+  OFFER: 'Teklif',
+  REJECTED: 'Reddedildi',
 };

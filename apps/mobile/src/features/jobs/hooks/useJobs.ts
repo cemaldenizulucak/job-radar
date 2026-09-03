@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { userErrorMessage } from '@/lib/api-error';
-
+import { jobsCopy, jobsUiError } from '../copy';
 import { getJob, listJobs, markJobSeen } from '../services/jobs.service';
 import { useJobsSeenStore } from '../stores/jobs-seen.store';
 import type { JobDetail, JobListItem } from '../types/job.types';
 
-function toErrorMessage(error: unknown): string {
-  return userErrorMessage(error, 'Something went wrong. Try again.');
+function toFeedError(error: unknown): string {
+  return jobsUiError(error, jobsCopy.feedError);
+}
+
+function toJobError(error: unknown): string {
+  return jobsUiError(error, jobsCopy.jobNotFound);
 }
 
 export function useJobs(
@@ -31,7 +34,7 @@ export function useJobs(
   const refetch = useCallback(async () => {
     if (!userId) {
       setItems([]);
-      setError('You need to be signed in.');
+      setError(jobsCopy.signedInRequired);
       setIsLoading(false);
       return;
     }
@@ -43,7 +46,7 @@ export function useJobs(
       const jobs = await listJobs({ matchedOnly });
       setItems(jobs);
     } catch (caught) {
-      setError(toErrorMessage(caught));
+      setError(toFeedError(caught));
     } finally {
       setIsLoading(false);
     }
@@ -69,14 +72,14 @@ export function useJob(id: string | undefined, userId: string | undefined) {
   const refetch = useCallback(async () => {
     if (!id) {
       setJob(null);
-      setError('Job not found.');
+      setError(jobsCopy.jobNotFound);
       setIsLoading(false);
       return;
     }
 
     if (!userId) {
       setJob(null);
-      setError('You need to be signed in.');
+      setError(jobsCopy.signedInRequired);
       setIsLoading(false);
       return;
     }
@@ -104,7 +107,7 @@ export function useJob(id: string | undefined, userId: string | undefined) {
       }
     } catch (caught) {
       setJob(null);
-      setError(toErrorMessage(caught));
+      setError(toJobError(caught));
     } finally {
       setIsLoading(false);
     }

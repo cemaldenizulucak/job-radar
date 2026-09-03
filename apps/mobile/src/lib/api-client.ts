@@ -1,4 +1,5 @@
-import { getApiBaseUrl } from './api-config';
+import { uiCopy } from '@/constants/ui';
+import { getApiBaseUrl, logDevApiRequestFailure } from './api-config';
 import { extractApiErrorMessage } from './api-error';
 import { supabase } from './supabase';
 
@@ -14,10 +15,10 @@ export class ApiClientError extends Error {
 
 function readErrorMessage(value: unknown, status: number): string {
   if (status === 401) {
-    return 'Your session expired. Sign in again.';
+    return uiCopy.sessionExpired;
   }
 
-  return extractApiErrorMessage(value) ?? `Request failed (${status}).`;
+  return extractApiErrorMessage(value) ?? `İstek başarısız oldu (${status}).`;
 }
 
 async function getAccessToken(): Promise<string | null> {
@@ -36,7 +37,7 @@ async function apiRequest(
 ): Promise<unknown> {
   const token = await getAccessToken();
   if (!token) {
-    throw new ApiClientError('Your session expired. Sign in again.', 401);
+    throw new ApiClientError(uiCopy.sessionExpired, 401);
   }
 
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
@@ -50,7 +51,15 @@ async function apiRequest(
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetch(`${getApiBaseUrl()}${normalizedPath}`, init);
+  const url = `${getApiBaseUrl()}${normalizedPath}`;
+  let response: Response;
+
+  try {
+    response = await fetch(url, init);
+  } catch (error) {
+    logDevApiRequestFailure({ endpoint: normalizedPath, error });
+    throw error;
+  }
 
   let payload: unknown = null;
   const contentType = response.headers.get('content-type') ?? '';
@@ -60,7 +69,12 @@ async function apiRequest(
   }
 
   if (!response.ok) {
-    throw new ApiClientError(readErrorMessage(payload, response.status), response.status);
+    const error = new ApiClientError(
+      readErrorMessage(payload, response.status),
+      response.status,
+    );
+    logDevApiRequestFailure({ endpoint: normalizedPath, error });
+    throw error;
   }
 
   return payload;

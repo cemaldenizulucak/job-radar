@@ -10,7 +10,7 @@ describe('NotificationsService', () => {
       data: {
         id: 'n-1',
         user_id: 'user-1',
-        title: '1 new job found',
+        title: '1 yeni ilan bulundu',
         message: '1 LinkedIn',
         type: 'JOB_DISCOVERY',
         is_read: false,
@@ -44,7 +44,7 @@ describe('NotificationsService', () => {
       data: {
         id: 'n-1',
         user_id: 'user-1',
-        title: '1 new job found',
+        title: '1 yeni ilan bulundu',
         message: '1 LinkedIn',
         type: 'JOB_DISCOVERY',
         is_read: false,
@@ -73,8 +73,11 @@ describe('NotificationsService', () => {
 
     expect(sendDiscoveryPush).toHaveBeenCalledWith({
       userId: 'user-1',
-      title: '1 new job found',
+      title: '1 yeni ilan bulundu',
       body: '1 LinkedIn',
+      discoveryRunId: 'run-push',
+      savedSearchId: 'search-a',
+      newJobCount: 1,
     });
   });
 
@@ -83,7 +86,7 @@ describe('NotificationsService', () => {
       data: {
         id: 'n-1',
         user_id: 'user-1',
-        title: '1 new job found',
+        title: '1 yeni ilan bulundu',
         message: '1 LinkedIn',
         type: 'JOB_DISCOVERY',
         is_read: false,
@@ -119,7 +122,7 @@ describe('NotificationsService', () => {
       data: {
         id: 'n-test',
         user_id: 'user-1',
-        title: '3 new jobs found',
+        title: '3 yeni ilan bulundu',
         message: '2 LinkedIn, 1 Kariyer.net',
         type: 'JOB_DISCOVERY',
         is_read: false,
@@ -135,17 +138,24 @@ describe('NotificationsService', () => {
 
     const result = await service.createTestNotification('user-1');
 
-    expect(insert).toHaveBeenCalledWith({
-      user_id: 'user-1',
-      title: '3 new jobs found',
-      message: '2 LinkedIn, 1 Kariyer.net',
-      type: 'JOB_DISCOVERY',
-      is_read: false,
-    });
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'user-1',
+        title: '3 yeni ilan bulundu',
+        message: '2 LinkedIn, 1 Kariyer.net',
+        type: 'JOB_DISCOVERY',
+        is_read: false,
+        data: expect.objectContaining({
+          discoveryRunId: 'test',
+          savedSearchId: null,
+          newJobCount: 3,
+        }),
+      }),
+    );
     expect(result).toMatchObject({
       id: 'n-test',
       userId: 'user-1',
-      title: '3 new jobs found',
+      title: '3 yeni ilan bulundu',
       message: '2 LinkedIn, 1 Kariyer.net',
       type: 'JOB_DISCOVERY',
       isRead: false,
@@ -158,7 +168,7 @@ describe('NotificationsService', () => {
         {
           id: 'n-2',
           user_id: 'user-1',
-          title: '2 new jobs found',
+          title: '2 yeni ilan bulundu',
           message: '2 LinkedIn',
           type: 'JOB_DISCOVERY',
           is_read: false,
@@ -167,7 +177,7 @@ describe('NotificationsService', () => {
         {
           id: 'n-1',
           user_id: 'user-1',
-          title: '1 new job found',
+          title: '1 yeni ilan bulundu',
           message: '1 Kariyer.net',
           type: 'JOB_DISCOVERY',
           is_read: true,
@@ -195,7 +205,7 @@ describe('NotificationsService', () => {
       data: {
         id: 'n-1',
         user_id: 'user-1',
-        title: '1 new job found',
+        title: '1 yeni ilan bulundu',
         message: '1 LinkedIn',
         type: 'JOB_DISCOVERY',
         is_read: true,

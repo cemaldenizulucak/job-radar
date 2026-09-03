@@ -1,11 +1,13 @@
 import type { ChipTabItem } from '@/components/chip-tabs';
 
+import { jobsCopy } from '../copy';
 import type {
   JobApplicationStatus,
   JobListItem,
   JobSourceId,
   WorkModel,
 } from '../types/job.types';
+import { formatTurkishJobDateFromIso } from './job-dates';
 
 export function sourceLabel(sourceId: JobSourceId): string {
   return sourceId === 'linkedin' ? 'LinkedIn' : 'Kariyer.net';
@@ -13,43 +15,31 @@ export function sourceLabel(sourceId: JobSourceId): string {
 
 export function workModelLabel(workModel: WorkModel | null): string {
   if (workModel === 'remote') {
-    return 'Remote';
+    return jobsCopy.workModelRemote;
   }
 
   if (workModel === 'hybrid') {
-    return 'Hybrid';
+    return jobsCopy.workModelHybrid;
   }
 
   if (workModel === 'onsite') {
-    return 'On-site';
+    return jobsCopy.workModelOnsite;
   }
 
-  return 'Work model unknown';
+  return jobsCopy.workModelUnknown;
 }
 
 export function isSourceFilter(id: string): id is JobSourceId | 'all' {
   return id === 'all' || id === 'linkedin' || id === 'kariyer_net';
 }
 
-export function formatJobDateLabel(iso: string | null): string {
-  if (!iso) {
-    return 'Unknown';
-  }
-
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown';
-  }
-
-  return date.toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+export function formatJobDateLabel(iso: string | null, now: Date = new Date()): string {
+  return formatTurkishJobDateFromIso(iso, now) ?? '—';
 }
 
 export function formatLocation(location: string | null): string {
   const trimmed = location?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : 'Location unknown';
+  return trimmed && trimmed.length > 0 ? trimmed : jobsCopy.locationUnknown;
 }
 
 export function latestFirstDiscoveredAt(
@@ -78,7 +68,7 @@ export function countJobsBySource(
 
 export function buildSourceTabs(items: readonly JobListItem[]): ChipTabItem[] {
   return [
-    { id: 'all', label: 'All', count: countJobsBySource(items, 'all') },
+    { id: 'all', label: jobsCopy.all, count: countJobsBySource(items, 'all') },
     { id: 'linkedin', label: 'LinkedIn', count: countJobsBySource(items, 'linkedin') },
     {
       id: 'kariyer_net',
@@ -113,16 +103,16 @@ export const JOB_APPLICATION_STATUSES: readonly JobApplicationStatus[] = [
 export function applicationStatusLabel(status: JobApplicationStatus): string {
   switch (status) {
     case 'NEW':
-      return 'New';
+      return jobsCopy.applicationNew;
     case 'REVIEWING':
-      return 'Reviewing';
+      return jobsCopy.applicationReviewing;
     case 'APPLIED':
-      return 'Applied';
+      return jobsCopy.applicationApplied;
     case 'INTERVIEW':
-      return 'Interview';
+      return jobsCopy.applicationInterview;
     case 'OFFER':
-      return 'Offer';
+      return jobsCopy.applicationOffer;
     case 'REJECTED':
-      return 'Rejected';
+      return jobsCopy.applicationRejected;
   }
 }

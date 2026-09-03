@@ -5,13 +5,25 @@ import {
   JOB_DISCOVERY_PUSH_TYPE,
   isJobDiscoveryNotification,
   jobDiscoveryNotificationRoute,
+  jobDiscoverySavedSearchId,
 } from './push-notification-data';
+import {
+  IOS_PUSH_PERMISSIONS,
+  shouldRegisterPushOnPlatform,
+} from './push-platform';
 
 export {
   JOB_DISCOVERY_PUSH_TYPE,
   isJobDiscoveryNotification,
   jobDiscoveryNotificationRoute,
+  jobDiscoverySavedSearchId,
 };
+
+export {
+  IOS_PUSH_PERMISSIONS,
+  nativePushPlatform,
+  shouldRegisterPushOnPlatform,
+} from './push-platform';
 
 export type PushRegistrationStatus =
   | 'granted'
@@ -25,7 +37,7 @@ export type PushRegistrationResult = {
 };
 
 export async function configureForegroundNotificationHandler(): Promise<void> {
-  if (Platform.OS === 'web') {
+  if (!shouldRegisterPushOnPlatform(Platform.OS)) {
     return;
   }
 
@@ -41,7 +53,7 @@ export async function configureForegroundNotificationHandler(): Promise<void> {
 }
 
 export async function registerForPushNotifications(): Promise<PushRegistrationResult> {
-  if (Platform.OS === 'web') {
+  if (!shouldRegisterPushOnPlatform(Platform.OS)) {
     return { token: null, status: 'unsupported' };
   }
 
@@ -55,17 +67,19 @@ export async function registerForPushNotifications(): Promise<PushRegistrationRe
 
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
-        name: 'Job alerts',
+        name: 'İş ilanları',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#208AEF',
+        lightColor: '#2563EB',
       });
     }
 
     const existing = await Notifications.getPermissionsAsync();
     let status = existing.status;
     if (status !== 'granted') {
-      const requested = await Notifications.requestPermissionsAsync();
+      const requested = await Notifications.requestPermissionsAsync({
+        ios: { ...IOS_PUSH_PERMISSIONS },
+      });
       status = requested.status;
     }
 

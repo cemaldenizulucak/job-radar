@@ -45,10 +45,11 @@ describe('jobCardAccessibilityLabel', () => {
       jobCardAccessibilityLabel({
         title: 'Frontend Developer',
         companyName: 'Acme',
+        sourceLabel: 'LinkedIn',
         isUnread: true,
         isNew: true,
       }),
-    ).toBe('Unread, New, Frontend Developer at Acme');
+    ).toBe('Okunmadı, Yeni, Frontend Developer, Acme, LinkedIn');
   });
 
   it('omits unread after the job has been seen', () => {
@@ -56,9 +57,11 @@ describe('jobCardAccessibilityLabel', () => {
       jobCardAccessibilityLabel({
         title: 'Frontend Developer',
         companyName: 'Acme',
+        sourceLabel: 'Kariyer.net',
         isUnread: false,
         isNew: true,
+        isFavorite: true,
       }),
-    ).toBe('New, Frontend Developer at Acme');
+    ).toBe('Yeni, Frontend Developer, Acme, Kariyer.net, Favori');
   });
 });

@@ -26,7 +26,7 @@ function toServiceError(error: unknown): NotificationsServiceError {
 
   if (error instanceof ZodError) {
     return new NotificationsServiceError(
-      'Unexpected response from the notifications API.',
+      'Bildirimler beklenmeyen bir yanıt verdi.',
     );
   }
 
@@ -34,7 +34,7 @@ function toServiceError(error: unknown): NotificationsServiceError {
     return new NotificationsServiceError(error.message);
   }
 
-  return new NotificationsServiceError('Couldn’t load notifications. Try again.');
+  return new NotificationsServiceError('Bildirimler yüklenemedi. Lütfen tekrar deneyin.');
 }
 
 export async function listNotifications(): Promise<NotificationItem[]> {

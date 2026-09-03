@@ -10,10 +10,11 @@ import type { JobSearchMatch } from '../matching/matching.types.js';
 import { SearchesService } from '../searches/searches.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { buildDiscoveryNotificationDrafts } from '../notifications/discovery-notification.js';
+import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
+import type { JobSourceAdapter, SourceSearchQuery } from '../sources/job-source.adapter.js';
 import { KariyerNetSourceAdapter } from '../sources/adapters/kariyer-net-source.adapter.js';
 import { LinkedInSourceAdapter } from '../sources/adapters/linkedin-source.adapter.js';
-import type { JobSourceAdapter } from '../sources/job-source.adapter.js';
 import { KariyerNetMockProvider } from '../sources/kariyer-net/kariyer-net-mock.provider.js';
 import { createKariyerNetProvider } from '../sources/kariyer-net/kariyer-net-provider.factory.js';
 import { LinkedInDisabledProvider } from '../sources/linkedin/linkedin-disabled.provider.js';
@@ -141,9 +142,50 @@ class FakeDuplicateGroupsService extends DuplicateGroupsService {
   }
 }
 
+class FakeProfilesService extends ProfilesService {
+  constructor(
+    private readonly locationsByUser = new Map<
+      string,
+      { country: string | null; city: string | null }
+    >(),
+  ) {
+    super(Object.create(SupabaseService.prototype) as SupabaseService);
+  }
+
+  override getByUserId(userId: string) {
+    const location = this.locationsByUser.get(userId) ?? {
+      country: null,
+      city: null,
+    };
+
+    return Promise.resolve({
+      userId,
+      fullName: null,
+      email: null,
+      notificationsEnabled: true,
+      timezone: null,
+      country: location.country,
+      city: location.city,
+    });
+  }
+
+  override getLocationsByUserIds(userIds: readonly string[]) {
+    const locations = new Map(
+      userIds.map((userId) => [
+        userId,
+        this.locationsByUser.get(userId) ?? { country: null, city: null },
+      ]),
+    );
+
+    return Promise.resolve(locations);
+  }
+}
+
 class FakeNotificationsService extends NotificationsService {
   createdCount = 0;
   calls = 0;
+  lastInput: Parameters<NotificationsService['createForNewMatches']>[0] | null =
+    null;
 
   constructor() {
     super(Object.create(SupabaseService.prototype) as SupabaseService);
@@ -153,6 +195,7 @@ class FakeNotificationsService extends NotificationsService {
     input: Parameters<NotificationsService['createForNewMatches']>[0],
   ): Promise<number> {
     this.calls += 1;
+    this.lastInput = input;
     const created = buildDiscoveryNotificationDrafts(input).length;
     this.createdCount += created;
     return Promise.resolve(created);
@@ -177,6 +220,7 @@ function createDiscovery(
   jobs = new FakeJobsService(),
   groups = new FakeDuplicateGroupsService(),
   notifications = new FakeNotificationsService(),
+  profiles = new FakeProfilesService(),
 ): {
   discovery: DiscoveryService;
   jobs: FakeJobsService;
@@ -196,6 +240,7 @@ function createDiscovery(
     groups,
     jobs,
     notifications,
+    profiles,
     { get: () => undefined } as never,
   );
 
@@ -220,6 +265,9 @@ describe('DiscoveryService', () => {
       stopReason: null,
       sourceAttempts: 2,
       sourceFailures: 0,
+      rawProviderJobs: 6,
+      normalizedJobs: 6,
+      notifiedJobCount: 4,
     });
     expect(jobs.listings.size).toBe(6);
     expect(
@@ -431,19 +479,82 @@ describe('DiscoveryService', () => {
     const { discovery } = createDiscovery([], [linkedIn]);
 
     await expect(discovery.run()).resolves.toEqual({
-      searchesProcessed: 0,
-      jobsFetched: 0,
-      jobsInserted: 0,
-      matchesCreated: 0,
-      duplicateGroupsCreated: 0,
-      notificationsCreated: 0,
-      kariyerNetPagesFetched: 0,
-      kariyerNetJobsCollected: 0,
-      stopReason: null,
-      sourceAttempts: 0,
-      sourceFailures: 0,
+      ...EMPTY_DISCOVERY_SUMMARY,
     });
     expect(searchFn).not.toHaveBeenCalled();
+  });
+
+  it('notifies only newly created visible matches, not raw provider volume', async () => {
+    const foodJobs = Array.from({ length: 12 }, (_, index) => ({
+      sourceJobId: `food-${index}`,
+      canonicalUrl: `https://www.kariyer.net/is-ilani/food-${index}`,
+      title: 'Gıda Mühendisi',
+      companyName: 'Gıda AŞ',
+      location: 'İzmir',
+    }));
+    const otherJobs = Array.from({ length: 78 }, (_, index) => ({
+      sourceJobId: `sales-${index}`,
+      canonicalUrl: `https://www.kariyer.net/is-ilani/sales-${index}`,
+      title: 'Satış Temsilcisi',
+      companyName: 'Satış AŞ',
+      location: 'Ankara',
+    }));
+    const closedFood = {
+      sourceJobId: 'food-closed',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/food-closed',
+      title: 'Gıda Mühendisi',
+      companyName: 'Eski Gıda',
+      location: 'İzmir',
+      availability: 'closed' as const,
+    };
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({
+        sourceId: 'kariyer_net',
+        jobs: [...foodJobs, ...otherJobs, closedFood],
+        jobsCollected: 91,
+      }),
+    };
+    const notifications = new FakeNotificationsService();
+    const { discovery, jobs } = createDiscovery(
+      [
+        search({
+          keywords: ['gıda'],
+          technologies: [],
+          sourceIds: ['kariyer_net'],
+        }),
+      ],
+      [adapter],
+      new FakeJobsService(),
+      new FakeDuplicateGroupsService(),
+      notifications,
+    );
+
+    const result = await discovery.run();
+    const drafts = buildDiscoveryNotificationDrafts(notifications.lastInput!);
+
+    expect(result.rawProviderJobs).toBe(91);
+    expect(result.normalizedJobs).toBe(91);
+    expect(result.matchesCreated).toBe(13);
+    expect(result.notifiedJobCount).toBe(12);
+    expect(result.notificationsCreated).toBe(1);
+    expect(drafts[0]?.title).toBe('12 yeni ilan bulundu');
+    expect(drafts[0]?.newJobCount).toBe(12);
+    expect(drafts[0]?.savedSearchId).toBe('search-1');
+    expect(jobs.matches).toHaveLength(13);
+
+    const second = await discovery.run();
+    expect(second.matchesCreated).toBe(0);
+    expect(second.notifiedJobCount).toBe(0);
+    expect(second.notificationsCreated).toBe(0);
   });
 
   it('can create job_search_matches for an already stored listing', async () => {
@@ -734,5 +845,59 @@ describe('DiscoveryService', () => {
     await discovery.runForSavedSearch(target);
 
     expect(markStale).not.toHaveBeenCalled();
+  });
+
+  it('still runs when the user has no profile location', async () => {
+    const { discovery, jobs } = createDiscovery([search()]);
+
+    const result = await discovery.run();
+
+    expect(result.searchesProcessed).toBe(1);
+    expect(result.jobsFetched).toBeGreaterThan(0);
+    expect(jobs.listings.size).toBeGreaterThan(0);
+  });
+
+  it('passes the resolved profile location to LinkedIn and Kariyer.net adapters', async () => {
+    const received: SourceSearchQuery[] = [];
+    const capture = (sourceId: 'linkedin' | 'kariyer_net'): JobSourceAdapter => ({
+      sourceId,
+      displayName: sourceId,
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query);
+        return { sourceId, jobs: [] };
+      },
+    });
+
+    const { discovery } = createDiscovery(
+      [
+        search({
+          keywords: ['gıda mühendisi'],
+          locations: [],
+          sourceIds: ['linkedin', 'kariyer_net'],
+        }),
+      ],
+      [capture('linkedin'), capture('kariyer_net')],
+      undefined,
+      undefined,
+      undefined,
+      new FakeProfilesService(
+        new Map([['user-1', { country: 'Turkey', city: 'Izmir' }]]),
+      ),
+    );
+
+    await discovery.run();
+
+    expect(received).toHaveLength(2);
+    expect(received[0]?.locations).toEqual(['Izmir, Turkey']);
+    expect(received[1]?.locations).toEqual(['Izmir, Turkey']);
+    expect(received[0]?.keywords).toEqual(['gıda mühendisi']);
+    expect(received[1]?.keywords).toEqual(['gıda mühendisi']);
   });
 });

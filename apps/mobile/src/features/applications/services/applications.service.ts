@@ -68,7 +68,7 @@ function toServiceError(error: unknown): ApplicationsServiceError {
 
   if (error instanceof z.ZodError) {
     return new ApplicationsServiceError(
-      'Unexpected response from the applications API.',
+      'Başvurular beklenmeyen bir yanıt verdi.',
     );
   }
 
@@ -76,7 +76,7 @@ function toServiceError(error: unknown): ApplicationsServiceError {
     return new ApplicationsServiceError(error.message);
   }
 
-  return new ApplicationsServiceError('Couldn’t update application. Try again.');
+  return new ApplicationsServiceError('Başvuru güncellenemedi. Lütfen tekrar deneyin.');
 }
 
 export async function listApplications(): Promise<ApplicationItem[]> {

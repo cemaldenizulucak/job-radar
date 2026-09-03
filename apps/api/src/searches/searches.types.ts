@@ -1,4 +1,7 @@
 import type { SourceId, WorkModel } from '../common/domain.types.js';
+import type { SearchLocationOrigin } from '../common/search-location.js';
+
+export type { SearchLocationOrigin };
 
 export type SavedSearch = {
   id: string;
@@ -37,6 +40,8 @@ export type SavedSearchResponse = {
   workTypes: readonly WorkModel[];
   experienceLevels: readonly string[];
   sources: readonly SourceId[];
+  effectiveLocation: string | null;
+  locationSource: SearchLocationOrigin;
   createdAt: string;
   updatedAt: string;
 };

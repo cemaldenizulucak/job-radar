@@ -25,18 +25,23 @@ export function AuthTextField({ label, error, ...inputProps }: AuthTextFieldProp
         placeholderTextColor={theme.textSecondary}
         autoCapitalize="none"
         autoCorrect={false}
+        keyboardAppearance={theme.scheme === 'dark' ? 'dark' : 'light'}
         {...inputProps}
         style={[
           styles.input,
           {
             color: theme.text,
             backgroundColor: theme.backgroundElement,
-            borderColor: hasError ? '#D93025' : 'transparent',
+            borderColor: hasError ? theme.danger : theme.border,
           },
           inputProps.style,
         ]}
       />
-      {hasError ? <ThemedText style={styles.error}>{error}</ThemedText> : null}
+      {hasError ? (
+        <ThemedText type="meta" style={{ color: theme.danger }}>
+          {error}
+        </ThemedText>
+      ) : null}
     </View>
   );
 }
@@ -49,12 +54,8 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: 12,
     paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
     fontSize: 16,
     borderWidth: 1,
-  },
-  error: {
-    color: '#D93025',
-    fontSize: 13,
-    lineHeight: 18,
   },
 });

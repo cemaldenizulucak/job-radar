@@ -1,3 +1,5 @@
+import type { SearchLocationOrigin } from '@/lib/search-location';
+
 export type SearchSourceId = 'linkedin' | 'kariyer_net';
 
 export type WorkType = 'remote' | 'hybrid' | 'onsite';
@@ -13,6 +15,8 @@ export type SavedSearch = {
   workTypes: readonly WorkType[];
   experienceLevels: readonly string[];
   sources: readonly SearchSourceId[];
+  effectiveLocation: string | null;
+  locationSource: SearchLocationOrigin;
   createdAt: string;
   updatedAt: string;
 };

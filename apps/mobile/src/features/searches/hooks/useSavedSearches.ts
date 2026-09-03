@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { userErrorMessage } from '@/lib/api-error';
+import { uiCopy, uiError } from '@/constants/ui';
 
 import {
   createSavedSearch,
@@ -13,7 +13,7 @@ import {
 import type { SavedSearch, SavedSearchWriteInput } from '../types/search.types';
 
 function toErrorMessage(error: unknown): string {
-  return userErrorMessage(error, 'Something went wrong. Try again.');
+  return uiError(error, uiCopy.genericError);
 }
 
 export function useSavedSearches() {
@@ -112,7 +112,7 @@ export function useSavedSearch(id: string | undefined) {
   const refetch = useCallback(async () => {
     if (!id) {
       setSearch(null);
-      setError('Search not found.');
+      setError('Arama bulunamadı.');
       setIsLoading(false);
       return;
     }

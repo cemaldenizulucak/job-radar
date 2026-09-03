@@ -1,20 +1,32 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { BackButton } from '@/components/back-button';
+import { EmptyState } from '@/components/empty-state';
+import { ErrorState } from '@/components/error-state';
+import { LoadingState } from '@/components/loading-state';
+import { ScreenHeader } from '@/components/screen-header';
 import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useAuthStore } from '@/features/auth/stores/auth.store';
+import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
 import { useTheme } from '@/hooks/use-theme';
 
 import { NotificationRow } from '../components/notification-row';
+import { notificationsCopy } from '../copy';
 import { useNotifications } from '../hooks/useNotifications';
+import { JOB_DISCOVERY_PUSH_TYPE } from '../services/push-notification-data';
+import type { NotificationItem } from '../types/notification.types';
 
 export function NotificationsScreen() {
   const theme = useTheme();
   const router = useRouter();
   const userId = useAuthStore((state) => state.user?.id);
+  const applyDiscoveryNotificationTarget = useJobsFilterStore(
+    (state) => state.applyDiscoveryNotificationTarget,
+  );
   const { items, isLoading, error, refetch, markRead } = useNotifications(userId);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -25,71 +37,58 @@ export function NotificationsScreen() {
   );
 
   const handlePress = useCallback(
-    async (id: string, isRead: boolean) => {
-      if (isRead) {
+    async (notification: NotificationItem) => {
+      setActionError(null);
+
+      if (notification.type === JOB_DISCOVERY_PUSH_TYPE) {
+        applyDiscoveryNotificationTarget(notification.data?.savedSearchId ?? null);
+        router.push('/jobs' as Href);
+      }
+
+      if (notification.isRead) {
         return;
       }
 
-      setActionError(null);
       try {
-        await markRead(id);
+        await markRead(notification.id);
       } catch (caught) {
         setActionError(
-          caught instanceof Error
+          typeof __DEV__ !== 'undefined' && __DEV__ && caught instanceof Error
             ? caught.message
-            : 'Couldn’t mark this notification as read.',
+            : notificationsCopy.markReadError,
         );
       }
     },
-    [markRead],
+    [applyDiscoveryNotificationTarget, markRead, router],
   );
 
   return (
     <ScreenScaffold>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => router.back()}
-        style={({ pressed }) => [
-          styles.backButton,
-          { backgroundColor: theme.backgroundElement, opacity: pressed ? 0.85 : 1 },
-        ]}>
-        <ThemedText type="smallBold">Back</ThemedText>
-      </Pressable>
+      <ScreenHeader
+        title={notificationsCopy.screenTitle}
+        subtitle={notificationsCopy.subtitle}
+        leading={<BackButton onPress={() => router.back()} />}
+      />
 
-      <View style={styles.header}>
-        <ThemedText style={styles.title}>Notifications</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          New-job digests from backend discovery.
-        </ThemedText>
-      </View>
-
-      {isLoading ? <ActivityIndicator color={theme.accent} /> : null}
+      {isLoading ? <LoadingState /> : null}
 
       {error ? (
-        <View style={styles.state}>
-          <ThemedText style={{ color: theme.danger }}>{error}</ThemedText>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              void refetch();
-            }}
-            style={[styles.retry, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">Retry</ThemedText>
-          </Pressable>
-        </View>
+        <ErrorState
+          title={notificationsCopy.loadError}
+          onRetry={() => {
+            void refetch();
+          }}
+        />
       ) : null}
 
       {actionError ? (
-        <ThemedText type="small" style={{ color: theme.danger }}>
+        <ThemedText type="meta" style={{ color: theme.danger }}>
           {actionError}
         </ThemedText>
       ) : null}
 
       {!isLoading && !error && items.length === 0 ? (
-        <ThemedText themeColor="textSecondary">
-          No notifications yet. New jobs from morning, midday, and evening scans will
-          appear here.
-        </ThemedText>
+        <EmptyState title={notificationsCopy.empty} />
       ) : null}
 
       {!isLoading && !error && items.length > 0 ? (
@@ -99,7 +98,7 @@ export function NotificationsScreen() {
               key={notification.id}
               notification={notification}
               onPress={() => {
-                void handlePress(notification.id, notification.isRead);
+                void handlePress(notification);
               }}
             />
           ))}
@@ -110,30 +109,7 @@ export function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
-  backButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
-  header: {
-    gap: Spacing.one,
-  },
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 700,
-  },
   list: {
     gap: Spacing.two,
-  },
-  state: {
-    gap: Spacing.two,
-  },
-  retry: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
 });

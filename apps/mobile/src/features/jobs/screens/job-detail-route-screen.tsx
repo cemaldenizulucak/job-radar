@@ -1,17 +1,19 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { AppButton } from '@/components/app-button';
+import { ErrorState } from '@/components/error-state';
+import { LoadingState } from '@/components/loading-state';
 import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/hooks/useAuth';
-import { useTheme } from '@/hooks/use-theme';
 
+import { jobsCopy } from '../copy';
 import { useJob } from '../hooks/useJobs';
 import { JobDetailScreen } from './job-detail-screen';
 
 export function JobDetailRouteScreen() {
-  const theme = useTheme();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const jobId = Array.isArray(id) ? id[0] : id;
@@ -21,7 +23,7 @@ export function JobDetailRouteScreen() {
   if (isLoading) {
     return (
       <ScreenScaffold>
-        <ActivityIndicator color={theme.accent} />
+        <LoadingState message={jobsCopy.loadingJob} />
       </ScreenScaffold>
     );
   }
@@ -29,31 +31,24 @@ export function JobDetailRouteScreen() {
   if (error || !job) {
     return (
       <ScreenScaffold>
-        <ThemedText style={styles.title}>Job not found</ThemedText>
-        <ThemedText themeColor="textSecondary">
-          {error ?? 'This listing is not in the current job feed.'}
-        </ThemedText>
+        <ThemedText type="screenTitle">{jobsCopy.jobNotFound}</ThemedText>
+        <ErrorState
+          title={jobsCopy.jobNotFound}
+          message={
+            typeof __DEV__ !== 'undefined' && __DEV__ && error
+              ? error
+              : jobsCopy.jobNotInFeed
+          }
+          onRetry={() => {
+            void refetch();
+          }}
+        />
         <View style={styles.actions}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              void refetch();
-            }}
-            style={({ pressed }) => [
-              styles.backButton,
-              { backgroundColor: theme.backgroundElement, opacity: pressed ? 0.85 : 1 },
-            ]}>
-            <ThemedText type="smallBold">Retry</ThemedText>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
+          <AppButton
+            label={jobsCopy.backToJobs}
+            variant="ghost"
             onPress={() => router.back()}
-            style={({ pressed }) => [
-              styles.backButton,
-              { backgroundColor: theme.backgroundElement, opacity: pressed ? 0.85 : 1 },
-            ]}>
-            <ThemedText type="smallBold">Back to jobs</ThemedText>
-          </Pressable>
+          />
         </View>
       </ScreenScaffold>
     );
@@ -63,20 +58,9 @@ export function JobDetailRouteScreen() {
 }
 
 const styles = StyleSheet.create({
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 700,
-  },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  backButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
 });

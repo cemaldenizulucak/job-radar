@@ -4,6 +4,7 @@ import { DuplicatesModule } from '../duplicates/duplicates.module.js';
 import { JobsModule } from '../jobs/jobs.module.js';
 import { MatchingModule } from '../matching/matching.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { ProfilesModule } from '../profiles/profiles.module.js';
 import { SearchesModule } from '../searches/searches.module.js';
 import { SourcesModule } from '../sources/sources.module.js';
 import { DevEndpointsGuard } from '../common/dev-endpoints.guard.js';
@@ -18,6 +19,7 @@ import { DiscoveryService } from './discovery.service.js';
     DuplicatesModule,
     JobsModule,
     NotificationsModule,
+    ProfilesModule,
   ],
   controllers: [DiscoveryController],
   providers: [DiscoveryService, DevEndpointsGuard],

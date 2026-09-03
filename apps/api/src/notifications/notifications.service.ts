@@ -11,11 +11,12 @@ import { PushNotificationsService } from '../push-tokens/push-notifications.serv
 import { buildDiscoveryNotificationDrafts } from './discovery-notification.js';
 import type {
   CreateDiscoveryNotificationsInput,
+  NotificationDiscoveryData,
   NotificationRecord,
 } from './notifications.types.js';
 
 const NOTIFICATION_SELECT =
-  'id, user_id, title, message, type, is_read, created_at';
+  'id, user_id, title, message, type, is_read, created_at, data';
 
 type SafeSupabaseError = {
   message: string;
@@ -54,9 +55,12 @@ export class NotificationsService {
   async createTestNotification(userId: string): Promise<NotificationRecord> {
     const notification = await this.insertDigest({
       userId,
-      title: '3 new jobs found',
+      title: '3 yeni ilan bulundu',
       message: '2 LinkedIn, 1 Kariyer.net',
       type: 'JOB_DISCOVERY',
+      discoveryRunId: 'test',
+      savedSearchId: null,
+      newJobCount: 3,
     });
 
     if (!notification) {
@@ -127,8 +131,22 @@ export class NotificationsService {
     title: string;
     message: string;
     type: string;
+    discoveryRunId?: string;
+    savedSearchId?: string | null;
+    newJobCount?: number;
   }): Promise<NotificationRecord | null> {
-    const { data, error } = await this.supabase
+    const createdAt = new Date().toISOString();
+    const data =
+      draft.discoveryRunId && typeof draft.newJobCount === 'number'
+        ? {
+            discoveryRunId: draft.discoveryRunId,
+            savedSearchId: draft.savedSearchId ?? null,
+            newJobCount: draft.newJobCount,
+            createdAt,
+          }
+        : null;
+
+    const { data: row, error } = await this.supabase
       .getClient()
       .from('notifications')
       .insert({
@@ -137,6 +155,7 @@ export class NotificationsService {
         message: draft.message,
         type: draft.type,
         is_read: false,
+        ...(data ? { data } : {}),
       })
       .select(NOTIFICATION_SELECT)
       .maybeSingle();
@@ -150,7 +169,7 @@ export class NotificationsService {
       return null;
     }
 
-    const notification = mapNotificationRow(data);
+    const notification = mapNotificationRow(row);
     if (!notification) {
       this.logger.warn({
         message: 'Notification insert returned an unreadable row',
@@ -163,12 +182,16 @@ export class NotificationsService {
       message: 'Created discovery notification',
       userId: draft.userId,
       title: draft.title,
+      newJobCount: draft.newJobCount ?? null,
     });
 
     await this.sendDiscoveryPushSafely({
       userId: draft.userId,
       title: draft.title,
       body: draft.message,
+      discoveryRunId: draft.discoveryRunId,
+      savedSearchId: draft.savedSearchId,
+      newJobCount: draft.newJobCount,
     });
 
     return notification;
@@ -178,6 +201,9 @@ export class NotificationsService {
     userId: string;
     title: string;
     body: string;
+    discoveryRunId?: string;
+    savedSearchId?: string | null;
+    newJobCount?: number;
   }): Promise<void> {
     if (!this.pushNotifications) {
       return;
@@ -245,6 +271,27 @@ function mapNotificationRow(value: unknown): NotificationRecord | null {
     type,
     isRead,
     createdAt,
+    data: mapNotificationData(value.data),
+  };
+}
+
+function mapNotificationData(value: unknown): NotificationDiscoveryData | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const discoveryRunId = readString(value, 'discoveryRunId');
+  const newJobCount = value.newJobCount;
+  if (!discoveryRunId || typeof newJobCount !== 'number' || !Number.isFinite(newJobCount)) {
+    return null;
+  }
+
+  const savedSearchId = readString(value, 'savedSearchId');
+
+  return {
+    discoveryRunId,
+    savedSearchId,
+    newJobCount,
   };
 }
 

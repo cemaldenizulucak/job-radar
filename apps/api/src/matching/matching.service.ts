@@ -1,73 +1,53 @@
 import { Injectable } from '@nestjs/common';
 
-import { normalizeText } from '../common/normalize-text.js';
-import type { SavedSearch } from '../searches/searches.types.js';
+import { normalizeForSearch } from '../common/normalize-text.js';
 import {
-  classifyRoleMatch,
-  classifyTechnologyOnlyRole,
-  roleMatchScore,
-} from './frontend-role.js';
+  jobLocationMatchResult,
+  resolveEffectiveSearchLocation,
+  type ProfileLocation,
+} from '../common/search-location.js';
+import type { SavedSearch } from '../searches/searches.types.js';
 import { logMatchDecision } from './matching-dev-log.js';
-import { normalizedPhraseAppears, phraseAppearsIn } from './match-text.js';
+import { jobSearchableText, queryAppearsIn } from './match-text.js';
 import type {
   JobSearchMatch,
   MatchableJob,
   MatchDecision,
   MatchFieldResult,
 } from './matching.types.js';
-import {
-  classifyJobRoleFamily,
-  classifySearch,
-  hasCompetingTechnology,
-  isDirectFrontendUiRole,
-  technologyNeedles,
-  type ClassifiedSearch,
-} from './search-terms.js';
 
 /**
- * Deterministic match scoring. Threshold: 50.
+ * Profession-agnostic matching.
  *
- * Role (title-first; aliases stay title-based):
- *   direct  +50  role phrase in title, or frontend/UI family with explicit tech
- *   alias   +40  known role alias; tech-only unknown + direct frontend/UI;
- *                fullstack/software with explicit technology evidence
- *   related +20  adjacent role (React Native for React; role only in description)
- *
- * Location:                         +30 when it passes
- * Explicit technology match:        +30 (title, description, or technologies[])
- * Technology unknown:               +0  (Kariyer cards / missing snippet — not a fail)
- * Explicit technology conflict:     reject
- *   — searched tech missing AND listing names another catalog stack
- *     (React vs Angular in the title), or technologies[] omits the search term
- *
- * Technology-only searches (Angular, React, Vue):
- *   explicit tech + compatible role     strong match
- *   unknown tech + direct frontend/UI   lower-confidence match (alias)
- *   unknown tech + generic web/software reject
- *   fullstack + explicit tech           lower-priority match
- *   fullstack + unknown tech            reject
+ * Keywords (and optional technologies) are OR'd against searchable job text.
+ * Location / source / work model / experience remain optional filters.
+ * Score is for sorting only and never excludes a textual match.
  */
-export const MATCH_SCORE_WEIGHTS = {
-  keyword: 50,
-  location: 30,
-  technology: 30,
-  experience: 5,
-  workModel: 5,
+export const MATCH_SCORE = {
+  exactTitle: 100,
+  titleSubstring: 90,
+  description: 70,
+  other: 50,
 } as const;
 
-export const MATCH_SCORE_THRESHOLD = 50;
+export const MATCH_SCORE_THRESHOLD = 0;
 
 @Injectable()
 export class MatchingService {
   matchJobsToSearches(
     jobs: readonly MatchableJob[],
     searches: readonly SavedSearch[],
+    profilesByUserId?: ReadonlyMap<string, ProfileLocation>,
   ): JobSearchMatch[] {
     const matches: JobSearchMatch[] = [];
 
     for (const job of jobs) {
       for (const search of searches) {
-        const decision = this.evaluateMatch(job, search);
+        const decision = this.evaluateMatch(
+          job,
+          search,
+          profilesByUserId?.get(search.userId),
+        );
         if (decision.matched) {
           matches.push({
             jobId: job.id,
@@ -80,64 +60,38 @@ export class MatchingService {
     return matches;
   }
 
-  jobMatchesSearch(job: MatchableJob, search: SavedSearch): boolean {
-    return this.evaluateMatch(job, search).matched;
+  jobMatchesSearch(
+    job: MatchableJob,
+    search: SavedSearch,
+    profile?: ProfileLocation | null,
+  ): boolean {
+    return this.evaluateMatch(job, search, profile).matched;
   }
 
-  evaluateMatch(job: MatchableJob, search: SavedSearch): MatchDecision {
-    const classified = classifySearch(search);
-    const roleFamily = classifyJobRoleFamily(job.title);
-    const titleMatch = this.titleMatchResult(job, classified);
-    const descriptionMatch = this.descriptionMatchResult(job, classified);
-    const location = this.locationResult(job, search);
-    const technology = this.technologyResult(job, classified);
+  evaluateMatch(
+    job: MatchableJob,
+    search: SavedSearch,
+    profile?: ProfileLocation | null,
+  ): MatchDecision {
+    const terms = collectSearchTerms(search);
+    const searchable = jobSearchableText(job);
+    const keyword = this.keywordResult(searchable, terms);
+    const titleMatch = fieldContainsAny(job.title, terms);
+    const descriptionMatch = fieldContainsAny(job.description ?? '', terms);
+    const location = this.locationResult(job, search, profile);
+    const technology = this.optionalTagResult(job, search);
     const experience = this.experienceResult(job, search);
     const workModel = this.workModelResult(job, search);
-    const isTechnologyOnly =
-      classified.roleKeywords.length === 0 && classified.technologyTerms.length > 0;
-    let keywordKind =
-      classified.roleKeywords.length > 0
-        ? classifyRoleMatch(job, classified.roleKeywords, classified.technologyTerms)
-        : isTechnologyOnly
-          ? classifyTechnologyOnlyRole(
-              job.title,
-              classified.technologyFamilies,
-              classified.technologyTerms,
-            )
-          : null;
-    let genericRoleWithoutTechnology = false;
-
-    if (isTechnologyOnly && technology !== 'pass') {
-      if (technology === 'unknown' && isDirectFrontendUiRole(job.title)) {
-        keywordKind = 'alias';
-      } else if (technology !== 'fail') {
-        genericRoleWithoutTechnology =
-          roleFamily === 'software' ||
-          roleFamily === 'fullstack' ||
-          roleFamily === 'frontend';
-        keywordKind = null;
-      }
-    }
-
-    const keyword = this.keywordResult(classified, keywordKind);
-    const score =
-      roleMatchScore(keyword === 'pass' ? keywordKind : null) +
-      scoreFor(location, MATCH_SCORE_WEIGHTS.location) +
-      scoreFor(technology, MATCH_SCORE_WEIGHTS.technology) +
-      scoreFor(experience, MATCH_SCORE_WEIGHTS.experience) +
-      scoreFor(workModel, MATCH_SCORE_WEIGHTS.workModel);
     const reasons = rejectionReasons({
       isActive: search.isActive,
       sourceAllowed: this.matchesSources(job, search),
       keyword,
       location,
-      technology,
       experience,
       workModel,
-      score,
-      genericRoleWithoutTechnology,
     });
     const matched = reasons.length === 0;
+    const score = matched ? scoreTextMatch(job, terms) : 0;
     const decision: MatchDecision = {
       title: job.title,
       sourceId: job.sourceId,
@@ -147,20 +101,37 @@ export class MatchingService {
       threshold: MATCH_SCORE_THRESHOLD,
       reasons,
       keyword,
-      keywordKind,
-      roleFamily,
-      roleMatch: keywordKind,
+      keywordKind:
+        titleMatch === 'pass'
+          ? 'direct'
+          : descriptionMatch === 'pass'
+            ? 'related'
+            : keyword === 'pass'
+              ? 'alias'
+              : null,
+      roleFamily: 'none',
+      roleMatch:
+        titleMatch === 'pass'
+          ? 'direct'
+          : descriptionMatch === 'pass'
+            ? 'related'
+            : keyword === 'pass'
+              ? 'alias'
+              : null,
       titleMatch,
       descriptionMatch,
       location,
       technology,
       experience,
       workModel,
-      searchTerms: classified.terms.map((term) => ({
-        raw: term.raw,
-        kind: term.kind,
-      })),
-      technologyTerms: classified.technologyTerms,
+      searchTerms: [
+        ...search.keywords.map((raw) => ({ raw, kind: 'role' as const })),
+        ...search.technologies.map((raw) => ({
+          raw,
+          kind: 'technology' as const,
+        })),
+      ],
+      technologyTerms: search.technologies,
     };
 
     logMatchDecision(decision);
@@ -176,118 +147,39 @@ export class MatchingService {
   }
 
   private keywordResult(
-    classified: ClassifiedSearch,
-    keywordKind: ReturnType<typeof classifyRoleMatch>,
+    searchable: string,
+    terms: readonly string[],
   ): MatchFieldResult {
-    if (
-      classified.roleKeywords.length === 0 &&
-      classified.technologyTerms.length === 0
-    ) {
+    if (terms.length === 0) {
       return 'skipped';
     }
 
-    return keywordKind ? 'pass' : 'fail';
+    return terms.some((term) => queryAppearsIn(searchable, term))
+      ? 'pass'
+      : 'fail';
   }
 
-  private titleMatchResult(
+  private optionalTagResult(
     job: MatchableJob,
-    classified: ClassifiedSearch,
+    search: SavedSearch,
   ): MatchFieldResult {
-    const titleHaystack = job.title;
-    const roleHit = classified.roleKeywords.some((keyword) =>
-      phraseOrAliasInTitle(titleHaystack, keyword),
-    );
-    const techHit = classified.technologyTerms.some((term) =>
-      technologyNeedles(term).some((needle) =>
-        normalizedPhraseAppears(titleHaystack, needle),
-      ),
-    );
-
-    if (roleHit || techHit) {
-      return 'pass';
-    }
-
-    if (classified.roleKeywords.length === 0 && classified.technologyTerms.length === 0) {
+    if (search.technologies.length === 0) {
       return 'skipped';
     }
 
-    return 'fail';
+    const searchable = jobSearchableText(job);
+    return search.technologies.some((term) => queryAppearsIn(searchable, term))
+      ? 'pass'
+      : 'skipped';
   }
 
-  private descriptionMatchResult(
+  private locationResult(
     job: MatchableJob,
-    classified: ClassifiedSearch,
+    search: SavedSearch,
+    profile?: ProfileLocation | null,
   ): MatchFieldResult {
-    const description = job.description ?? '';
-    if (!description.trim()) {
-      return classified.roleKeywords.length === 0 &&
-        classified.technologyTerms.length === 0
-        ? 'skipped'
-        : 'unknown';
-    }
-
-    const roleHit = classified.roleKeywords.some((keyword) =>
-      phraseOrAliasInTitle(description, keyword),
-    );
-    const techHit = classified.technologyTerms.some((term) =>
-      technologyNeedles(term).some((needle) =>
-        normalizedPhraseAppears(description, needle),
-      ),
-    );
-
-    return roleHit || techHit ? 'pass' : 'fail';
-  }
-
-  private technologyResult(
-    job: MatchableJob,
-    classified: ClassifiedSearch,
-  ): MatchFieldResult {
-    if (classified.technologyTerms.length === 0) {
-      return 'skipped';
-    }
-
-    const haystack = technologyHaystack(job);
-    const matched = classified.technologyTerms.some((term) =>
-      technologyNeedles(term).some((needle) =>
-        normalizedPhraseAppears(haystack, needle),
-      ),
-    );
-    if (matched) {
-      return 'pass';
-    }
-
-    if (
-      hasCompetingTechnology(
-        [job.title, ...job.technologies].join(' '),
-        classified.technologyTerms,
-      )
-    ) {
-      return 'fail';
-    }
-
-    if (job.technologies.length > 0) {
-      return 'fail';
-    }
-
-    return 'unknown';
-  }
-
-  private locationResult(job: MatchableJob, search: SavedSearch): MatchFieldResult {
-    if (search.locations.length === 0) {
-      return 'skipped';
-    }
-
-    const jobLocation = normalizeText(job.location ?? '');
-    if (!jobLocation) {
-      return 'unknown';
-    }
-
-    const matched = search.locations.some((location) => {
-      const needle = normalizeText(location);
-      return jobLocation.includes(needle) || needle.includes(jobLocation);
-    });
-
-    return matched ? 'pass' : 'fail';
+    const resolved = resolveEffectiveSearchLocation(search.locations, profile);
+    return jobLocationMatchResult(job.location, resolved);
   }
 
   private workModelResult(
@@ -317,32 +209,66 @@ export class MatchingService {
       return 'unknown';
     }
 
-    const jobLevel = normalizeText(job.experienceLevel);
-    const matched = search.experienceLevels.some(
-      (level) => normalizeText(level) === jobLevel,
+    const matched = search.experienceLevels.some((level) =>
+      queryAppearsIn(job.experienceLevel ?? '', level),
     );
 
     return matched ? 'pass' : 'fail';
   }
 }
 
-function phraseOrAliasInTitle(haystack: string, keyword: string): boolean {
-  const needle = normalizeText(keyword);
-  if (!needle) {
-    return false;
+function collectSearchTerms(search: SavedSearch): string[] {
+  return [...search.keywords, ...search.technologies]
+    .map((term) => term.trim())
+    .filter((term) => term.length > 0);
+}
+
+function fieldContainsAny(
+  haystack: string,
+  terms: readonly string[],
+): MatchFieldResult {
+  if (terms.length === 0) {
+    return 'skipped';
   }
 
-  return (
-    normalizeText(haystack).includes(needle) || phraseAppearsIn(haystack, keyword)
-  );
+  if (!haystack.trim()) {
+    return 'fail';
+  }
+
+  return terms.some((term) => queryAppearsIn(haystack, term)) ? 'pass' : 'fail';
 }
 
-function technologyHaystack(job: MatchableJob): string {
-  return [job.title, job.description ?? '', ...job.technologies].join(' ');
-}
+function scoreTextMatch(job: MatchableJob, terms: readonly string[]): number {
+  if (terms.length === 0) {
+    return MATCH_SCORE.other;
+  }
 
-function scoreFor(result: MatchFieldResult, weight: number): number {
-  return result === 'pass' ? weight : 0;
+  let best = 0;
+
+  for (const term of terms) {
+    if (!queryAppearsIn(jobSearchableText(job), term)) {
+      continue;
+    }
+
+    if (queryAppearsIn(job.title, term)) {
+      const title = normalizeForSearch(job.title);
+      const needle = normalizeForSearch(term);
+      best = Math.max(
+        best,
+        title === needle ? MATCH_SCORE.exactTitle : MATCH_SCORE.titleSubstring,
+      );
+      continue;
+    }
+
+    if (job.description && queryAppearsIn(job.description, term)) {
+      best = Math.max(best, MATCH_SCORE.description);
+      continue;
+    }
+
+    best = Math.max(best, MATCH_SCORE.other);
+  }
+
+  return best;
 }
 
 function rejectionReasons(input: {
@@ -350,11 +276,8 @@ function rejectionReasons(input: {
   sourceAllowed: boolean;
   keyword: MatchFieldResult;
   location: MatchFieldResult;
-  technology: MatchFieldResult;
   experience: MatchFieldResult;
   workModel: MatchFieldResult;
-  score: number;
-  genericRoleWithoutTechnology: boolean;
 }): string[] {
   const reasons: string[] = [];
 
@@ -366,18 +289,12 @@ function rejectionReasons(input: {
     reasons.push('source excluded');
   }
 
-  if (input.genericRoleWithoutTechnology) {
-    reasons.push('generic role without technology evidence');
-  } else if (input.keyword === 'fail') {
+  if (input.keyword === 'fail') {
     reasons.push('keyword mismatch');
   }
 
   if (input.location === 'fail') {
     reasons.push('location mismatch');
-  }
-
-  if (input.technology === 'fail') {
-    reasons.push('technology conflict');
   }
 
   if (input.experience === 'fail') {
@@ -386,29 +303,6 @@ function rejectionReasons(input: {
 
   if (input.workModel === 'fail') {
     reasons.push('work model conflict');
-  }
-
-  if (reasons.length > 0) {
-    return reasons;
-  }
-
-  const hasFilter = [
-    input.keyword,
-    input.location,
-    input.technology,
-    input.experience,
-    input.workModel,
-  ].some((result) => result !== 'skipped');
-  const hasPositive = [
-    input.keyword,
-    input.location,
-    input.technology,
-    input.experience,
-    input.workModel,
-  ].some((result) => result === 'pass');
-
-  if (hasFilter && !hasPositive && input.score < MATCH_SCORE_THRESHOLD) {
-    reasons.push('no positive match signal');
   }
 
   return reasons;

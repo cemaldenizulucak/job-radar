@@ -33,6 +33,8 @@ const savedSearchApiSchema = z.object({
   workTypes: z.array(z.string()),
   experienceLevels: z.array(z.string()),
   sources: z.array(z.string()),
+  effectiveLocation: z.string().nullable().optional(),
+  locationSource: z.enum(['search', 'profile', 'none']).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -72,6 +74,9 @@ function mapSearch(row: z.infer<typeof savedSearchApiSchema>): SavedSearch {
     workTypes: row.workTypes.filter(isWorkType),
     experienceLevels: row.experienceLevels,
     sources: row.sources.filter(isSearchSourceId),
+    effectiveLocation: row.effectiveLocation ?? null,
+    locationSource:
+      row.locationSource ?? (row.locations.length > 0 ? 'search' : 'none'),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -96,14 +101,14 @@ function toServiceError(error: unknown): SavedSearchServiceError {
   }
 
   if (error instanceof z.ZodError) {
-    return new SavedSearchServiceError('Unexpected response from the searches API.');
+    return new SavedSearchServiceError('Aramalar beklenmeyen bir yanıt verdi.');
   }
 
   if (error instanceof Error && error.message.trim().length > 0) {
     return new SavedSearchServiceError(error.message);
   }
 
-  return new SavedSearchServiceError('Couldn’t update this search.');
+  return new SavedSearchServiceError('Arama güncellenemedi.');
 }
 
 export async function listSavedSearches(): Promise<SavedSearch[]> {
@@ -125,7 +130,7 @@ export async function getSavedSearch(id: string): Promise<SavedSearch> {
     );
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
-      throw new SavedSearchServiceError('Search not found.');
+      throw new SavedSearchServiceError('Arama bulunamadı.');
     }
 
     throw toServiceError(error);
@@ -158,7 +163,7 @@ export async function updateSavedSearch(
     );
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
-      throw new SavedSearchServiceError('Search not found.');
+      throw new SavedSearchServiceError('Arama bulunamadı.');
     }
 
     throw toServiceError(error);
@@ -179,7 +184,7 @@ export async function toggleSavedSearchActive(
     );
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
-      throw new SavedSearchServiceError('Search not found.');
+      throw new SavedSearchServiceError('Arama bulunamadı.');
     }
 
     throw toServiceError(error);
@@ -191,7 +196,7 @@ export async function deleteSavedSearch(id: string): Promise<void> {
     await apiDelete(`/v1/searches/${encodeURIComponent(id)}`);
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
-      throw new SavedSearchServiceError('Search not found.');
+      throw new SavedSearchServiceError('Arama bulunamadı.');
     }
 
     throw toServiceError(error);

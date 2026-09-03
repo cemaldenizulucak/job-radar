@@ -48,14 +48,14 @@ function toServiceError(error: unknown): FavoritesServiceError {
   }
 
   if (error instanceof z.ZodError) {
-    return new FavoritesServiceError('Unexpected response from the favorites API.');
+    return new FavoritesServiceError('Favoriler beklenmeyen bir yanıt verdi.');
   }
 
   if (error instanceof Error && error.message.trim().length > 0) {
     return new FavoritesServiceError(error.message);
   }
 
-  return new FavoritesServiceError('Couldn’t update favorites. Try again.');
+  return new FavoritesServiceError('Favoriler güncellenemedi. Lütfen tekrar deneyin.');
 }
 
 function toFavoriteItem(

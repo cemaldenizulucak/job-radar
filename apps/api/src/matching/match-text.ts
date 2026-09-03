@@ -1,5 +1,16 @@
-import { normalizeText } from '../common/normalize-text.js';
+import { normalizeForSearch, normalizeText } from '../common/normalize-text.js';
 import { ROLE_ALIAS_PAIRS } from './role-aliases.js';
+import type { MatchableJob } from './matching.types.js';
+
+export function jobSearchableText(job: MatchableJob): string {
+  return [
+    job.title,
+    job.companyName,
+    job.description ?? '',
+    job.location ?? '',
+    ...job.technologies,
+  ].join(' ');
+}
 
 export function expandNormalizedPhrases(value: string): string[] {
   const start = normalizeText(value);
@@ -41,6 +52,20 @@ export function phraseAppearsIn(haystack: string, needle: string): boolean {
   return needles.some((variant) =>
     haystacks.some((text) => text.includes(variant)),
   );
+}
+
+export function queryAppearsIn(haystack: string, query: string): boolean {
+  const hay = normalizeForSearch(haystack);
+  const needle = normalizeForSearch(query);
+  if (!needle) {
+    return false;
+  }
+
+  if (hay.includes(needle)) {
+    return true;
+  }
+
+  return phraseAppearsIn(haystack, query);
 }
 
 /** Word-boundary match on normalized text so "java" does not hit "javascript". */

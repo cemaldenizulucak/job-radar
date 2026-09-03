@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { uiCopy, uiError } from '@/constants/ui';
+
 import {
   listNotifications,
   markNotificationRead,
@@ -7,11 +9,7 @@ import {
 import type { NotificationItem } from '../types/notification.types';
 
 function toErrorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
-  }
-
-  return 'Something went wrong. Try again.';
+  return uiError(error, uiCopy.genericError);
 }
 
 export function useNotifications(userId: string | undefined) {
@@ -22,7 +20,7 @@ export function useNotifications(userId: string | undefined) {
   const refetch = useCallback(async () => {
     if (!userId) {
       setItems([]);
-      setError('You need to be signed in.');
+      setError(uiCopy.signedInRequired);
       setIsLoading(false);
       return;
     }
@@ -47,7 +45,7 @@ export function useNotifications(userId: string | undefined) {
   const markRead = useCallback(
     async (id: string) => {
       if (!userId) {
-        throw new Error('You need to be signed in.');
+        throw new Error(uiCopy.signedInRequired);
       }
 
       const updated = await markNotificationRead(id);

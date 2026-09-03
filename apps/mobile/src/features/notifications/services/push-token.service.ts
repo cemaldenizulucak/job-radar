@@ -29,7 +29,7 @@ function toServiceError(error: unknown): PushTokenServiceError {
     return new PushTokenServiceError(error.message);
   }
 
-  return new PushTokenServiceError('Couldn’t sync the push token.');
+  return new PushTokenServiceError('Push bildirimi kaydedilemedi.');
 }
 
 export async function registerPushToken(

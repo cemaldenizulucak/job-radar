@@ -1,41 +1,38 @@
-import {
-  Platform,
-  Pressable,
-  StyleSheet,
-  View,
-  type PressableProps,
-  type ViewStyle,
-} from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
+import { AppBadge } from '@/components/app-badge';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Borders, Radius, Spacing, cardElevation } from '@/constants/theme';
+import { pressOpacity } from '@/constants/ui';
 import { useTheme } from '@/hooks/use-theme';
 
+import { jobsCopy } from '../copy';
 import { useJobsSeenStore } from '../stores/jobs-seen.store';
 import type { JobListItem } from '../types/job.types';
 import {
   jobCardAccessibilityLabel,
   jobCardAppearance,
 } from '../utils/job-card-appearance';
+import { formatJobListingDate } from '../utils/job-dates';
 import {
-  formatJobDateLabel,
   formatLocation,
   sourceLabel,
   workModelLabel,
 } from '../utils/job-labels';
+import { getJobSourceAppearance } from '../utils/job-source-appearance';
 
 type JobCardProps = {
   job: JobListItem;
-  onPress?: PressableProps['onPress'];
+  onPress?: () => void;
   isFavorite?: boolean;
-  showMatchStatus?: boolean;
+  relevanceLabel?: string;
 };
 
 export function JobCard({
   job,
   onPress,
   isFavorite = false,
-  showMatchStatus = false,
+  relevanceLabel,
 }: JobCardProps) {
   const theme = useTheme();
   const locallySeen = useJobsSeenStore((state) => Boolean(state.seenById[job.id]));
@@ -44,10 +41,8 @@ export function JobCard({
     isSeen: job.isSeen || locallySeen,
   });
   const showDuplicate = job.duplicateGroupSize > 1;
-  const matchLabel = job.isMatched ? 'Matched' : 'Not matched';
-  const chipBackground = appearance.isUnread
-    ? theme.backgroundElement
-    : theme.backgroundSelected;
+  const source = sourceLabel(job.sourceId);
+  const sourceAppearance = getJobSourceAppearance(job.sourceId, theme.scheme);
 
   return (
     <Pressable
@@ -55,120 +50,92 @@ export function JobCard({
       accessibilityLabel={jobCardAccessibilityLabel({
         title: job.title,
         companyName: job.companyName,
+        sourceLabel: source,
         isUnread: appearance.isUnread,
         isNew: appearance.showNewBadge,
         isFavorite,
-        matchLabel: showMatchStatus ? matchLabel : undefined,
+        relevanceLabel,
       })}
       disabled={!onPress}
       onPress={onPress}
       style={({ pressed }) => [
         styles.card,
-        appearance.isUnread ? unreadElevation : null,
+        appearance.isUnread ? cardElevation(theme.scheme) : null,
         {
           backgroundColor: appearance.isUnread
             ? theme.backgroundSelected
             : theme.backgroundElement,
-          borderColor: appearance.isUnread ? theme.border : 'transparent',
-          opacity: onPress && pressed ? 0.88 : 1,
+          borderColor: theme.border,
+          borderLeftColor: sourceAppearance.accentColor,
+          opacity: onPress ? pressOpacity(pressed) : 1,
         },
       ]}>
       <View style={styles.topRow}>
-        {appearance.showNewBadge ? (
-          <View style={[styles.badge, { backgroundColor: theme.accent }]}>
-            <ThemedText type="smallBold" style={styles.badgeLabel}>
-              New
-            </ThemedText>
-          </View>
-        ) : null}
-        <View style={[styles.badge, { backgroundColor: chipBackground }]}>
-          <ThemedText type="smallBold">{sourceLabel(job.sourceId)}</ThemedText>
-        </View>
-        {showMatchStatus ? (
-          <View
-            style={[
-              styles.badge,
-              {
-                backgroundColor: job.isMatched ? theme.success : chipBackground,
-              },
-            ]}>
-            <ThemedText
-              type="smallBold"
-              style={job.isMatched ? styles.badgeLabel : undefined}>
-              {matchLabel}
-            </ThemedText>
-          </View>
-        ) : null}
-        {isFavorite ? (
-          <View style={[styles.badge, { backgroundColor: theme.accent }]}>
-            <ThemedText type="smallBold" style={styles.badgeLabel}>
-              Saved
-            </ThemedText>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.titleRow}>
         {appearance.isUnread ? (
           <View
             accessibilityElementsHidden
             importantForAccessibility="no"
-            style={[styles.unreadDot, { backgroundColor: theme.text }]}
+            style={[styles.unreadDot, { backgroundColor: theme.accent }]}
           />
         ) : null}
+        {appearance.showNewBadge ? (
+          <AppBadge
+            label={jobsCopy.newBadge}
+            backgroundColor={theme.accent}
+            textColor={theme.onAccent}
+          />
+        ) : null}
+        <AppBadge
+          label={source}
+          backgroundColor={sourceAppearance.badgeBackground}
+          textColor={sourceAppearance.badgeTextColor}
+        />
+        {isFavorite ? (
+          <AppBadge
+            label={jobsCopy.favorite}
+            backgroundColor={theme.accentMuted}
+            textColor={theme.accent}
+          />
+        ) : null}
+      </View>
+
+      <View style={styles.body}>
         <ThemedText
-          style={[
-            styles.title,
-            {
-              fontWeight: appearance.titleWeight,
-            },
-          ]}>
+          type="cardTitle"
+          style={{ fontWeight: appearance.titleWeight }}>
           {job.title}
         </ThemedText>
+        <ThemedText>{job.companyName}</ThemedText>
       </View>
-      <ThemedText themeColor="textSecondary">{job.companyName}</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        {formatLocation(job.location)} · {workModelLabel(job.workModel)}
-      </ThemedText>
 
-      <ThemedText type="small" themeColor="textSecondary">
-        Published {formatJobDateLabel(job.publishedAt)} · Found{' '}
-        {formatJobDateLabel(job.firstDiscoveredAt)}
-      </ThemedText>
+      <View style={styles.meta}>
+        <ThemedText type="meta" themeColor="textSecondary">
+          {formatLocation(job.location)} · {workModelLabel(job.workModel)}
+        </ThemedText>
+        <ThemedText type="meta" themeColor="textSecondary">
+          {formatJobListingDate(job.publishedAt, job.firstDiscoveredAt)}
+        </ThemedText>
+        {relevanceLabel ? (
+          <ThemedText type="meta" themeColor="textSecondary">
+            {jobsCopy.matchedSearchLabel}: {relevanceLabel}
+          </ThemedText>
+        ) : null}
+      </View>
 
       {showDuplicate ? (
-        <View style={[styles.duplicate, { borderColor: theme.accent }]}>
-          <ThemedText type="smallBold" style={{ color: theme.accent }}>
-            Same job detected on {job.duplicateGroupSize} sources
-          </ThemedText>
-        </View>
+        <ThemedText type="meta" themeColor="textSecondary">
+          {jobsCopy.otherSourcesCount(job.duplicateGroupSize)}
+        </ThemedText>
       ) : null}
     </Pressable>
   );
 }
 
-const unreadElevation = Platform.select<ViewStyle>({
-  ios: {
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-  },
-  android: {
-    elevation: 2,
-  },
-  web: {
-    boxShadow: '0 1px 4px rgba(15, 18, 24, 0.08)',
-  },
-  default: {
-    elevation: 2,
-  },
-});
-
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 16,
-    borderWidth: 1,
+    borderRadius: Radius.lg,
+    borderWidth: Borders.hairline,
+    borderLeftWidth: Borders.accent,
     padding: Spacing.three,
     gap: Spacing.two,
     overflow: 'visible',
@@ -178,36 +145,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.two,
+    minHeight: 24,
   },
   unreadDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    marginTop: 8,
   },
-  badge: {
-    borderRadius: 999,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.half,
+  body: {
+    gap: Spacing.half,
   },
-  badgeLabel: {
-    color: '#ffffff',
-  },
-  title: {
-    flex: 1,
-    fontSize: 18,
-    lineHeight: 24,
-  },
-  duplicate: {
-    marginTop: Spacing.one,
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.two,
+  meta: {
+    gap: Spacing.half,
   },
 });

@@ -15,6 +15,16 @@ export function jobDiscoveryNotificationRoute(data: unknown): '/jobs' | null {
     : null;
 }
 
+export function jobDiscoverySavedSearchId(data: unknown): string | null {
+  if (!isJobDiscoveryNotification(data) || !isRecord(data)) {
+    return null;
+  }
+
+  return typeof data.savedSearchId === 'string' && data.savedSearchId.length > 0
+    ? data.savedSearchId
+    : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

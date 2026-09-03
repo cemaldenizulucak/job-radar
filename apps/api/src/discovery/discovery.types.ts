@@ -22,6 +22,9 @@ export type DiscoveryRunSummary = {
   stopReason: string | null;
   sourceAttempts: number;
   sourceFailures: number;
+  rawProviderJobs: number;
+  normalizedJobs: number;
+  notifiedJobCount: number;
 };
 
 export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
@@ -36,6 +39,9 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   stopReason: null,
   sourceAttempts: 0,
   sourceFailures: 0,
+  rawProviderJobs: 0,
+  normalizedJobs: 0,
+  notifiedJobCount: 0,
 };
 
 export const SKIPPED_DISCOVERY_RESULT: ImmediateDiscoveryResult = {

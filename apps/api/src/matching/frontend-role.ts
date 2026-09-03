@@ -8,6 +8,11 @@ import {
 } from './search-terms.js';
 
 /**
+ * Software-role classifiers. Not used on the default MatchingService path.
+ * Kept for optional scoring or metadata later.
+ */
+
+/**
  * Role title scoring:
  *   direct  +50
  *   alias   +40

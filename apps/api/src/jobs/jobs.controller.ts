@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { SourceId } from '../common/domain.types.js';
 import { parseBooleanFlag } from '../scheduler/scheduler-config.service.js';
+import { parseJobFeedLimit } from './job-feed-visibility.js';
 import { JobsService } from './jobs.service.js';
 import type { JobDetail, JobListResult, JobTabs } from './jobs.types.js';
 
@@ -32,6 +33,7 @@ export class JobsController {
     @Query('cursor') cursor?: string,
     @Query('matchedOnly') matchedOnly?: string,
     @Query('includeInactive') includeInactive?: string,
+    @Query('limit') limit?: string,
   ): Promise<JobListResult> {
     return this.jobsService.listForUser({
       userId: user.id,
@@ -40,6 +42,7 @@ export class JobsController {
       cursor,
       matchedOnly: parseMatchedOnly(matchedOnly),
       includeInactive: parseBooleanFlag(includeInactive, false),
+      limit: parseJobFeedLimit(limit),
     });
   }
 

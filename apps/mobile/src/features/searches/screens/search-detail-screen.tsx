@@ -1,10 +1,17 @@
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Switch, View } from 'react-native';
+import { StyleSheet, Switch, View } from 'react-native';
 
+import { AppBadge } from '@/components/app-badge';
+import { AppButton } from '@/components/app-button';
+import { ErrorState } from '@/components/error-state';
+import { LoadingState } from '@/components/loading-state';
+import { ScreenHeader } from '@/components/screen-header';
 import { ScreenScaffold } from '@/components/screen-scaffold';
+import { SectionCard } from '@/components/section-card';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { uiCopy } from '@/constants/ui';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useJobs } from '@/features/jobs/hooks/useJobs';
 import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
@@ -13,8 +20,11 @@ import { userErrorMessage } from '@/lib/api-error';
 
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { SearchBackButton } from '../components/search-back-button';
+import { searchesCopy, sourceName, workTypeLabel } from '../copy';
 import { useSavedSearch } from '../hooks/useSavedSearches';
 import { deleteSavedSearch, toggleSavedSearchActive } from '../services/saved-search.service';
+import type { SavedSearch } from '../types/search.types';
+import { searchLocationDisplay } from '../utils/search-location-display';
 import {
   DELETE_SAVED_SEARCH_MESSAGE,
   DELETE_SAVED_SEARCH_TITLE,
@@ -24,27 +34,7 @@ import {
 } from '../utils/search-write';
 
 function formatList(values: readonly string[]): string {
-  return values.length > 0 ? values.join(', ') : 'Any';
-}
-
-function sourceLabel(source: string): string {
-  return source === 'linkedin' ? 'LinkedIn' : 'Kariyer.net';
-}
-
-function workTypeLabel(value: string): string {
-  if (value === 'remote') {
-    return 'Remote';
-  }
-
-  if (value === 'hybrid') {
-    return 'Hybrid';
-  }
-
-  if (value === 'onsite') {
-    return 'On-site';
-  }
-
-  return value;
+  return values.length > 0 ? values.join(', ') : searchesCopy.any;
 }
 
 export function SearchDetailScreen() {
@@ -91,7 +81,7 @@ export function SearchDetailScreen() {
       await refetchJobs();
       bumpSearchCatalog();
     } catch (caught) {
-      setActionError(userErrorMessage(caught, 'Couldn’t update this search.'));
+      setActionError(userErrorMessage(caught, searchesCopy.updateError));
     } finally {
       setIsBusy(false);
       setIsRefreshing(false);
@@ -115,7 +105,7 @@ export function SearchDetailScreen() {
       bumpSearchCatalog();
       router.replace('/searches' as Href);
     } catch (caught) {
-      setActionError(userErrorMessage(caught, 'Couldn’t delete this search.'));
+      setActionError(userErrorMessage(caught, searchesCopy.deleteError));
       setIsBusy(false);
     } finally {
       actionLock.release();
@@ -126,7 +116,7 @@ export function SearchDetailScreen() {
     return (
       <ScreenScaffold>
         <SearchBackButton onPress={() => router.back()} />
-        <ActivityIndicator color={theme.accent} />
+        <LoadingState />
       </ScreenScaffold>
     );
   }
@@ -135,8 +125,14 @@ export function SearchDetailScreen() {
     return (
       <ScreenScaffold>
         <SearchBackButton onPress={() => router.back()} />
-        <ThemedText style={styles.title}>Search not found</ThemedText>
-        <ThemedText themeColor="textSecondary">{error ?? 'This search is not available.'}</ThemedText>
+        <ErrorState
+          title={searchesCopy.notFound}
+          message={
+            typeof __DEV__ !== 'undefined' && __DEV__ && error
+              ? error
+              : searchesCopy.notAvailable
+          }
+        />
       </ScreenScaffold>
     );
   }
@@ -144,23 +140,20 @@ export function SearchDetailScreen() {
   return (
     <ScreenScaffold>
       <SearchBackButton onPress={() => router.back()} />
-      <View style={styles.header}>
-        <ThemedText style={styles.title}>{search.name}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {`${matchCount} matching job${matchCount === 1 ? '' : 's'}`}
-        </ThemedText>
-      </View>
+      <ScreenHeader
+        title={search.name}
+        subtitle={searchesCopy.matchCount(matchCount)}
+      />
 
-      <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+      <SectionCard title={searchesCopy.active}>
         <View style={styles.activeRow}>
           <View style={styles.activeCopy}>
-            <ThemedText type="smallBold">Active</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
+            <ThemedText type="meta" themeColor="textSecondary">
               {isRefreshing
-                ? 'Refreshing results...'
+                ? searchesCopy.scanning
                 : search.isActive
-                  ? 'Included in backend scans.'
-                  : 'Paused. Future scheduled scans are stopped. Listings are kept.'}
+                  ? searchesCopy.includedInScans
+                  : searchesCopy.pausedHint}
             </ThemedText>
           </View>
           <Switch
@@ -172,76 +165,87 @@ export function SearchDetailScreen() {
             trackColor={{ false: theme.backgroundSelected, true: theme.accent }}
           />
         </View>
-      </View>
+      </SectionCard>
 
-      <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
-        <ThemedText type="smallBold">Keywords</ThemedText>
-        <ThemedText themeColor="textSecondary">{formatList(search.keywords)}</ThemedText>
-        <ThemedText type="smallBold">Technologies</ThemedText>
-        <ThemedText themeColor="textSecondary">{formatList(search.technologies)}</ThemedText>
-        <ThemedText type="smallBold">Locations</ThemedText>
-        <ThemedText themeColor="textSecondary">{formatList(search.locations)}</ThemedText>
-        <ThemedText type="smallBold">Work types</ThemedText>
-        <ThemedText themeColor="textSecondary">
-          {formatList(search.workTypes.map(workTypeLabel))}
-        </ThemedText>
-        <ThemedText type="smallBold">Experience levels</ThemedText>
-        <ThemedText themeColor="textSecondary">{formatList(search.experienceLevels)}</ThemedText>
-        <ThemedText type="smallBold">Sources</ThemedText>
-        <ThemedText themeColor="textSecondary">
-          {search.sources.map(sourceLabel).join(', ') || 'No sources'}
-        </ThemedText>
-      </View>
+      <SectionCard title={searchesCopy.sectionBasics}>
+        <DetailLine label={searchesCopy.keywords} value={formatList(search.keywords)} />
+        <LocationDetail search={search} />
+        <ThemedText type="smallBold">{searchesCopy.sources}</ThemedText>
+        <View style={styles.chipRow}>
+          {search.sources.length === 0 ? (
+            <ThemedText type="meta" themeColor="textSecondary">
+              {searchesCopy.noSources}
+            </ThemedText>
+          ) : (
+            search.sources.map((source) => (
+              <AppBadge
+                key={source}
+                label={sourceName(source)}
+                backgroundColor={theme.backgroundSelected}
+                textColor={theme.text}
+              />
+            ))
+          )}
+        </View>
+      </SectionCard>
+
+      {search.technologies.length > 0 ||
+      search.workTypes.length > 0 ||
+      search.experienceLevels.length > 0 ? (
+        <SectionCard title={searchesCopy.sectionAdvanced}>
+          {search.technologies.length > 0 ? (
+            <DetailLine
+              label={searchesCopy.tags}
+              value={formatList(search.technologies)}
+            />
+          ) : null}
+          {search.workTypes.length > 0 ? (
+            <DetailLine
+              label={searchesCopy.workTypes}
+              value={formatList(search.workTypes.map(workTypeLabel))}
+            />
+          ) : null}
+          {search.experienceLevels.length > 0 ? (
+            <DetailLine
+              label={searchesCopy.experienceLevels}
+              value={formatList(search.experienceLevels)}
+            />
+          ) : null}
+        </SectionCard>
+      ) : null}
 
       {actionError ? (
-        <ThemedText type="small" style={{ color: theme.danger }}>
+        <ThemedText type="meta" style={{ color: theme.danger }}>
           {actionError}
         </ThemedText>
       ) : null}
 
-      <Pressable
-        accessibilityRole="button"
+      <AppButton
+        label={searchesCopy.viewJobs}
+        variant="secondary"
         disabled={isBusy}
         onPress={() => {
           setSavedSearchId(search.id);
           router.push('/jobs' as Href);
         }}
-        style={({ pressed }) => [
-          styles.button,
-          { backgroundColor: theme.backgroundElement, opacity: pressed || isBusy ? 0.7 : 1 },
-        ]}>
-        <ThemedText type="smallBold">View jobs</ThemedText>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
+      />
+      <AppButton
+        label={uiCopy.edit}
         disabled={isBusy}
         onPress={() => router.push(`/searches/${search.id}/edit` as Href)}
-        style={({ pressed }) => [
-          styles.button,
-          { backgroundColor: theme.accent, opacity: pressed || isBusy ? 0.7 : 1 },
-        ]}>
-        <ThemedText type="smallBold" style={styles.primaryLabel}>
-          Edit
-        </ThemedText>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
+      />
+      <AppButton
+        label={uiCopy.delete}
+        variant="danger"
         disabled={isBusy}
         onPress={() => setDeleteOpen(true)}
-        style={({ pressed }) => [
-          styles.button,
-          { backgroundColor: theme.backgroundElement, opacity: pressed || isBusy ? 0.7 : 1 },
-        ]}>
-        <ThemedText type="smallBold" style={{ color: theme.danger }}>
-          Delete
-        </ThemedText>
-      </Pressable>
+      />
 
       <ConfirmDialog
         visible={deleteOpen}
         title={DELETE_SAVED_SEARCH_TITLE}
         message={DELETE_SAVED_SEARCH_MESSAGE}
-        confirmLabel="Delete"
+        confirmLabel={uiCopy.delete}
         destructive
         confirmDisabled={isBusy}
         onCancel={() => setDeleteOpen(false)}
@@ -253,20 +257,33 @@ export function SearchDetailScreen() {
   );
 }
 
+function LocationDetail({ search }: { search: SavedSearch }) {
+  const location = searchLocationDisplay(search);
+  const value = location.label ?? searchesCopy.any;
+
+  return (
+    <View style={styles.detail}>
+      <ThemedText type="smallBold">{searchesCopy.locations}</ThemedText>
+      <ThemedText themeColor="textSecondary">{value}</ThemedText>
+      {location.fromProfile && location.label ? (
+        <ThemedText type="meta" themeColor="textSecondary">
+          {searchesCopy.profileLocationBadge}
+        </ThemedText>
+      ) : null}
+    </View>
+  );
+}
+
+function DetailLine({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detail}>
+      <ThemedText type="smallBold">{label}</ThemedText>
+      <ThemedText themeColor="textSecondary">{value}</ThemedText>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  header: {
-    gap: Spacing.one,
-  },
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 700,
-  },
-  card: {
-    borderRadius: 16,
-    padding: Spacing.three,
-    gap: Spacing.two,
-  },
   activeRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -276,13 +293,12 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: Spacing.one,
   },
-  button: {
-    minHeight: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.one,
   },
-  primaryLabel: {
-    color: '#ffffff',
+  detail: {
+    gap: Spacing.half,
   },
 });

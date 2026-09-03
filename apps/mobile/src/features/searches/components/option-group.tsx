@@ -1,5 +1,6 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { AppChip } from '@/components/app-chip';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -49,30 +50,18 @@ export function OptionGroup<T extends string>({
           const isSelected = selected.includes(option.id);
 
           return (
-            <Pressable
+            <AppChip
               key={option.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected: isSelected, disabled }}
+              label={option.label}
+              selected={isSelected}
               disabled={disabled}
               onPress={() => toggle(option.id)}
-              style={({ pressed }) => [
-                styles.chip,
-                {
-                  backgroundColor: isSelected ? theme.accent : theme.backgroundElement,
-                  opacity: disabled ? 0.6 : pressed ? 0.85 : 1,
-                },
-              ]}>
-              <ThemedText
-                type="smallBold"
-                style={{ color: isSelected ? '#ffffff' : theme.text }}>
-                {option.label}
-              </ThemedText>
-            </Pressable>
+            />
           );
         })}
       </View>
       {error ? (
-        <ThemedText type="small" style={{ color: theme.danger }}>
+        <ThemedText type="meta" style={{ color: theme.danger }}>
           {error}
         </ThemedText>
       ) : null}
@@ -88,10 +77,5 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.two,
-  },
-  chip: {
-    borderRadius: 999,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
 });

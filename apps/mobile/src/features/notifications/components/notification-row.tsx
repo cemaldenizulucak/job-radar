@@ -1,7 +1,9 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Borders, Radius, Spacing, cardElevation } from '@/constants/theme';
+import { pressOpacity } from '@/constants/ui';
+import { formatTurkishJobDateFromIso } from '@/features/jobs/utils/job-dates';
 import { useTheme } from '@/hooks/use-theme';
 
 import type { NotificationItem } from '../types/notification.types';
@@ -14,63 +16,55 @@ type NotificationRowProps = {
 export function NotificationRow({ notification, onPress }: NotificationRowProps) {
   const theme = useTheme();
   const unread = !notification.isRead;
-  const createdAt = formatNotificationDate(notification.createdAt);
+  const createdAt = formatTurkishJobDateFromIso(notification.createdAt) ?? '';
+  const accent = notification.type === 'JOB_DISCOVERY' ? theme.accent : theme.secondary;
 
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ selected: unread }}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
+        unread ? cardElevation(theme.scheme) : null,
         {
-          backgroundColor: theme.backgroundElement,
-          opacity: pressed ? 0.88 : 1,
-          borderColor: unread ? theme.accent : 'transparent',
+          backgroundColor: unread ? theme.accentMuted : theme.backgroundElement,
+          borderColor: theme.border,
+          borderLeftColor: accent,
+          opacity: pressOpacity(pressed),
         },
       ]}>
       {unread ? (
-        <View style={[styles.dot, { backgroundColor: theme.accent }]} />
+        <View style={[styles.dot, { backgroundColor: accent }]} />
       ) : (
         <View style={styles.dotSpacer} />
       )}
       <View style={styles.copy}>
-        <ThemedText type="smallBold">{notification.title}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
+        <ThemedText type={unread ? 'cardTitle' : 'smallBold'}>
+          {notification.title}
+        </ThemedText>
+        <ThemedText type="meta" themeColor="textSecondary">
           {notification.message}
         </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {createdAt}
-        </ThemedText>
+        {createdAt ? (
+          <ThemedText type="meta" themeColor="textSecondary">
+            {createdAt}
+          </ThemedText>
+        ) : null}
       </View>
-      {unread ? (
-        <ThemedText type="smallBold" style={{ color: theme.accent }}>
-          New
-        </ThemedText>
-      ) : null}
     </Pressable>
   );
 }
 
-function formatNotificationDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown';
-  }
-
-  return date.toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-}
-
 const styles = StyleSheet.create({
   row: {
-    borderRadius: 16,
+    borderRadius: Radius.lg,
     padding: Spacing.three,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: Spacing.two,
-    borderWidth: 1,
+    borderWidth: Borders.hairline,
+    borderLeftWidth: Borders.accent,
   },
   copy: {
     flex: 1,

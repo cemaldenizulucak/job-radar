@@ -23,6 +23,8 @@ function search(overrides: Partial<SavedSearch> = {}): SavedSearch {
     workTypes: [],
     experienceLevels: [],
     sources: ['linkedin', 'kariyer_net'],
+    effectiveLocation: 'istanbul',
+    locationSource: 'search',
     createdAt: '2026-09-02T10:00:00.000Z',
     updatedAt: '2026-09-02T10:00:00.000Z',
     ...overrides,
@@ -51,7 +53,7 @@ describe('search write helpers', () => {
     expect(isDiscoveryWarning('failed')).toBe(true);
     expect(isDiscoveryWarning('completed')).toBe(false);
     expect(isDiscoveryWarning('skipped')).toBe(false);
-    expect(PARTIAL_DISCOVERY_MESSAGE).toContain('Search saved.');
+    expect(PARTIAL_DISCOVERY_MESSAGE).toContain('Arama kaydedildi.');
   });
 
   it('prevents duplicate form submission while a request is in flight', () => {
@@ -65,12 +67,12 @@ describe('search write helpers', () => {
   });
 
   it('explains that delete removes the search, not job listings', () => {
-    expect(DELETE_SAVED_SEARCH_TITLE).toBe('Delete this saved search?');
+    expect(DELETE_SAVED_SEARCH_TITLE).toBe('Bu kayıtlı arama silinsin mi?');
     expect(DELETE_SAVED_SEARCH_MESSAGE).toContain(
-      'Job listings themselves are not deleted',
+      'İş ilanları silinmez',
     );
     expect(DELETE_SAVED_SEARCH_MESSAGE).toContain(
-      'no longer appear in its tab',
+      'sekmesinde görünmez',
     );
   });
 

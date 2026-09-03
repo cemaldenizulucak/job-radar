@@ -1,11 +1,14 @@
 import { type Href, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { AppBadge } from '@/components/app-badge';
+import { AppButton } from '@/components/app-button';
 import { ScreenScaffold } from '@/components/screen-scaffold';
+import { SectionCard } from '@/components/section-card';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Borders, Radius, Spacing } from '@/constants/theme';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import {
   deleteApplication,
@@ -21,13 +24,15 @@ import { useTheme } from '@/hooks/use-theme';
 import { ApplicationStatusPicker } from '../components/application-status-picker';
 import { DuplicateJobRow } from '../components/duplicate-job-row';
 import { JobDetailHeader } from '../components/job-detail-header';
+import { jobsCopy, jobsUiError } from '../copy';
 import type { JobApplicationStatus, JobDetail } from '../types/job.types';
+import { formatTurkishJobDateFromIso } from '../utils/job-dates';
 import {
-  formatJobDateLabel,
   formatLocation,
   sourceLabel,
   workModelLabel,
 } from '../utils/job-labels';
+import { getJobSourceAppearance } from '../utils/job-source-appearance';
 
 type JobDetailScreenProps = {
   job: JobDetail;
@@ -59,6 +64,11 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
     }));
   }, [job.matchedSearchIds, job.matchedSearches, searches]);
   const canOpenOriginal = job.canonicalUrl.trim().length > 0;
+  const publishedLabel =
+    formatTurkishJobDateFromIso(job.publishedAt) ?? jobsCopy.dateMissing;
+  const discoveredLabel =
+    formatTurkishJobDateFromIso(job.firstDiscoveredAt) ?? jobsCopy.dateMissing;
+  const sourceAppearance = getJobSourceAppearance(job.sourceId, theme.scheme);
 
   const openOriginal = () => {
     if (!canOpenOriginal) {
@@ -86,9 +96,7 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
       }
     } catch (caught) {
       onJobChange({ ...job, isFavorite: job.isFavorite });
-      setActionError(
-        caught instanceof Error ? caught.message : 'Couldn’t save favorite.',
-      );
+      setActionError(jobsUiError(caught, jobsCopy.favoriteError));
     } finally {
       setIsBusy(false);
     }
@@ -136,9 +144,7 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
         applicationStatus: previous.applicationStatus,
         applicationId: previous.applicationId,
       });
-      setActionError(
-        caught instanceof Error ? caught.message : 'Couldn’t update application status.',
-      );
+      setActionError(jobsUiError(caught, jobsCopy.applicationError));
     } finally {
       setIsBusy(false);
     }
@@ -154,81 +160,88 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
         }}
       />
 
-      <View style={styles.hero}>
-        <View style={styles.badgeRow}>
-          <View style={[styles.badge, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">{sourceLabel(job.sourceId)}</ThemedText>
-          </View>
+      <View
+        style={[
+          styles.hero,
+          {
+            backgroundColor: sourceAppearance.badgeBackground,
+            borderColor: theme.border,
+            borderLeftColor: sourceAppearance.accentColor,
+          },
+        ]}>
+        <View style={styles.heroBadges}>
+          <AppBadge
+            label={sourceLabel(job.sourceId)}
+            backgroundColor={sourceAppearance.badgeBackground}
+            textColor={sourceAppearance.badgeTextColor}
+          />
+          {job.isNew ? (
+            <AppBadge
+              label={jobsCopy.newBadge}
+              backgroundColor={theme.accent}
+              textColor={theme.onAccent}
+            />
+          ) : null}
         </View>
-        <ThemedText style={styles.title}>{job.title}</ThemedText>
-        <ThemedText>{job.companyName}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {formatLocation(job.location)} · {workModelLabel(job.workModel)}
-        </ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          Published {formatJobDateLabel(job.publishedAt)} · Found{' '}
-          {formatJobDateLabel(job.firstDiscoveredAt)}
+        <ThemedText type="screenTitle">{job.title}</ThemedText>
+        <ThemedText type="cardTitle">{job.companyName}</ThemedText>
+        <ThemedText type="meta" themeColor="textSecondary">
+          {formatLocation(job.location)}
         </ThemedText>
       </View>
+
+      <SectionCard title={jobsCopy.listingInfo}>
+        <DetailRow label={jobsCopy.source} value={sourceLabel(job.sourceId)} />
+        <DetailRow label={jobsCopy.publishedAt} value={publishedLabel} />
+        <DetailRow label={jobsCopy.discoveredAt} value={discoveredLabel} />
+        <DetailRow label={jobsCopy.workModel} value={workModelLabel(job.workModel)} />
+        <ThemedText type="sectionTitle">{jobsCopy.description}</ThemedText>
+        <ThemedText themeColor="textSecondary">
+          {job.description?.trim() ? job.description : jobsCopy.descriptionMissing}
+        </ThemedText>
+      </SectionCard>
 
       {job.technologies.length > 0 ? (
-        <View style={styles.section}>
-          <ThemedText type="smallBold" themeColor="textSecondary">
-            Technologies
-          </ThemedText>
-          <View style={styles.techRow}>
+        <SectionCard title={jobsCopy.technologies}>
+          <View style={styles.chipRow}>
             {job.technologies.map((tech) => (
-              <View
+              <AppBadge
                 key={tech}
-                style={[styles.techChip, { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText type="small">{tech}</ThemedText>
-              </View>
+                label={tech}
+                backgroundColor={theme.backgroundSelected}
+                textColor={theme.text}
+              />
             ))}
           </View>
-        </View>
+        </SectionCard>
       ) : null}
-
-      <View style={styles.section}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          Description
-        </ThemedText>
-        <ThemedText themeColor="textSecondary">
-          {job.description?.trim() ? job.description : 'No description provided.'}
-        </ThemedText>
-      </View>
 
       {matchedSearches.length > 0 ? (
-        <View style={styles.section}>
-          <ThemedText type="smallBold" themeColor="textSecondary">
-            Matching saved searches
-          </ThemedText>
-          <View style={styles.techRow}>
+        <SectionCard title={jobsCopy.matchedSearches}>
+          <View style={styles.chipRow}>
             {matchedSearches.map((search) => (
-              <View
+              <AppBadge
                 key={search.id}
-                style={[styles.techChip, { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText type="smallBold">{search.name}</ThemedText>
-              </View>
+                label={search.name}
+                backgroundColor={theme.accentMuted}
+                textColor={theme.accent}
+              />
             ))}
           </View>
-        </View>
+        </SectionCard>
       ) : null}
 
-      <View style={styles.section}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          Related on other sources
-        </ThemedText>
+      <SectionCard title={jobsCopy.otherSources}>
         {relatedJobs.length === 0 ? (
-          <ThemedText type="small" themeColor="textSecondary">
+          <ThemedText type="meta" themeColor="textSecondary">
             {job.duplicateGroupSize > 1
-              ? `Same job detected on ${job.duplicateGroupSize} sources. Each listing stays separate.`
-              : 'No duplicate listings detected. This source-specific post stays on its own.'}
+              ? jobsCopy.otherSourcesCount(job.duplicateGroupSize)
+              : jobsCopy.otherSourcesEmpty}
           </ThemedText>
         ) : (
           <View style={styles.list}>
-            <ThemedText type="small" themeColor="textSecondary">
-              Same job detected on {job.duplicateGroupSize} sources. Each listing stays
-              separate.
+            <ThemedText type="meta" themeColor="textSecondary">
+              {jobsCopy.otherSourcesCount(job.duplicateGroupSize)}
             </ThemedText>
             {relatedJobs.map((related) => (
               <DuplicateJobRow
@@ -239,89 +252,67 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
             ))}
           </View>
         )}
-      </View>
+      </SectionCard>
 
-      <View style={styles.section}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          Application status
-        </ThemedText>
+      <SectionCard title={jobsCopy.applicationStatus}>
         <ApplicationStatusPicker
           selectedStatus={job.applicationStatus}
           onSelect={(nextStatus) => {
             void changeStatus(nextStatus);
           }}
         />
-      </View>
+      </SectionCard>
 
       {actionError ? (
-        <ThemedText type="small" style={{ color: theme.danger }}>
+        <ThemedText type="meta" style={{ color: theme.danger }}>
           {actionError}
         </ThemedText>
       ) : null}
 
-      <Pressable
-        accessibilityRole="link"
+      <AppButton
+        label={jobsCopy.openOriginal}
         disabled={!canOpenOriginal}
         onPress={openOriginal}
-        style={({ pressed }) => [
-          styles.primaryButton,
-          {
-            backgroundColor: theme.accent,
-            opacity: !canOpenOriginal ? 0.5 : pressed ? 0.88 : 1,
-          },
-        ]}>
-        <ThemedText type="smallBold" style={styles.primaryLabel}>
-          Open original job
-        </ThemedText>
-      </Pressable>
+        accessibilityLabel={jobsCopy.openOriginal}
+        accessibilityRole="link"
+      />
     </ScreenScaffold>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detailRow}>
+      <ThemedText type="meta" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+      <ThemedText>{value}</ThemedText>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   hero: {
+    borderRadius: Radius.lg,
+    borderWidth: Borders.hairline,
+    borderLeftWidth: Borders.accent,
+    padding: Spacing.three,
     gap: Spacing.two,
   },
-  badgeRow: {
+  heroBadges: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: Spacing.two,
   },
-  badge: {
-    borderRadius: 999,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.half,
-  },
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 700,
-  },
-  section: {
-    gap: Spacing.two,
-  },
-  techRow: {
+  chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.one,
   },
-  techChip: {
-    borderRadius: 8,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.half,
-  },
   list: {
     gap: Spacing.two,
   },
-  primaryButton: {
-    minHeight: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Spacing.four,
-  },
-  primaryLabel: {
-    color: '#ffffff',
-    fontSize: 16,
+  detailRow: {
+    gap: Spacing.half,
   },
 });

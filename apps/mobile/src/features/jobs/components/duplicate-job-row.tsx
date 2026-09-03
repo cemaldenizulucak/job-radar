@@ -1,9 +1,11 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Radius, Spacing } from '@/constants/theme';
+import { pressOpacity } from '@/constants/ui';
 import { useTheme } from '@/hooks/use-theme';
 
+import { jobsCopy } from '../copy';
 import type { DuplicateJobLink } from '../types/job.types';
 import { sourceLabel } from '../utils/job-labels';
 
@@ -18,12 +20,13 @@ export function DuplicateJobRow({ job, onPress }: DuplicateJobRowProps) {
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={`${sourceLabel(job.sourceId)}, ${job.title}, ${jobsCopy.viewListing}`}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,
         {
           backgroundColor: theme.backgroundElement,
-          opacity: pressed ? 0.88 : 1,
+          opacity: pressOpacity(pressed),
         },
       ]}>
       <View style={styles.copy}>
@@ -34,7 +37,7 @@ export function DuplicateJobRow({ job, onPress }: DuplicateJobRowProps) {
         </ThemedText>
       </View>
       <ThemedText type="small" style={{ color: theme.accent }}>
-        View
+        {jobsCopy.viewListing}
       </ThemedText>
     </Pressable>
   );
@@ -42,7 +45,7 @@ export function DuplicateJobRow({ job, onPress }: DuplicateJobRowProps) {
 
 const styles = StyleSheet.create({
   row: {
-    borderRadius: 14,
+    borderRadius: Radius.md,
     padding: Spacing.three,
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,16 +1,19 @@
 import type { SourceId } from '../common/domain.types.js';
+import { isVisibleInMatchedJobFeed } from '../jobs/job-feed-visibility.js';
+import type { JobSearchMatch } from '../matching/matching.types.js';
 
 import {
   NEW_JOBS_DIGEST_TYPE,
   type CreateDiscoveryNotificationsInput,
   type DiscoveryNotificationDraft,
   type InsertedJobForNotification,
+  type PersistedJobForNotification,
 } from './notifications.types.js';
 
 const SOURCE_ORDER: readonly SourceId[] = ['linkedin', 'kariyer_net'];
 
 export function newJobsTitle(count: number): string {
-  return count === 1 ? '1 new job found' : `${count} new jobs found`;
+  return count === 1 ? '1 yeni ilan bulundu' : `${count} yeni ilan bulundu`;
 }
 
 export function sourceCountMessage(
@@ -32,6 +35,37 @@ export function sourceCountMessage(
   }).join(', ');
 }
 
+export function selectVisibleNewMatches(
+  matches: readonly JobSearchMatch[],
+  jobs: readonly PersistedJobForNotification[],
+  maxAgeDays: number,
+  now: Date = new Date(),
+): {
+  matches: JobSearchMatch[];
+  jobs: InsertedJobForNotification[];
+} {
+  const jobsById = new Map(jobs.map((job) => [job.id, job]));
+  const visibleMatches: JobSearchMatch[] = [];
+  const visibleJobs = new Map<string, InsertedJobForNotification>();
+
+  for (const match of matches) {
+    const job = jobsById.get(match.jobId);
+    if (!job || !isVisibleInMatchedJobFeed(job, maxAgeDays, now)) {
+      continue;
+    }
+
+    visibleMatches.push(match);
+    if (!visibleJobs.has(job.id)) {
+      visibleJobs.set(job.id, { id: job.id, sourceId: job.sourceId });
+    }
+  }
+
+  return {
+    matches: visibleMatches,
+    jobs: [...visibleJobs.values()],
+  };
+}
+
 export function buildDiscoveryNotificationDrafts(
   input: CreateDiscoveryNotificationsInput,
 ): DiscoveryNotificationDraft[] {
@@ -39,6 +73,7 @@ export function buildDiscoveryNotificationDrafts(
     input.jobs.map((job) => [job.id, job] as const),
   );
   const jobsByUser = new Map<string, Map<string, InsertedJobForNotification>>();
+  const searchesByUser = new Map<string, Set<string>>();
 
   for (const match of input.matches) {
     const job = jobsById.get(match.jobId);
@@ -50,6 +85,10 @@ export function buildDiscoveryNotificationDrafts(
     const forUser = jobsByUser.get(userId) ?? new Map();
     forUser.set(job.id, job);
     jobsByUser.set(userId, forUser);
+
+    const searches = searchesByUser.get(userId) ?? new Set();
+    searches.add(match.savedSearchId);
+    searchesByUser.set(userId, searches);
   }
 
   const drafts: DiscoveryNotificationDraft[] = [];
@@ -60,11 +99,15 @@ export function buildDiscoveryNotificationDrafts(
       continue;
     }
 
+    const searchIds = [...(searchesByUser.get(userId) ?? [])];
     drafts.push({
       userId,
       title: newJobsTitle(uniqueJobs.length),
       message: sourceCountMessage(uniqueJobs),
       type: NEW_JOBS_DIGEST_TYPE,
+      discoveryRunId: input.runId,
+      savedSearchId: searchIds.length === 1 ? (searchIds[0] ?? null) : null,
+      newJobCount: uniqueJobs.length,
     });
   }
 

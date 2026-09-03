@@ -1,19 +1,17 @@
+import { authCopy } from '../copy';
+
 export function getAuthErrorMessage(
   error: unknown,
   context: 'signIn' | 'signUp',
 ): string {
   if (!(error instanceof Error) || error.message.trim().length === 0) {
-    return context === 'signUp'
-      ? 'Couldn’t create account. Try again.'
-      : 'Couldn’t sign in. Try again.';
+    return context === 'signUp' ? authCopy.signUpFailed : authCopy.signInFailed;
   }
 
   const message = error.message.toLowerCase();
 
   if (message.includes('network') || message.includes('fetch')) {
-    return context === 'signUp'
-      ? 'Couldn’t create account. Check your connection and try again.'
-      : 'Couldn’t sign in. Check your connection and try again.';
+    return context === 'signUp' ? authCopy.signUpNetwork : authCopy.signInNetwork;
   }
 
   if (
@@ -21,16 +19,20 @@ export function getAuthErrorMessage(
     message.includes('invalid credentials') ||
     message.includes('invalid email or password')
   ) {
-    return 'Email or password is incorrect.';
+    return authCopy.invalidCredentials;
   }
 
   if (message.includes('email not confirmed')) {
-    return 'Confirm your email before signing in.';
+    return authCopy.emailNotConfirmed;
   }
 
   if (message.includes('already registered') || message.includes('user already exists')) {
-    return 'An account with this email already exists. Go to login.';
+    return authCopy.alreadyRegistered;
   }
 
-  return error.message;
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    return error.message;
+  }
+
+  return context === 'signUp' ? authCopy.signUpFailed : authCopy.signInFailed;
 }

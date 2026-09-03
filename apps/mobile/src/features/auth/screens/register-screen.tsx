@@ -6,16 +6,20 @@ import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { updateProfile } from '@/features/profile/services/profile.service';
+import { useTheme } from '@/hooks/use-theme';
 
 import { AuthScreenLayout } from '../components/auth-screen-layout';
 import { AuthSubmitButton } from '../components/auth-submit-button';
 import { AuthTextField } from '../components/auth-text-field';
+import { authCopy } from '../copy';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthStore } from '../stores/auth.store';
 import { getAuthErrorMessage } from '../utils/map-auth-error';
 import { registerSchema, type RegisterFormValues } from '../validation/auth.schema';
 
 export function RegisterScreen() {
+  const theme = useTheme();
   const { signUp } = useAuth();
   const [authError, setAuthError] = useState<string | null>(null);
   const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
@@ -30,6 +34,8 @@ export function RegisterScreen() {
       name: '',
       email: '',
       password: '',
+      country: '',
+      city: '',
     },
   });
 
@@ -38,12 +44,24 @@ export function RegisterScreen() {
     setConfirmationMessage(null);
 
     try {
-      await signUp(values);
+      await signUp({
+        name: values.name,
+        email: values.email,
+        password: values.password,
+      });
 
       if (!useAuthStore.getState().isAuthenticated) {
-        setConfirmationMessage(
-          'Check your email to confirm your account, then sign in.',
-        );
+        setConfirmationMessage(authCopy.confirmation);
+        return;
+      }
+
+      try {
+        await updateProfile({
+          country: values.country.trim(),
+          city: values.city.trim() || null,
+        });
+      } catch {
+        // Location setup after login still collects this if the patch fails.
       }
     } catch (error) {
       setAuthError(getAuthErrorMessage(error, 'signUp'));
@@ -51,15 +69,17 @@ export function RegisterScreen() {
   };
 
   return (
-    <AuthScreenLayout title="Create account" subtitle="Start collecting jobs in one place.">
+    <AuthScreenLayout
+      title={authCopy.createAccountTitle}
+      subtitle={authCopy.createAccountSubtitle}>
       <View style={styles.form}>
         <Controller
           control={control}
           name="name"
           render={({ field: { onChange, onBlur, value } }) => (
             <AuthTextField
-              label="Name"
-              placeholder="Your name"
+              label={authCopy.name}
+              placeholder={authCopy.namePlaceholder}
               autoCapitalize="words"
               textContentType="name"
               autoComplete="name"
@@ -75,8 +95,8 @@ export function RegisterScreen() {
           name="email"
           render={({ field: { onChange, onBlur, value } }) => (
             <AuthTextField
-              label="Email"
-              placeholder="you@example.com"
+              label={authCopy.email}
+              placeholder={authCopy.emailPlaceholder}
               keyboardType="email-address"
               textContentType="emailAddress"
               autoComplete="email"
@@ -92,8 +112,8 @@ export function RegisterScreen() {
           name="password"
           render={({ field: { onChange, onBlur, value } }) => (
             <AuthTextField
-              label="Password"
-              placeholder="At least 8 characters"
+              label={authCopy.password}
+              placeholder={authCopy.passwordPlaceholder}
               textContentType="newPassword"
               autoComplete="new-password"
               secureTextEntry
@@ -104,19 +124,55 @@ export function RegisterScreen() {
             />
           )}
         />
-        {authError ? <ThemedText style={styles.authError}>{authError}</ThemedText> : null}
+        <Controller
+          control={control}
+          name="country"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <AuthTextField
+              label={authCopy.country}
+              placeholder={authCopy.countryPlaceholder}
+              autoCapitalize="words"
+              textContentType="countryName"
+              value={value}
+              onBlur={onBlur}
+              onChangeText={onChange}
+              error={errors.country?.message}
+            />
+          )}
+        />
+        <Controller
+          control={control}
+          name="city"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <AuthTextField
+              label={authCopy.city}
+              placeholder={authCopy.cityPlaceholder}
+              autoCapitalize="words"
+              textContentType="addressCity"
+              value={value}
+              onBlur={onBlur}
+              onChangeText={onChange}
+              error={errors.city?.message}
+            />
+          )}
+        />
+        {authError ? (
+          <ThemedText type="meta" style={{ color: theme.danger }}>
+            {authError}
+          </ThemedText>
+        ) : null}
         {confirmationMessage ? (
           <ThemedText themeColor="textSecondary">{confirmationMessage}</ThemedText>
         ) : null}
         <AuthSubmitButton
-          label="Create account"
+          label={authCopy.createAccount}
           loading={isSubmitting}
           onPress={handleSubmit(onSubmit)}
         />
         <View style={styles.footer}>
-          <ThemedText themeColor="textSecondary">Already have an account? </ThemedText>
+          <ThemedText themeColor="textSecondary">{authCopy.hasAccount}</ThemedText>
           <Link href={'/(auth)/login' as Href}>
-            <ThemedText type="linkPrimary">Sign in</ThemedText>
+            <ThemedText type="linkPrimary">{authCopy.signIn}</ThemedText>
           </Link>
         </View>
       </View>
@@ -127,11 +183,6 @@ export function RegisterScreen() {
 const styles = StyleSheet.create({
   form: {
     gap: Spacing.three,
-  },
-  authError: {
-    color: '#D93025',
-    fontSize: 14,
-    lineHeight: 20,
   },
   footer: {
     flexDirection: 'row',

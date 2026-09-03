@@ -1,5 +1,10 @@
 import { normalizeText } from '../common/normalize-text.js';
 
+/**
+ * Software/technology classifiers. Not used on the default MatchingService path.
+ * Kept for optional scoring or metadata later.
+ */
+
 export type SearchTermKind = 'role' | 'technology';
 
 export type TechnologyFamily = 'frontend' | 'backend' | 'mobile' | 'universal';

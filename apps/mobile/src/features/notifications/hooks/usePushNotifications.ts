@@ -4,9 +4,11 @@ import { Platform } from 'react-native';
 
 import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
 
+import { nativePushPlatform, shouldRegisterPushOnPlatform } from '../services/push-platform';
 import {
   configureForegroundNotificationHandler,
   jobDiscoveryNotificationRoute,
+  jobDiscoverySavedSearchId,
   registerForPushNotifications,
 } from '../services/push-registration';
 import { rememberRegisteredPushToken } from '../services/push-token.session';
@@ -16,7 +18,7 @@ export function usePushNotifications(userId: string | undefined): void {
   const handledResponseIds = useRef(new Set<string>());
 
   useEffect(() => {
-    if (!userId || Platform.OS === 'web') {
+    if (!userId || !shouldRegisterPushOnPlatform(Platform.OS)) {
       return;
     }
 
@@ -33,7 +35,7 @@ export function usePushNotifications(userId: string | undefined): void {
       try {
         await registerPushToken({
           expoPushToken: result.token,
-          platform: Platform.OS,
+          platform: nativePushPlatform(Platform.OS),
         });
         if (!cancelled) {
           rememberRegisteredPushToken({
@@ -56,7 +58,9 @@ export function usePushNotifications(userId: string | undefined): void {
       }
 
       handledResponseIds.current.add(responseId);
-      useJobsFilterStore.getState().bumpFeedRefresh();
+      useJobsFilterStore
+        .getState()
+        .applyDiscoveryNotificationTarget(jobDiscoverySavedSearchId(data));
       router.navigate(route as Href);
     }
 

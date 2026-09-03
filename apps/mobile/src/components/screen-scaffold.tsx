@@ -1,5 +1,12 @@
 import { type ReactNode } from 'react';
-import { ScrollView, StyleSheet, View, type ScrollViewProps } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  View,
+  type ScrollViewProps,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedView } from '@/components/themed-view';
@@ -16,25 +23,27 @@ export function ScreenScaffold({
   scroll = true,
   contentContainerStyle,
 }: ScreenScaffoldProps) {
-  const body = (
-    <View style={styles.inner}>
-      {children}
-    </View>
-  );
+  const body = <View style={styles.inner}>{children}</View>;
 
   return (
     <ThemedView style={styles.root}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        {scroll ? (
-          <ScrollView
-            contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled">
-            {body}
-          </ScrollView>
-        ) : (
-          <View style={styles.fill}>{body}</View>
-        )}
+        <KeyboardAvoidingView
+          style={styles.fill}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={0}>
+          {scroll ? (
+            <ScrollView
+              contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}>
+              {body}
+            </ScrollView>
+          ) : (
+            <View style={styles.fill}>{body}</View>
+          )}
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
   );

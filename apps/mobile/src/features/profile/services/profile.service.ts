@@ -8,6 +8,14 @@ export type ProfileRecord = {
   email: string | null;
   notificationsEnabled: boolean | null;
   timezone: string | null;
+  country: string | null;
+  city: string | null;
+};
+
+export type ProfileUpdateInput = {
+  notificationsEnabled?: boolean;
+  country?: string | null;
+  city?: string | null;
 };
 
 const profileSchema = z.object({
@@ -16,6 +24,8 @@ const profileSchema = z.object({
   email: z.string().nullable(),
   notificationsEnabled: z.boolean().nullable(),
   timezone: z.string().nullable(),
+  country: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
 });
 
 export class ProfileServiceError extends Error {
@@ -35,15 +45,37 @@ function toServiceError(error: unknown): ProfileServiceError {
   }
 
   if (error instanceof z.ZodError) {
-    return new ProfileServiceError('Unexpected response from the profile API.');
+    return new ProfileServiceError('Profil beklenmeyen bir yanıt verdi.');
   }
 
-  return new ProfileServiceError('Couldn’t load profile.');
+  return new ProfileServiceError('Profil yüklenemedi.');
+}
+
+function mapProfile(row: z.infer<typeof profileSchema>): ProfileRecord {
+  return {
+    userId: row.userId,
+    fullName: row.fullName,
+    email: row.email,
+    notificationsEnabled: row.notificationsEnabled,
+    timezone: row.timezone,
+    country: row.country ?? null,
+    city: row.city ?? null,
+  };
 }
 
 export async function getProfile(): Promise<ProfileRecord> {
   try {
-    return profileSchema.parse(await apiGet('/v1/profiles'));
+    return mapProfile(profileSchema.parse(await apiGet('/v1/profiles')));
+  } catch (error) {
+    throw toServiceError(error);
+  }
+}
+
+export async function updateProfile(
+  patch: ProfileUpdateInput,
+): Promise<ProfileRecord> {
+  try {
+    return mapProfile(profileSchema.parse(await apiPatch('/v1/profiles', patch)));
   } catch (error) {
     throw toServiceError(error);
   }
@@ -52,11 +84,5 @@ export async function getProfile(): Promise<ProfileRecord> {
 export async function updateProfileNotifications(
   notificationsEnabled: boolean,
 ): Promise<ProfileRecord> {
-  try {
-    return profileSchema.parse(
-      await apiPatch('/v1/profiles', { notificationsEnabled }),
-    );
-  } catch (error) {
-    throw toServiceError(error);
-  }
+  return updateProfile({ notificationsEnabled });
 }

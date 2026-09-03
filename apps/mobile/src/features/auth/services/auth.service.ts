@@ -83,7 +83,7 @@ export async function signIn(credentials: SignInCredentials): Promise<AuthSessio
   const session = mapSession(data.session);
 
   if (!session) {
-    throw new AuthServiceError('Sign in succeeded but no session was returned.');
+    throw new AuthServiceError('Giriş başarılı ancak oturum oluşturulamadı.');
   }
 
   return session;

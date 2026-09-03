@@ -20,6 +20,7 @@ import {
   toImmediateDiscoveryResult,
   type ImmediateDiscoveryResult,
 } from '../discovery/discovery.types.js';
+import { ProfilesService } from '../profiles/profiles.service.js';
 import { shouldTriggerSavedSearchDiscovery } from './search-discovery.js';
 import { SearchesService } from './searches.service.js';
 import type {
@@ -41,14 +42,18 @@ export class SearchesController {
     private readonly searchesService: SearchesService,
     @Inject(forwardRef(() => DiscoveryService))
     private readonly discoveryService: DiscoveryService,
+    private readonly profilesService: ProfilesService,
   ) {}
 
   @Get()
   async list(
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ items: SavedSearchResponse[] }> {
-    const items = await this.searchesService.listForUser(user.id);
-    return { items: items.map(toSavedSearchResponse) };
+    const [items, profile] = await Promise.all([
+      this.searchesService.listForUser(user.id),
+      this.profilesService.getByUserId(user.id),
+    ]);
+    return { items: items.map((item) => toSavedSearchResponse(item, profile)) };
   }
 
   @Post()
@@ -71,8 +76,11 @@ export class SearchesController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ): Promise<SavedSearchResponse> {
-    const search = await this.searchesService.getByIdForUser(user.id, id);
-    return toSavedSearchResponse(search);
+    const [search, profile] = await Promise.all([
+      this.searchesService.getByIdForUser(user.id, id),
+      this.profilesService.getByUserId(user.id),
+    ]);
+    return toSavedSearchResponse(search, profile);
   }
 
   @Patch(':id/toggle')
@@ -124,8 +132,10 @@ export class SearchesController {
     search: SavedSearch,
     shouldRun: boolean,
   ): Promise<SavedSearchWriteResponse> {
+    const profile = await this.profilesService.getByUserId(search.userId);
+
     return {
-      search: toSavedSearchResponse(search),
+      search: toSavedSearchResponse(search, profile),
       discovery: shouldRun
         ? await this.runDiscovery(search)
         : SKIPPED_DISCOVERY_RESULT,

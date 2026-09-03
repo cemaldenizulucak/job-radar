@@ -2,9 +2,23 @@ import { BadRequestException } from '@nestjs/common';
 
 import type { SourceId, WorkModel } from '../common/domain.types.js';
 import { isRecord } from '../common/request.js';
-import type { SavedSearch, SavedSearchWriteInput } from './searches.types.js';
+import {
+  resolveEffectiveSearchLocation,
+  toSearchLocationOrigin,
+  type ProfileLocation,
+} from '../common/search-location.js';
+import type {
+  SavedSearch,
+  SavedSearchResponse,
+  SavedSearchWriteInput,
+} from './searches.types.js';
 
-export function toSavedSearchResponse(search: SavedSearch) {
+export function toSavedSearchResponse(
+  search: SavedSearch,
+  profile?: ProfileLocation | null,
+): SavedSearchResponse {
+  const resolved = resolveEffectiveSearchLocation(search.locations, profile);
+
   return {
     id: search.id,
     userId: search.userId,
@@ -16,6 +30,8 @@ export function toSavedSearchResponse(search: SavedSearch) {
     workTypes: [...search.workTypes],
     experienceLevels: [...search.experienceLevels],
     sources: [...search.sourceIds],
+    effectiveLocation: resolved.label,
+    locationSource: toSearchLocationOrigin(resolved.source),
     createdAt: search.createdAt,
     updatedAt: search.updatedAt,
   };

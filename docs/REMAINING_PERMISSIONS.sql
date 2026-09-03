@@ -30,6 +30,8 @@ create table if not exists public.profiles (
   email text,
   notifications_enabled boolean default true,
   timezone text,
+  country text,
+  city text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -53,4 +55,6 @@ alter table public.profiles add column if not exists full_name text;
 alter table public.profiles add column if not exists email text;
 alter table public.profiles add column if not exists notifications_enabled boolean default true;
 alter table public.profiles add column if not exists timezone text;
+alter table public.profiles add column if not exists country text;
+alter table public.profiles add column if not exists city text;
 alter table public.profiles add column if not exists updated_at timestamptz not null default now();

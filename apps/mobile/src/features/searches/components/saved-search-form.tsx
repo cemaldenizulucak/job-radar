@@ -1,34 +1,37 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
-import { Pressable, StyleSheet, Switch, View } from 'react-native';
+import { StyleSheet, Switch, View } from 'react-native';
 
+import { AppBadge } from '@/components/app-badge';
+import { AppButton } from '@/components/app-button';
+import { SectionCard } from '@/components/section-card';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
+import { searchesCopy } from '../copy';
 import type { SavedSearch, SavedSearchWriteInput } from '../types/search.types';
+import { profileDefaultLocationLabel } from '../utils/search-location-display';
 import {
   formValuesToWriteInput,
   joinTags,
+  previewTags,
   savedSearchFormSchema,
   type SavedSearchFormValues,
 } from '../validation/search.schema';
 import { OptionGroup } from './option-group';
 import { SearchTextField } from './search-text-field';
-
-const SOURCE_OPTIONS = [
-  { id: 'linkedin' as const, label: 'LinkedIn' },
-  { id: 'kariyer_net' as const, label: 'Kariyer.net' },
-];
+import { SourceSelector } from './source-selector';
 
 const WORK_TYPE_OPTIONS = [
-  { id: 'remote' as const, label: 'Remote' },
-  { id: 'hybrid' as const, label: 'Hybrid' },
-  { id: 'onsite' as const, label: 'On-site' },
+  { id: 'remote' as const, label: searchesCopy.remote },
+  { id: 'hybrid' as const, label: searchesCopy.hybrid },
+  { id: 'onsite' as const, label: searchesCopy.onsite },
 ];
 
 type SavedSearchFormProps = {
   initialSearch?: SavedSearch;
+  profileLocation?: { city: string | null; country: string | null } | null;
   submitLabel: string;
   submittingLabel?: string;
   onSubmit: (input: SavedSearchWriteInput) => Promise<void>;
@@ -61,14 +64,38 @@ function toDefaultValues(search?: SavedSearch): SavedSearchFormValues {
   };
 }
 
+function TagPreview({ value }: { value: string }) {
+  const theme = useTheme();
+  const tags = previewTags(value);
+
+  if (tags.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.tags}>
+      {tags.map((tag) => (
+        <AppBadge
+          key={tag}
+          label={tag}
+          backgroundColor={theme.accentMuted}
+          textColor={theme.accent}
+        />
+      ))}
+    </View>
+  );
+}
+
 export function SavedSearchForm({
   initialSearch,
+  profileLocation,
   submitLabel,
-  submittingLabel = 'Saving…',
+  submittingLabel = searchesCopy.saveSearch,
   onSubmit,
   formError,
 }: SavedSearchFormProps) {
   const theme = useTheme();
+  const defaultLocationLabel = profileDefaultLocationLabel(profileLocation ?? null);
   const {
     control,
     handleSubmit,
@@ -85,152 +112,167 @@ export function SavedSearchForm({
 
   return (
     <View style={styles.form}>
-      <Controller
-        control={control}
-        name="name"
-        render={({ field: { onChange, onBlur, value } }) => (
-          <SearchTextField
-            label="Name"
-            placeholder="Frontend Developer"
-            autoCapitalize="words"
-            value={value}
-            onBlur={onBlur}
-            onChangeText={onChange}
-            error={errors.name?.message}
-            editable={!isSubmitting}
-          />
-        )}
-      />
-      <Controller
-        control={control}
-        name="keywords"
-        render={({ field: { onChange, onBlur, value } }) => (
-          <SearchTextField
-            label="Keywords"
-            placeholder="Frontend Developer, React Developer"
-            value={value}
-            onBlur={onBlur}
-            onChangeText={onChange}
-            error={errors.keywords?.message}
-            editable={!isSubmitting}
-          />
-        )}
-      />
-      <Controller
-        control={control}
-        name="technologies"
-        render={({ field: { onChange, onBlur, value } }) => (
-          <SearchTextField
-            label="Technologies"
-            placeholder="React, TypeScript"
-            value={value}
-            onBlur={onBlur}
-            onChangeText={onChange}
-            error={errors.technologies?.message}
-            editable={!isSubmitting}
-          />
-        )}
-      />
-      <Controller
-        control={control}
-        name="locations"
-        render={({ field: { onChange, onBlur, value } }) => (
-          <SearchTextField
-            label="Locations"
-            placeholder="Istanbul, Remote"
-            autoCapitalize="words"
-            value={value}
-            onBlur={onBlur}
-            onChangeText={onChange}
-            error={errors.locations?.message}
-            editable={!isSubmitting}
-          />
-        )}
-      />
-      <Controller
-        control={control}
-        name="experienceLevels"
-        render={({ field: { onChange, onBlur, value } }) => (
-          <SearchTextField
-            label="Experience levels"
-            placeholder="Mid, Senior"
-            autoCapitalize="words"
-            value={value}
-            onBlur={onBlur}
-            onChangeText={onChange}
-            error={errors.experienceLevels?.message}
-            editable={!isSubmitting}
-          />
-        )}
-      />
-      <Controller
-        control={control}
-        name="workTypes"
-        render={({ field: { onChange, value } }) => (
-          <OptionGroup
-            label="Work types"
-            options={WORK_TYPE_OPTIONS}
-            selected={value}
-            onChange={onChange}
-            error={errors.workTypes?.message}
-            disabled={isSubmitting}
-          />
-        )}
-      />
-      <Controller
-        control={control}
-        name="sources"
-        render={({ field: { onChange, value } }) => (
-          <OptionGroup
-            label="Sources"
-            options={SOURCE_OPTIONS}
-            selected={value}
-            onChange={onChange}
-            error={errors.sources?.message}
-            disabled={isSubmitting}
-          />
-        )}
-      />
-      <Controller
-        control={control}
-        name="isActive"
-        render={({ field: { onChange, value } }) => (
-          <View style={styles.activeRow}>
-            <View style={styles.activeCopy}>
-              <ThemedText type="smallBold">Active</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                Inactive searches are not included in backend scans.
-              </ThemedText>
-            </View>
-            <Switch
+      <SectionCard title={searchesCopy.sectionBasics}>
+        <Controller
+          control={control}
+          name="name"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <SearchTextField
+              label={searchesCopy.name}
+              placeholder={searchesCopy.namePlaceholder}
+              autoCapitalize="words"
               value={value}
-              disabled={isSubmitting}
-              onValueChange={onChange}
-              trackColor={{ false: theme.backgroundSelected, true: theme.accent }}
+              onBlur={onBlur}
+              onChangeText={onChange}
+              error={errors.name?.message}
+              editable={!isSubmitting}
             />
-          </View>
-        )}
-      />
+          )}
+        />
+        <Controller
+          control={control}
+          name="keywords"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <View style={styles.fieldBlock}>
+              <SearchTextField
+                label={searchesCopy.keywords}
+                placeholder={searchesCopy.keywordsPlaceholder}
+                hint={searchesCopy.keywordsHint}
+                value={value}
+                onBlur={onBlur}
+                onChangeText={onChange}
+                error={errors.keywords?.message}
+                editable={!isSubmitting}
+              />
+              <TagPreview value={value} />
+            </View>
+          )}
+        />
+        <Controller
+          control={control}
+          name="locations"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <View style={styles.fieldBlock}>
+              <SearchTextField
+                label={searchesCopy.locations}
+                placeholder={searchesCopy.locationsPlaceholder}
+                hint={searchesCopy.locationsHint}
+                autoCapitalize="words"
+                value={value}
+                onBlur={onBlur}
+                onChangeText={onChange}
+                error={errors.locations?.message}
+                editable={!isSubmitting}
+              />
+              {defaultLocationLabel ? (
+                <ThemedText type="meta" themeColor="textSecondary">
+                  {searchesCopy.profileLocationDefault(defaultLocationLabel)}
+                </ThemedText>
+              ) : null}
+              <TagPreview value={value} />
+            </View>
+          )}
+        />
+        <Controller
+          control={control}
+          name="sources"
+          render={({ field: { onChange, value } }) => (
+            <SourceSelector
+              selected={value}
+              onChange={onChange}
+              error={errors.sources?.message}
+              disabled={isSubmitting}
+            />
+          )}
+        />
+        <Controller
+          control={control}
+          name="isActive"
+          render={({ field: { onChange, value } }) => (
+            <View style={styles.activeRow}>
+              <View style={styles.activeCopy}>
+                <ThemedText type="smallBold">{searchesCopy.active}</ThemedText>
+                <ThemedText type="meta" themeColor="textSecondary">
+                  {searchesCopy.activeHint}
+                </ThemedText>
+              </View>
+              <Switch
+                value={value}
+                disabled={isSubmitting}
+                onValueChange={onChange}
+                trackColor={{ false: theme.backgroundSelected, true: theme.accent }}
+              />
+            </View>
+          )}
+        />
+      </SectionCard>
+
+      <SectionCard title={searchesCopy.sectionAdvanced}>
+        <Controller
+          control={control}
+          name="technologies"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <View style={styles.fieldBlock}>
+              <SearchTextField
+                label={searchesCopy.tags}
+                placeholder={searchesCopy.tagsPlaceholder}
+                hint={searchesCopy.tagsHint}
+                value={value}
+                onBlur={onBlur}
+                onChangeText={onChange}
+                error={errors.technologies?.message}
+                editable={!isSubmitting}
+              />
+              <TagPreview value={value} />
+            </View>
+          )}
+        />
+        <Controller
+          control={control}
+          name="workTypes"
+          render={({ field: { onChange, value } }) => (
+            <OptionGroup
+              label={searchesCopy.workTypes}
+              options={WORK_TYPE_OPTIONS}
+              selected={value}
+              onChange={onChange}
+              error={errors.workTypes?.message}
+              disabled={isSubmitting}
+            />
+          )}
+        />
+        <Controller
+          control={control}
+          name="experienceLevels"
+          render={({ field: { onChange, onBlur, value } }) => (
+            <View style={styles.fieldBlock}>
+              <SearchTextField
+                label={searchesCopy.experienceLevels}
+                placeholder="Mid, Senior"
+                autoCapitalize="words"
+                value={value}
+                onBlur={onBlur}
+                onChangeText={onChange}
+                error={errors.experienceLevels?.message}
+                editable={!isSubmitting}
+              />
+              <TagPreview value={value} />
+            </View>
+          )}
+        />
+      </SectionCard>
+
       {formError ? (
-        <ThemedText type="small" style={{ color: theme.danger }}>
+        <ThemedText type="meta" style={{ color: theme.danger }}>
           {formError}
         </ThemedText>
       ) : null}
-      <Pressable
-        accessibilityRole="button"
-        disabled={isSubmitting}
+
+      <AppButton
+        label={isSubmitting ? submittingLabel : submitLabel}
+        loading={isSubmitting}
         onPress={handleSubmit(submit)}
-        style={({ pressed }) => [
-          styles.submit,
-          {
-            backgroundColor: theme.accent,
-            opacity: isSubmitting || pressed ? 0.8 : 1,
-          },
-        ]}>
-        <ThemedText type="smallBold" style={styles.submitLabel}>
-          {isSubmitting ? submittingLabel : submitLabel}
-        </ThemedText>
-      </Pressable>
+      />
     </View>
   );
 }
@@ -238,6 +280,14 @@ export function SavedSearchForm({
 const styles = StyleSheet.create({
   form: {
     gap: Spacing.three,
+  },
+  fieldBlock: {
+    gap: Spacing.two,
+  },
+  tags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.one,
   },
   activeRow: {
     flexDirection: 'row',
@@ -247,15 +297,5 @@ const styles = StyleSheet.create({
   activeCopy: {
     flex: 1,
     gap: Spacing.one,
-  },
-  submit: {
-    minHeight: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  submitLabel: {
-    color: '#ffffff',
-    fontSize: 16,
   },
 });

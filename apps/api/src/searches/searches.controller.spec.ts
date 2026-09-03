@@ -84,6 +84,17 @@ function createController(options: {
     controller: new SearchesController(
       searches as unknown as SearchesService,
       discovery as unknown as DiscoveryService,
+      {
+        getByUserId: vi.fn().mockResolvedValue({
+          userId: user.id,
+          fullName: null,
+          email: null,
+          notificationsEnabled: true,
+          timezone: null,
+          country: null,
+          city: null,
+        }),
+      } as never,
     ),
     discovery,
     searches,

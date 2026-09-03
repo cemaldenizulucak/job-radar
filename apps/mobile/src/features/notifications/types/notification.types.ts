@@ -1,3 +1,10 @@
+export type NotificationDiscoveryData = {
+  discoveryRunId?: string;
+  savedSearchId?: string | null;
+  newJobCount?: number;
+  createdAt?: string;
+};
+
 export type NotificationItem = {
   id: string;
   userId: string;
@@ -6,6 +13,7 @@ export type NotificationItem = {
   type: string;
   isRead: boolean;
   createdAt: string;
+  data?: NotificationDiscoveryData | null;
 };
 
 export type NotificationListResponse = {

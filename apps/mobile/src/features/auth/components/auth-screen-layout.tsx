@@ -8,9 +8,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { BrandLogo } from '@/components/brand-logo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+
+import { authCopy } from '../copy';
 
 type AuthScreenLayoutProps = {
   title: string;
@@ -21,19 +24,20 @@ type AuthScreenLayoutProps = {
 export function AuthScreenLayout({ title, subtitle, children }: AuthScreenLayoutProps) {
   return (
     <ThemedView style={styles.root}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom', 'left', 'right']}>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}>
             <View style={styles.header}>
-              <ThemedText type="small" themeColor="textSecondary">
-                JobRadar
-              </ThemedText>
-              <ThemedText style={styles.title}>{title}</ThemedText>
+              <View style={styles.logoWrap}>
+                <BrandLogo variant="auth" accessibilityLabel={authCopy.brand} />
+              </View>
+              <ThemedText type="screenTitle">{title}</ThemedText>
               <ThemedText themeColor="textSecondary">{subtitle}</ThemedText>
             </View>
             {children}
@@ -67,9 +71,8 @@ const styles = StyleSheet.create({
   header: {
     gap: Spacing.two,
   },
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 600,
+  logoWrap: {
+    alignItems: 'center',
+    marginBottom: Spacing.one,
   },
 });

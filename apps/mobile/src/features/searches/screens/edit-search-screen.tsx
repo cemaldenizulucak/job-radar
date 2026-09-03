@@ -2,15 +2,20 @@ import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
+import { ErrorState } from '@/components/error-state';
+import { LoadingState } from '@/components/loading-state';
+import { ScreenHeader } from '@/components/screen-header';
 import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
+import { useProfileLocation } from '@/features/profile/hooks/useProfileLocation';
 import { useTheme } from '@/hooks/use-theme';
 import { userErrorMessage } from '@/lib/api-error';
 
 import { SavedSearchForm } from '../components/saved-search-form';
 import { SearchBackButton } from '../components/search-back-button';
+import { searchesCopy } from '../copy';
 import { useSavedSearch } from '../hooks/useSavedSearches';
 import { updateSavedSearch } from '../services/saved-search.service';
 import type { SavedSearchWriteInput } from '../types/search.types';
@@ -29,6 +34,7 @@ export function EditSearchScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const searchId = Array.isArray(id) ? id[0] : id;
   const { search, isLoading, error } = useSavedSearch(searchId);
+  const profileLocation = useProfileLocation();
   const [formError, setFormError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const submitLock = useRef(createSubmitLock()).current;
@@ -47,11 +53,11 @@ export function EditSearchScreen() {
       setSavedSearchId(result.search.id);
       bumpSearchCatalog();
       if (isDiscoveryWarning(result.discovery.status)) {
-        Alert.alert('Search saved', PARTIAL_DISCOVERY_MESSAGE);
+        Alert.alert(searchesCopy.savedAlertTitle, PARTIAL_DISCOVERY_MESSAGE);
       }
       router.replace('/jobs' as Href);
     } catch (caught) {
-      setFormError(userErrorMessage(caught, 'Couldn’t update this search.'));
+      setFormError(userErrorMessage(caught, searchesCopy.updateError));
     } finally {
       submitLock.release();
       setIsRefreshing(false);
@@ -62,7 +68,7 @@ export function EditSearchScreen() {
     return (
       <ScreenScaffold>
         <SearchBackButton onPress={() => router.back()} />
-        <ActivityIndicator color={theme.accent} />
+        <LoadingState />
       </ScreenScaffold>
     );
   }
@@ -71,8 +77,14 @@ export function EditSearchScreen() {
     return (
       <ScreenScaffold>
         <SearchBackButton onPress={() => router.back()} />
-        <ThemedText style={styles.title}>Search not found</ThemedText>
-        <ThemedText themeColor="textSecondary">{error ?? 'This search is not available.'}</ThemedText>
+        <ErrorState
+          title={searchesCopy.notFound}
+          message={
+            typeof __DEV__ !== 'undefined' && __DEV__ && error
+              ? error
+              : searchesCopy.notAvailable
+          }
+        />
       </ScreenScaffold>
     );
   }
@@ -80,18 +92,17 @@ export function EditSearchScreen() {
   return (
     <ScreenScaffold>
       <SearchBackButton onPress={() => router.back()} />
-      <View style={styles.header}>
-        <ThemedText style={styles.title}>Edit search</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          Changing filters refreshes LinkedIn and Kariyer.net results for this search.
-        </ThemedText>
-      </View>
+      <ScreenHeader
+        title={searchesCopy.editTitle}
+        subtitle={searchesCopy.editSubtitle}
+      />
       <View>
         <SavedSearchForm
           key={search.updatedAt}
           initialSearch={search}
-          submitLabel="Save changes"
-          submittingLabel={isRefreshing ? 'Refreshing results...' : 'Saving...'}
+          profileLocation={profileLocation}
+          submitLabel={searchesCopy.saveChanges}
+          submittingLabel={isRefreshing ? searchesCopy.scanning : searchesCopy.saveSearch}
           formError={formError}
           onSubmit={onSubmit}
         />
@@ -100,9 +111,9 @@ export function EditSearchScreen() {
             pointerEvents="auto"
             style={[styles.scanning, { backgroundColor: theme.background }]}>
             <ActivityIndicator color={theme.accent} />
-            <ThemedText type="smallBold">Refreshing results...</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Scanning LinkedIn and Kariyer.net for this search.
+            <ThemedText type="smallBold">{searchesCopy.scanning}</ThemedText>
+            <ThemedText type="meta" themeColor="textSecondary">
+              {searchesCopy.editSubtitle}
             </ThemedText>
           </View>
         ) : null}
@@ -112,14 +123,6 @@ export function EditSearchScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    gap: Spacing.one,
-  },
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 700,
-  },
   scanning: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',

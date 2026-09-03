@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { searchesCopy } from '../copy';
+
 export const SEARCH_SOURCE_IDS = ['linkedin', 'kariyer_net'] as const;
 export const WORK_TYPES = ['remote', 'hybrid', 'onsite'] as const;
 
@@ -14,33 +16,33 @@ function splitTags(value: string): string[] {
 }
 
 export const savedSearchFormSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required.'),
+  name: z.string().trim().min(1, searchesCopy.nameRequired),
   keywords: z
     .string()
     .trim()
-    .min(1, 'Add at least one keyword.')
-    .refine((value) => splitTags(value).length > 0, 'Add at least one keyword.'),
+    .min(1, searchesCopy.keywordRequired)
+    .refine((value) => splitTags(value).length > 0, searchesCopy.keywordRequired),
   technologies: z.string(),
   locations: z.string(),
   experienceLevels: z.string(),
   workTypes: z.array(workTypeSchema),
   sources: z
     .array(searchSourceSchema)
-    .min(1, 'Select at least one source.'),
+    .min(1, searchesCopy.sourceRequired),
   isActive: z.boolean(),
 });
 
 export type SavedSearchFormValues = z.infer<typeof savedSearchFormSchema>;
 
 export const savedSearchWriteSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required.'),
+  name: z.string().trim().min(1, searchesCopy.nameRequired),
   isActive: z.boolean(),
-  keywords: z.array(z.string().trim().min(1)).min(1, 'Add at least one keyword.'),
+  keywords: z.array(z.string().trim().min(1)).min(1, searchesCopy.keywordRequired),
   technologies: z.array(z.string().trim().min(1)),
   locations: z.array(z.string().trim().min(1)),
   workTypes: z.array(workTypeSchema),
   experienceLevels: z.array(z.string().trim().min(1)),
-  sources: z.array(searchSourceSchema).min(1, 'Select at least one source.'),
+  sources: z.array(searchSourceSchema).min(1, searchesCopy.sourceRequired),
 });
 
 export function formValuesToWriteInput(
@@ -60,4 +62,8 @@ export function formValuesToWriteInput(
 
 export function joinTags(values: readonly string[]): string {
   return values.join(', ');
+}
+
+export function previewTags(value: string): string[] {
+  return splitTags(value);
 }

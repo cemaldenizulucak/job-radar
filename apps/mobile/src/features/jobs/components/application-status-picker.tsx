@@ -1,14 +1,16 @@
-import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
+import { AppChip } from '@/components/app-chip';
 import { Spacing } from '@/constants/theme';
+import { getApplicationStatusAppearance } from '@/features/applications/utils/status-appearance';
 import { useTheme } from '@/hooks/use-theme';
 
+import { jobsCopy } from '../copy';
+import type { JobApplicationStatus } from '../types/job.types';
 import {
   applicationStatusLabel,
   JOB_APPLICATION_STATUSES,
 } from '../utils/job-labels';
-import type { JobApplicationStatus } from '../types/job.types';
 
 type ApplicationStatusPickerProps = {
   selectedStatus: JobApplicationStatus | null;
@@ -26,44 +28,24 @@ export function ApplicationStatusPicker({
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.row}>
-      <Pressable
-        accessibilityRole="button"
+      <AppChip
+        label={jobsCopy.notTracking}
+        selected={selectedStatus === null}
         onPress={() => onSelect(null)}
-        style={({ pressed }) => [
-          styles.chip,
-          {
-            backgroundColor:
-              selectedStatus === null ? theme.accent : theme.backgroundElement,
-            opacity: pressed ? 0.85 : 1,
-          },
-        ]}>
-        <ThemedText
-          type="smallBold"
-          style={{ color: selectedStatus === null ? '#ffffff' : theme.text }}>
-          Not tracking
-        </ThemedText>
-      </Pressable>
+      />
       {JOB_APPLICATION_STATUSES.map((status) => {
+        const appearance = getApplicationStatusAppearance(status, theme.scheme);
         const selected = selectedStatus === status;
 
         return (
-          <Pressable
+          <AppChip
             key={status}
-            accessibilityRole="button"
+            label={applicationStatusLabel(status)}
+            selected={selected}
+            selectedColor={appearance.backgroundColor}
+            selectedTextColor={appearance.textColor}
             onPress={() => onSelect(status)}
-            style={({ pressed }) => [
-              styles.chip,
-              {
-                backgroundColor: selected ? theme.accent : theme.backgroundElement,
-                opacity: pressed ? 0.85 : 1,
-              },
-            ]}>
-            <ThemedText
-              type="smallBold"
-              style={{ color: selected ? '#ffffff' : theme.text }}>
-              {applicationStatusLabel(status)}
-            </ThemedText>
-          </Pressable>
+          />
         );
       })}
     </ScrollView>
@@ -73,10 +55,5 @@ export function ApplicationStatusPicker({
 const styles = StyleSheet.create({
   row: {
     gap: Spacing.two,
-  },
-  chip: {
-    borderRadius: 999,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
 });

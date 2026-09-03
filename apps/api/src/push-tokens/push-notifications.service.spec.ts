@@ -35,24 +35,36 @@ describe('PushNotificationsService', () => {
 
     await service.sendDiscoveryPush({
       userId: 'user-1',
-      title: '3 new jobs found',
+      title: '3 yeni ilan bulundu',
       body: '2 LinkedIn, 1 Kariyer.net',
     });
 
     expect(send).toHaveBeenCalledWith([
       {
         to: 'ExponentPushToken[aaa]',
-        title: '3 new jobs found',
+        title: '3 yeni ilan bulundu',
         body: '2 LinkedIn, 1 Kariyer.net',
         sound: 'default',
-        data: { type: 'JOB_DISCOVERY', route: '/jobs' },
+        data: {
+          type: 'JOB_DISCOVERY',
+          route: '/jobs',
+          discoveryRunId: null,
+          savedSearchId: null,
+          newJobCount: null,
+        },
       },
       {
         to: 'ExponentPushToken[bbb]',
-        title: '3 new jobs found',
+        title: '3 yeni ilan bulundu',
         body: '2 LinkedIn, 1 Kariyer.net',
         sound: 'default',
-        data: { type: 'JOB_DISCOVERY', route: '/jobs' },
+        data: {
+          type: 'JOB_DISCOVERY',
+          route: '/jobs',
+          discoveryRunId: null,
+          savedSearchId: null,
+          newJobCount: null,
+        },
       },
     ]);
   });
@@ -73,7 +85,7 @@ describe('PushNotificationsService', () => {
     await expect(
       service.sendDiscoveryPush({
         userId: 'user-1',
-        title: '1 new job found',
+        title: '1 yeni ilan bulundu',
         body: '1 LinkedIn',
       }),
     ).resolves.toBeUndefined();
@@ -99,7 +111,7 @@ describe('PushNotificationsService', () => {
 
     await service.sendDiscoveryPush({
       userId: 'user-1',
-      title: '1 new job found',
+      title: '1 yeni ilan bulundu',
       body: '1 LinkedIn',
     });
 
@@ -118,7 +130,7 @@ describe('PushNotificationsService', () => {
 
     await service.sendDiscoveryPush({
       userId: 'user-1',
-      title: '1 new job found',
+      title: '1 yeni ilan bulundu',
       body: '1 LinkedIn',
     });
 

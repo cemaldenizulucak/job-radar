@@ -4,6 +4,10 @@ import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { SourceId } from '../common/domain.types.js';
+import {
+  resolveEffectiveSearchLocation,
+  type ProfileLocation,
+} from '../common/search-location.js';
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
 import { JobsService } from '../jobs/jobs.service.js';
@@ -12,7 +16,9 @@ import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { MatchingService } from '../matching/matching.service.js';
 import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
-import type { InsertedJobForNotification } from '../notifications/notifications.types.js';
+import { selectVisibleNewMatches } from '../notifications/discovery-notification.js';
+import type { PersistedJobForNotification } from '../notifications/notifications.types.js';
+import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { SearchesService } from '../searches/searches.service.js';
 import type { SourceSearchQuery } from '../sources/job-source.adapter.js';
@@ -46,6 +52,7 @@ export class DiscoveryService {
     private readonly duplicateGroupsService: DuplicateGroupsService,
     private readonly jobsService: JobsService,
     private readonly notificationsService: NotificationsService,
+    private readonly profilesService: ProfilesService,
     private readonly config: ConfigService,
   ) {}
 
@@ -74,9 +81,11 @@ export class DiscoveryService {
       return { ...EMPTY_DISCOVERY_SUMMARY };
     }
 
-    const fetched = await this.fetchNormalizedJobs(searches);
+    const profilesByUserId = await this.loadProfiles(searches);
+    const fetched = await this.fetchNormalizedJobs(searches, profilesByUserId);
     let jobsInserted = 0;
     const persisted: MatchableJob[] = [];
+    const persistedForNotification: PersistedJobForNotification[] = [];
 
     for (const job of fetched.uniqueJobs) {
       const result = await this.jobsService.upsertNormalized(job);
@@ -86,14 +95,27 @@ export class DiscoveryService {
       }
 
       persisted.push(matchable);
+      persistedForNotification.push({
+        id: result.id,
+        sourceId: job.sourceId,
+        isActive: job.isActive,
+        publishedAt: job.publishedAt,
+      });
     }
 
     const matches = this.matchingService.matchJobsToSearches(
       persisted,
       searches,
+      profilesByUserId,
     );
     const createdMatches = await this.jobsService.saveMatches(matches);
+    const visible = selectVisibleNewMatches(
+      createdMatches,
+      persistedForNotification,
+      this.maxAgeDays(),
+    );
     const matchesCreated = createdMatches.length;
+    const notifiedJobCount = visible.jobs.length;
 
     if (options.markStale) {
       await this.markStaleJobsInactive();
@@ -105,10 +127,19 @@ export class DiscoveryService {
       await this.duplicateGroupsService.saveGroups(groups);
 
     const notificationsCreated = await this.createDiscoveryNotifications(
-      createdMatches,
-      persisted,
+      visible.matches,
+      visible.jobs,
       searches,
     );
+
+    this.logDiscoveryCounts({
+      rawProviderJobs: fetched.rawProviderJobs,
+      normalizedJobs: fetched.uniqueJobs.length,
+      jobsInserted,
+      matchesCreated,
+      visibleMatchesCreated: visible.matches.length,
+      notifiedJobCount,
+    });
 
     this.logger.log({
       message: 'Discovery Kariyer.net collection',
@@ -129,12 +160,15 @@ export class DiscoveryService {
       stopReason: fetched.stopReason,
       sourceAttempts: fetched.sourceAttempts,
       sourceFailures: fetched.sourceFailures,
+      rawProviderJobs: fetched.rawProviderJobs,
+      normalizedJobs: fetched.uniqueJobs.length,
+      notifiedJobCount,
     };
   }
 
   private async createDiscoveryNotifications(
     createdMatches: readonly JobSearchMatch[],
-    jobs: readonly MatchableJob[],
+    jobs: readonly { id: string; sourceId: MatchableJob['sourceId'] }[],
     searches: readonly SavedSearch[],
   ): Promise<number> {
     if (createdMatches.length === 0) {
@@ -142,12 +176,9 @@ export class DiscoveryService {
     }
 
     try {
-      const jobsById = new Map(jobs.map((job) => [job.id, job]));
-      const matchedJobs = uniqueMatchedJobs(createdMatches, jobsById);
-
       return await this.notificationsService.createForNewMatches({
         runId: randomUUID(),
-        jobs: matchedJobs,
+        jobs,
         searchOwners: new Map(
           searches.map((search) => [search.id, search.userId]),
         ),
@@ -162,11 +193,29 @@ export class DiscoveryService {
     }
   }
 
+  private async loadProfiles(
+    searches: readonly SavedSearch[],
+  ): Promise<ReadonlyMap<string, ProfileLocation>> {
+    const userIds = [...new Set(searches.map((search) => search.userId))];
+
+    try {
+      return await this.profilesService.getLocationsByUserIds(userIds);
+    } catch (error) {
+      this.logger.warn({
+        message: 'Failed to load profile locations; searches will use stored location only',
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+      return new Map();
+    }
+  }
+
   private async fetchNormalizedJobs(
     searches: readonly SavedSearch[],
+    profilesByUserId: ReadonlyMap<string, ProfileLocation>,
   ): Promise<{
     jobsFetched: number;
     uniqueJobs: NormalizedJob[];
+    rawProviderJobs: number;
     kariyerNetPagesFetched: number;
     kariyerNetJobsCollected: number;
     stopReason: string | null;
@@ -175,6 +224,7 @@ export class DiscoveryService {
   }> {
     const uniqueJobs = new Map<string, NormalizedJob>();
     let jobsFetched = 0;
+    let rawProviderJobs = 0;
     let kariyerNetPagesFetched = 0;
     let kariyerNetJobsCollected = 0;
     let stopReason: string | null = null;
@@ -193,8 +243,10 @@ export class DiscoveryService {
           search,
           sourceId,
           uniqueJobs,
+          profilesByUserId.get(search.userId),
         );
         jobsFetched += fetched.accepted;
+        rawProviderJobs += fetched.raw;
         if (fetched.outcome !== 'skipped') {
           sourceAttempts += 1;
         }
@@ -215,6 +267,7 @@ export class DiscoveryService {
     return {
       jobsFetched,
       uniqueJobs: [...uniqueJobs.values()],
+      rawProviderJobs,
       kariyerNetPagesFetched,
       kariyerNetJobsCollected,
       stopReason,
@@ -227,8 +280,10 @@ export class DiscoveryService {
     search: SavedSearch,
     sourceId: SourceId,
     uniqueJobs: Map<string, NormalizedJob>,
+    profile: ProfileLocation | undefined,
   ): Promise<{
     accepted: number;
+    raw: number;
     outcome: 'skipped' | 'ok' | 'failed';
     kariyerNet?: {
       pagesFetched: number;
@@ -244,13 +299,15 @@ export class DiscoveryService {
         source: sourceId,
         savedSearchId: search.id,
       });
-      return { accepted: 0, outcome: 'skipped' };
+      return { accepted: 0, raw: 0, outcome: 'skipped' };
     }
 
     const startedAt = Date.now();
 
     try {
-      const result = await adapter.search(toSourceQuery(search, this.maxAgeDays()));
+      const result = await adapter.search(
+        toSourceQuery(search, this.maxAgeDays(), profile),
+      );
       let accepted = 0;
       const now = new Date();
 
@@ -291,6 +348,7 @@ export class DiscoveryService {
 
       return {
         accepted,
+        raw: result.jobs.length,
         outcome: 'ok',
         kariyerNet:
           sourceId === 'kariyer_net'
@@ -311,8 +369,31 @@ export class DiscoveryService {
         normalized: 0,
         errorCategory: sourceErrorCategory(error),
       });
-      return { accepted: 0, outcome: 'failed' };
+      return { accepted: 0, raw: 0, outcome: 'failed' };
     }
+  }
+
+  private logDiscoveryCounts(counts: {
+    rawProviderJobs: number;
+    normalizedJobs: number;
+    jobsInserted: number;
+    matchesCreated: number;
+    visibleMatchesCreated: number;
+    notifiedJobCount: number;
+  }): void {
+    if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'test') {
+      return;
+    }
+
+    this.logger.log({
+      message: 'Discovery run',
+      rawProviderJobs: counts.rawProviderJobs,
+      normalizedJobs: counts.normalizedJobs,
+      jobsInserted: counts.jobsInserted,
+      matchesCreated: counts.matchesCreated,
+      visibleMatchesCreated: counts.visibleMatchesCreated,
+      notificationCount: counts.notifiedJobCount,
+    });
   }
 
   private maxAgeDays(): number {
@@ -365,11 +446,14 @@ function preferKariyerStopReason(
 function toSourceQuery(
   search: SavedSearch,
   maxAgeDays: number,
+  profile: ProfileLocation | undefined,
 ): SourceSearchQuery {
+  const resolved = resolveEffectiveSearchLocation(search.locations, profile);
+
   return {
     keywords: search.keywords,
     technologies: search.technologies,
-    locations: search.locations,
+    locations: [...resolved.locations],
     workModels: search.workTypes.filter((workType) => workType !== 'unknown'),
     experienceLevels: search.experienceLevels,
     savedSearchId: search.id,
@@ -389,22 +473,4 @@ function toMatchableJob(id: string, job: NormalizedJob): MatchableJob {
     experienceLevel: job.experienceLevel,
     technologies: job.technologies,
   };
-}
-
-function uniqueMatchedJobs(
-  matches: readonly JobSearchMatch[],
-  jobsById: ReadonlyMap<string, MatchableJob>,
-): InsertedJobForNotification[] {
-  const unique = new Map<string, InsertedJobForNotification>();
-
-  for (const match of matches) {
-    const job = jobsById.get(match.jobId);
-    if (!job || unique.has(job.id)) {
-      continue;
-    }
-
-    unique.set(job.id, { id: job.id, sourceId: job.sourceId });
-  }
-
-  return [...unique.values()];
 }

@@ -19,6 +19,7 @@ import { SupabaseService } from '../infrastructure/supabase/supabase.service.js'
 import type { JobSearchMatch } from '../matching/matching.types.js';
 import { decideListingWrite } from './job-identity.js';
 import { applyJobNewness, resolveJobNewWindowHours } from './job-newness.js';
+import { clampJobFeedLimit, JOB_FEED_MAX_LIMIT } from './job-feed-visibility.js';
 import {
   JOB_FEED_SELECT,
   mapJobFeedRow,
@@ -55,7 +56,7 @@ export class JobsService {
   ) {}
 
   async listForUser(query: JobListQuery): Promise<JobListResult> {
-    const limit = Math.min(Math.max(query.limit ?? 20, 1), 50);
+    const limit = clampJobFeedLimit(query.limit);
     const matches = await this.loadMatchesSafe(query.savedSearchId);
     const userSearchIds = await this.loadUserSearchIds(query.userId);
     if (
@@ -138,7 +139,7 @@ export class JobsService {
   ): Promise<JobTabs> {
     const result = await this.listForUser({
       userId,
-      limit: 50,
+      limit: JOB_FEED_MAX_LIMIT,
       matchedOnly,
       includeInactive,
     });

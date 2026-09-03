@@ -1,7 +1,10 @@
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Modal, StyleSheet, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AppButton } from '@/components/app-button';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Radius, Spacing, cardElevation } from '@/constants/theme';
+import { uiCopy } from '@/constants/ui';
 import { useTheme } from '@/hooks/use-theme';
 
 type ConfirmDialogProps = {
@@ -21,7 +24,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel,
-  cancelLabel = 'Cancel',
+  cancelLabel = uiCopy.cancel,
   destructive = false,
   confirmDisabled = false,
   onCancel,
@@ -34,50 +37,37 @@ export function ConfirmDialog({
       visible={visible}
       transparent
       animationType="fade"
+      presentationStyle="overFullScreen"
       onRequestClose={onCancel}>
-      <View style={styles.backdrop}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Cancel"
-          style={StyleSheet.absoluteFill}
-          onPress={onCancel}
-        />
-        <View
-          style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText type="smallBold" style={styles.title}>
-            {title}
-          </ThemedText>
-          <ThemedText themeColor="textSecondary">{message}</ThemedText>
-          <View style={styles.actions}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={onCancel}
-              style={({ pressed }) => [
-                styles.button,
-                {
-                  backgroundColor: theme.backgroundSelected,
-                  opacity: pressed ? 0.85 : 1,
-                },
-              ]}>
-              <ThemedText type="smallBold">{cancelLabel}</ThemedText>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={confirmDisabled}
-              onPress={onConfirm}
-              style={({ pressed }) => [
-                styles.button,
-                {
-                  backgroundColor: destructive ? theme.danger : theme.accent,
-                  opacity: confirmDisabled || pressed ? 0.7 : 1,
-                },
-              ]}>
-              <ThemedText type="smallBold" style={styles.confirmLabel}>
-                {confirmLabel}
-              </ThemedText>
-            </Pressable>
+      <View style={[styles.backdrop, { backgroundColor: theme.overlay }]}>
+        <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={styles.safeArea}>
+          <View
+            style={[
+              styles.card,
+              cardElevation(theme.scheme),
+              { backgroundColor: theme.backgroundElement },
+            ]}>
+            <ThemedText type="cardTitle">{title}</ThemedText>
+            {message ? (
+              <ThemedText themeColor="textSecondary">{message}</ThemedText>
+            ) : null}
+            <View style={styles.actions}>
+              <AppButton
+                label={cancelLabel}
+                variant="secondary"
+                onPress={onCancel}
+                style={styles.action}
+              />
+              <AppButton
+                label={confirmLabel}
+                variant={destructive ? 'danger' : 'primary'}
+                disabled={confirmDisabled}
+                onPress={onConfirm}
+                style={styles.action}
+              />
+            </View>
           </View>
-        </View>
+        </SafeAreaView>
       </View>
     </Modal>
   );
@@ -86,34 +76,27 @@ export function ConfirmDialog({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.four,
   },
+  safeArea: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   card: {
     width: '100%',
     maxWidth: 420,
-    borderRadius: 16,
+    borderRadius: Radius.lg,
     padding: Spacing.four,
     gap: Spacing.three,
-  },
-  title: {
-    fontSize: 18,
-    lineHeight: 24,
   },
   actions: {
     flexDirection: 'row',
     gap: Spacing.two,
   },
-  button: {
+  action: {
     flex: 1,
-    minHeight: 44,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  confirmLabel: {
-    color: '#ffffff',
   },
 });

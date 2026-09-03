@@ -26,6 +26,7 @@ describe('SchedulerService', () => {
 
   it('triggers DiscoveryService and returns the summary', async () => {
     const summary: DiscoveryRunSummary = {
+      ...EMPTY_DISCOVERY_SUMMARY,
       searchesProcessed: 1,
       jobsFetched: 6,
       jobsInserted: 2,

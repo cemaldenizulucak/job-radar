@@ -1,8 +1,10 @@
 import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ChipTabs } from '@/components/chip-tabs';
+import { EmptyState } from '@/components/empty-state';
+import { ErrorState } from '@/components/error-state';
 import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
@@ -13,24 +15,44 @@ import { useSavedSearches } from '@/features/searches/hooks/useSavedSearches';
 import { useTheme } from '@/hooks/use-theme';
 
 import { JobCard } from '../components/job-card';
+import { JobListSkeleton } from '../components/job-list-skeleton';
 import { JobsHeader } from '../components/jobs-header';
+import { jobsCopy, jobsEmptyMessage } from '../copy';
 import { useJobs } from '../hooks/useJobs';
 import { useJobsFilterStore, type JobsResultsView } from '../stores/jobs-filter.store';
+import type { JobListItem } from '../types/job.types';
 import {
+  countJobsBySource,
   buildSourceTabs,
   filterJobs,
   formatJobDateLabel,
   isSourceFilter,
   latestFirstDiscoveredAt,
 } from '../utils/job-labels';
+import { getJobSourceAppearance } from '../utils/job-source-appearance';
 
 const RESULTS_TABS = [
-  { id: 'matched', label: 'Matched' },
-  { id: 'all', label: 'All Results' },
+  { id: 'matched', label: jobsCopy.matched },
+  { id: 'all', label: jobsCopy.allResults },
 ] as const;
 
 function isResultsView(id: string): id is JobsResultsView {
   return id === 'matched' || id === 'all';
+}
+
+function jobRelevanceLabel(
+  job: JobListItem,
+  searchNames: ReadonlyMap<string, string>,
+): string {
+  if (!job.isMatched) {
+    return jobsCopy.notMatched;
+  }
+
+  const names = job.matchedSearchIds
+    .map((id) => searchNames.get(id))
+    .filter((name): name is string => Boolean(name));
+
+  return names.length > 0 ? names.join(', ') : jobsCopy.matchedShort;
 }
 
 export function JobsScreen() {
@@ -56,6 +78,10 @@ export function JobsScreen() {
     () => new Set(favorites.map((item) => item.jobId)),
     [favorites],
   );
+  const searchNames = useMemo(
+    () => new Map(searches.map((search) => [search.id, search.name])),
+    [searches],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -75,10 +101,20 @@ export function JobsScreen() {
     void refetchSearches();
   }, [feedRefreshEpoch, refetch, refetchSearches, searchCatalogEpoch]);
 
-  const sourceTabs = useMemo(() => buildSourceTabs(items), [items]);
+  const sourceTabs = useMemo(
+    () =>
+      buildSourceTabs(items).map((tab) => ({
+        ...tab,
+        selectedColor:
+          tab.id === 'all'
+            ? undefined
+            : getJobSourceAppearance(tab.id, theme.scheme).accentColor,
+      })),
+    [items, theme.scheme],
+  );
   const searchTabs = useMemo(
     () => [
-      { id: 'all', label: 'All', count: items.length },
+      { id: 'all', label: jobsCopy.all, count: items.length },
       ...searches.map((search) => ({
         id: search.id,
         label: search.name,
@@ -97,23 +133,36 @@ export function JobsScreen() {
     [items, selectedSearchId, sourceId],
   );
 
-  const lastScanLabel = formatJobDateLabel(latestFirstDiscoveredAt(items));
+  const lastScan = latestFirstDiscoveredAt(items);
+  const lastScanLabel = lastScan ? formatJobDateLabel(lastScan) : '—';
+  const emptyMessage = jobsEmptyMessage({
+    itemCount: items.length,
+    visibleCount: jobs.length,
+    resultsView,
+  });
 
   return (
     <ScreenScaffold>
       <JobsHeader
         lastScanLabel={isLoading ? '…' : error ? '—' : lastScanLabel}
         statusLabel={
-          isLoading ? 'Loading jobs' : error ? 'Couldn’t load jobs' : 'Jobs loaded'
+          isLoading
+            ? jobsCopy.loadingFeed
+            : error
+              ? jobsCopy.feedError
+              : jobsCopy.jobsLoaded
         }
         unreadNotificationCount={unreadCount}
+        totalCount={countJobsBySource(items, 'all')}
+        linkedInCount={countJobsBySource(items, 'linkedin')}
+        kariyerCount={countJobsBySource(items, 'kariyer_net')}
         onPressNotifications={() => router.push('/jobs/notifications' as Href)}
         onPressFavorites={() => router.push('/jobs/favorites' as Href)}
       />
 
       <View style={styles.section}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          Results
+        <ThemedText type="sectionTitle" themeColor="textSecondary">
+          {jobsCopy.results}
         </ThemedText>
         <ChipTabs
           items={RESULTS_TABS}
@@ -127,8 +176,8 @@ export function JobsScreen() {
       </View>
 
       <View style={styles.section}>
-        <ThemedText type="smallBold" themeColor="textSecondary">
-          Source
+        <ThemedText type="sectionTitle" themeColor="textSecondary">
+          {jobsCopy.source}
         </ThemedText>
         <ChipTabs
           items={sourceTabs}
@@ -143,8 +192,8 @@ export function JobsScreen() {
 
       {searchTabs.length > 1 ? (
         <View style={styles.section}>
-          <ThemedText type="smallBold" themeColor="textSecondary">
-            Saved searches
+          <ThemedText type="sectionTitle" themeColor="textSecondary">
+            {jobsCopy.savedSearches}
           </ThemedText>
           <ChipTabs
             items={searchTabs}
@@ -156,34 +205,19 @@ export function JobsScreen() {
         </View>
       ) : null}
 
-      {isLoading ? <ActivityIndicator color={theme.accent} /> : null}
+      {isLoading ? <JobListSkeleton /> : null}
 
       {error ? (
-        <View style={styles.state}>
-          <ThemedText style={{ color: theme.danger }}>{error}</ThemedText>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              void refetch();
-            }}
-            style={[styles.retry, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">Retry</ThemedText>
-          </Pressable>
-        </View>
+        <ErrorState
+          title={jobsCopy.feedError}
+          onRetry={() => {
+            void refetch();
+          }}
+        />
       ) : null}
 
-      {!isLoading && !error && items.length === 0 ? (
-        <ThemedText themeColor="textSecondary">
-          {resultsView === 'all'
-            ? 'No collected jobs in the last 30 days.'
-            : 'No matching jobs yet. New searches scan immediately; recurring scans run every two hours.'}
-        </ThemedText>
-      ) : null}
-
-      {!isLoading && !error && items.length > 0 && jobs.length === 0 ? (
-        <ThemedText themeColor="textSecondary">
-          No jobs for this filter. Duplicate listings are never hidden from All.
-        </ThemedText>
+      {!isLoading && !error && emptyMessage ? (
+        <EmptyState title={emptyMessage} />
       ) : null}
 
       {!isLoading && !error && jobs.length > 0 ? (
@@ -193,7 +227,9 @@ export function JobsScreen() {
               key={job.id}
               job={job}
               isFavorite={favoriteIds.has(job.id)}
-              showMatchStatus={resultsView === 'all'}
+              relevanceLabel={
+                resultsView === 'all' ? jobRelevanceLabel(job, searchNames) : undefined
+              }
               onPress={() => router.push(`/jobs/${job.id}` as Href)}
             />
           ))}
@@ -210,14 +246,5 @@ const styles = StyleSheet.create({
   list: {
     gap: Spacing.three,
     overflow: 'visible',
-  },
-  state: {
-    gap: Spacing.two,
-  },
-  retry: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
 });

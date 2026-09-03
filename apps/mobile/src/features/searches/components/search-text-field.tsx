@@ -12,9 +12,15 @@ import { useTheme } from '@/hooks/use-theme';
 type SearchTextFieldProps = TextInputProps & {
   label: string;
   error?: string;
+  hint?: string;
 };
 
-export function SearchTextField({ label, error, ...inputProps }: SearchTextFieldProps) {
+export function SearchTextField({
+  label,
+  error,
+  hint,
+  ...inputProps
+}: SearchTextFieldProps) {
   const theme = useTheme();
   const hasError = Boolean(error);
 
@@ -25,13 +31,14 @@ export function SearchTextField({ label, error, ...inputProps }: SearchTextField
         placeholderTextColor={theme.textSecondary}
         autoCapitalize="none"
         autoCorrect={false}
+        keyboardAppearance={theme.scheme === 'dark' ? 'dark' : 'light'}
         {...inputProps}
         style={[
           styles.input,
           {
             color: theme.text,
             backgroundColor: theme.backgroundElement,
-            borderColor: hasError ? theme.danger : 'transparent',
+            borderColor: hasError ? theme.danger : theme.border,
           },
           inputProps.multiline ? styles.multiline : null,
           inputProps.style,
@@ -40,6 +47,10 @@ export function SearchTextField({ label, error, ...inputProps }: SearchTextField
       {hasError ? (
         <ThemedText type="small" style={{ color: theme.danger }}>
           {error}
+        </ThemedText>
+      ) : hint ? (
+        <ThemedText type="meta" themeColor="textSecondary">
+          {hint}
         </ThemedText>
       ) : null}
     </View>
@@ -54,6 +65,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: 12,
     paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
     fontSize: 16,
     borderWidth: 1,
   },

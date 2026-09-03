@@ -1,4 +1,25 @@
-import { normalizedPhraseAppears, phraseAppearsIn } from './match-text.js';
+import {
+  normalizedPhraseAppears,
+  phraseAppearsIn,
+  queryAppearsIn,
+} from './match-text.js';
+
+describe('queryAppearsIn', () => {
+  it('matches Turkish case and diacritics as substrings', () => {
+    expect(queryAppearsIn('Gıda Mühendisi', 'gıda')).toBe(true);
+    expect(queryAppearsIn('Gıda Mühendisi', 'GIDA')).toBe(true);
+    expect(queryAppearsIn('Gıda Mühendisi', 'mühendis')).toBe(true);
+    expect(queryAppearsIn('İstanbul(Asya)', 'istanbul')).toBe(true);
+  });
+
+  it('collapses hyphens so frontend matches Front-End', () => {
+    expect(queryAppearsIn('Senior Front-End Engineer', 'frontend')).toBe(true);
+  });
+
+  it('does not match unrelated text', () => {
+    expect(queryAppearsIn('Satış Temsilcisi', 'muhasebe')).toBe(false);
+  });
+});
 
 describe('phraseAppearsIn', () => {
   it('equates English and Turkish frontend role titles', () => {

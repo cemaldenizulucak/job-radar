@@ -37,7 +37,7 @@ Protected (JWT required). The user is taken from the token; client `userId` is i
 | GET/POST/DELETE | `/v1/favorites`, `/v1/favorites/:jobId` |
 | GET/POST/PATCH/DELETE | `/v1/applications`, `/v1/applications/:id` |
 | GET/PATCH | `/v1/notifications`, `/v1/notifications/:id/read` |
-| GET/PATCH | `/v1/profiles` |
+| GET/PATCH | `/v1/profiles` | `country` and `city` are nullable. PATCH accepts any of `notificationsEnabled`, `country`, `city`. Saved search responses include `effectiveLocation` and `locationSource` (`search` / `profile` / `none`) resolved from the stored search location plus the authenticated user's profile. |
 | POST/DELETE | `/v1/push-tokens` |
 | GET/POST/PATCH/DELETE | `/v1/searches`, `/v1/searches/:id`, `/v1/searches/:id/toggle` |
 

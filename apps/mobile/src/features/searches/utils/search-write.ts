@@ -13,12 +13,12 @@ export type SearchDiscoveryResult = {
 };
 
 export const PARTIAL_DISCOVERY_MESSAGE =
-  'Search saved. Some sources could not be scanned right now.';
+  'Arama kaydedildi. Bazı kaynaklar şu anda taranamadı.';
 
-export const DELETE_SAVED_SEARCH_TITLE = 'Delete this saved search?';
+export const DELETE_SAVED_SEARCH_TITLE = 'Bu kayıtlı arama silinsin mi?';
 
 export const DELETE_SAVED_SEARCH_MESSAGE =
-  'This saved search will be removed. Job listings themselves are not deleted from the database. Matches for this search will no longer appear in its tab.';
+  'Kayıtlı arama kaldırılacak. İş ilanları silinmez. Bu aramaya ait eşleşmeler sekmesinde görünmez.';
 
 export function isDiscoveryWarning(status: SearchDiscoveryStatus): boolean {
   return status === 'partial' || status === 'failed';

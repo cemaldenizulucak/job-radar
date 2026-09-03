@@ -1,13 +1,13 @@
-import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
+import { AppChip } from '@/components/app-chip';
 import { Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
 
 export type ChipTabItem = {
   id: string;
   label: string;
   count?: number;
+  selectedColor?: string;
 };
 
 type ChipTabsProps = {
@@ -17,44 +17,22 @@ type ChipTabsProps = {
 };
 
 export function ChipTabs({ items, selectedId, onSelect }: ChipTabsProps) {
-  const theme = useTheme();
-
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.row}>
-      {items.map((item) => {
-        const selected = item.id === selectedId;
-
-        return (
-          <Pressable
-            key={item.id}
-            accessibilityRole="tab"
-            accessibilityState={{ selected }}
-            onPress={() => onSelect(item.id)}
-            style={({ pressed }) => [
-              styles.chip,
-              {
-                backgroundColor: selected ? theme.accent : theme.backgroundElement,
-                opacity: pressed ? 0.85 : 1,
-              },
-            ]}>
-            <ThemedText
-              type="smallBold"
-              style={{ color: selected ? '#ffffff' : theme.text }}>
-              {item.label}
-            </ThemedText>
-            {item.count !== undefined ? (
-              <ThemedText
-                type="small"
-                style={{ color: selected ? '#ffffff' : theme.textSecondary }}>
-                {item.count}
-              </ThemedText>
-            ) : null}
-          </Pressable>
-        );
-      })}
+      {items.map((item) => (
+        <AppChip
+          key={item.id}
+          accessibilityRole="tab"
+          label={item.label}
+          count={item.count}
+          selected={item.id === selectedId}
+          selectedColor={item.selectedColor}
+          onPress={() => onSelect(item.id)}
+        />
+      ))}
     </ScrollView>
   );
 }
@@ -63,13 +41,5 @@ const styles = StyleSheet.create({
   row: {
     gap: Spacing.two,
     paddingVertical: Spacing.one,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: 999,
   },
 });

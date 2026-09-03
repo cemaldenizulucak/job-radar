@@ -1,10 +1,16 @@
 import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { AppButton } from '@/components/app-button';
+import { EmptyState } from '@/components/empty-state';
+import { ErrorState } from '@/components/error-state';
+import { LoadingState } from '@/components/loading-state';
+import { ScreenHeader } from '@/components/screen-header';
 import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import { uiCopy } from '@/constants/ui';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useJobs } from '@/features/jobs/hooks/useJobs';
 import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
@@ -13,6 +19,7 @@ import { userErrorMessage } from '@/lib/api-error';
 
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { SavedSearchRow } from '../components/saved-search-row';
+import { searchesCopy } from '../copy';
 import { useSavedSearches } from '../hooks/useSavedSearches';
 import type { SavedSearch } from '../types/search.types';
 import {
@@ -76,7 +83,7 @@ export function SearchesScreen() {
         await refetchJobs();
         bumpSearchCatalog();
       } catch (caught) {
-        setActionError(userErrorMessage(caught, 'Couldn’t update this search.'));
+        setActionError(userErrorMessage(caught, searchesCopy.updateError));
       } finally {
         setPendingId(null);
         setRefreshingId(null);
@@ -102,7 +109,7 @@ export function SearchesScreen() {
       await refetchJobs();
       bumpSearchCatalog();
     } catch (caught) {
-      setActionError(userErrorMessage(caught, 'Couldn’t delete this search.'));
+      setActionError(userErrorMessage(caught, searchesCopy.deleteError));
     } finally {
       setPendingId(null);
       actionLock.release();
@@ -118,56 +125,36 @@ export function SearchesScreen() {
 
   return (
     <ScreenScaffold>
-      <View style={styles.header}>
-        <View style={styles.headerCopy}>
-          <ThemedText style={styles.title}>Searches</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            Saved searches belong to your account. Discovery still runs on the backend.
-          </ThemedText>
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => router.push('/searches/create' as Href)}
-          style={({ pressed }) => [
-            styles.newButton,
-            { backgroundColor: theme.accent, opacity: pressed ? 0.85 : 1 },
-          ]}>
-          <ThemedText type="smallBold" style={styles.newButtonLabel}>
-            + New Search
-          </ThemedText>
-        </Pressable>
-      </View>
+      <ScreenHeader
+        title={searchesCopy.screenTitle}
+        subtitle={searchesCopy.subtitle}
+        right={
+          <AppButton
+            label={searchesCopy.newSearch}
+            onPress={() => router.push('/searches/create' as Href)}
+          />
+        }
+      />
 
-      {isLoading ? (
-        <ActivityIndicator color={theme.accent} />
-      ) : null}
+      {isLoading ? <LoadingState /> : null}
 
       {error ? (
-        <View style={styles.state}>
-          <ThemedText style={{ color: theme.danger }}>{error}</ThemedText>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              void refetch();
-            }}
-            style={[styles.retry, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">Retry</ThemedText>
-          </Pressable>
-        </View>
+        <ErrorState
+          title={searchesCopy.loadError}
+          onRetry={() => {
+            void refetch();
+          }}
+        />
       ) : null}
 
       {actionError ? (
-        <ThemedText type="small" style={{ color: theme.danger }}>
+        <ThemedText type="meta" style={{ color: theme.danger }}>
           {actionError}
         </ThemedText>
       ) : null}
 
       {!isLoading && !error && items.length === 0 ? (
-        <View style={styles.state}>
-          <ThemedText themeColor="textSecondary">
-            Create a search to start collecting jobs from LinkedIn and Kariyer.net.
-          </ThemedText>
-        </View>
+        <EmptyState title={searchesCopy.empty} />
       ) : null}
 
       {!isLoading && !error ? (
@@ -194,7 +181,7 @@ export function SearchesScreen() {
         visible={searchToDelete !== null}
         title={DELETE_SAVED_SEARCH_TITLE}
         message={DELETE_SAVED_SEARCH_MESSAGE}
-        confirmLabel="Delete"
+        confirmLabel={uiCopy.delete}
         destructive
         confirmDisabled={pendingId !== null}
         onCancel={() => setSearchToDelete(null)}
@@ -207,36 +194,7 @@ export function SearchesScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: {
-    gap: Spacing.three,
-  },
-  headerCopy: {
-    gap: Spacing.one,
-  },
-  title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: 700,
-  },
-  newButton: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-  },
-  newButtonLabel: {
-    color: '#ffffff',
-  },
   list: {
     gap: Spacing.two,
-  },
-  state: {
-    gap: Spacing.two,
-  },
-  retry: {
-    alignSelf: 'flex-start',
-    borderRadius: 12,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
   },
 });
