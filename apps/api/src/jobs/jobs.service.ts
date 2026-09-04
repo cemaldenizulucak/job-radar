@@ -773,28 +773,49 @@ export class JobsService {
   }
 
   async listMatchableActiveJobs(): Promise<MatchableJob[]> {
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('jobs')
-      .select(MATCHABLE_JOB_SELECT)
-      .eq('is_active', true);
-
-    if (error) {
-      this.logSupabaseError(error);
-      throw new InternalServerErrorException('Failed to load job listings.');
-    }
-
-    if (!Array.isArray(data)) {
-      return [];
-    }
-
+    const pageSize = 1000;
     const jobs: MatchableJob[] = [];
-    for (const row of data) {
-      const mapped = mapMatchableJobRow(row);
-      if (mapped) {
-        jobs.push(mapped);
+    let from = 0;
+    let rawCount = 0;
+
+    for (;;) {
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('jobs')
+        .select(MATCHABLE_JOB_SELECT)
+        .eq('is_active', true)
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        this.logSupabaseError(error);
+        throw new InternalServerErrorException('Failed to load job listings.');
+      }
+
+      const rows = Array.isArray(data) ? data : [];
+      rawCount += rows.length;
+
+      for (const row of rows) {
+        const mapped = mapMatchableJobRow(row);
+        if (mapped) {
+          jobs.push(mapped);
+        }
+      }
+
+      if (rows.length < pageSize) {
+        break;
+      }
+
+      from += pageSize;
+      if (from >= 50_000) {
+        break;
       }
     }
+
+    this.logger.log({
+      message: 'Catalog jobs mapped for rematch',
+      rawCount,
+      mappedCount: jobs.length,
+    });
 
     return jobs;
   }

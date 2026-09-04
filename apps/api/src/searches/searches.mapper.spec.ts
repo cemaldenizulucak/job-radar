@@ -54,6 +54,25 @@ describe('mapSavedSearchRow', () => {
     );
   });
 
+  it('drops sentinel location values from mapped rows', () => {
+    expect(
+      mapSavedSearchRow({
+        ...validRow,
+        locations: ['', 'Tümü', 'İzmir'],
+        country_code: 'ALL',
+        country_name: 'Tümü',
+        subdivision_name: 'all',
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        locations: ['İzmir'],
+        countryCode: null,
+        countryName: null,
+        subdivisionName: null,
+      }),
+    );
+  });
+
   it('drops invalid rows instead of throwing', () => {
     expect(mapSavedSearchRow({ name: 'Missing ids' })).toBeNull();
     expect(mapSavedSearchRows([validRow, null, 'bad'])).toEqual([

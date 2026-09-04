@@ -97,4 +97,25 @@ describe('parseSavedSearchWrite', () => {
       locations: ['istanbul'],
     });
   });
+
+  it('does not persist blank or sentinel location filters', () => {
+    expect(
+      parseSavedSearchWrite({
+        name: 'bilgisayar',
+        keywords: ['bilgisayar'],
+        sources: ['linkedin', 'kariyer_net'],
+        locations: ['', 'Tümü'],
+        countryCode: '',
+        countryName: 'Tümü',
+        subdivisionCode: '',
+        subdivisionName: 'all',
+      }),
+    ).toMatchObject({
+      countryCode: null,
+      countryName: null,
+      subdivisionCode: null,
+      subdivisionName: null,
+      locations: [],
+    });
+  });
 });

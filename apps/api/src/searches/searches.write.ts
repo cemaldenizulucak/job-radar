@@ -4,6 +4,9 @@ import type { SourceId, WorkModel } from '../common/domain.types.js';
 import { isRecord } from '../common/request.js';
 import {
   deriveSavedSearchLocations,
+  sanitizeCountryCode,
+  sanitizeLocationList,
+  sanitizeLocationToken,
   resolveSavedSearchLocation,
   toSearchLocationOrigin,
   type ProfileLocation,
@@ -61,19 +64,21 @@ export function parseSavedSearchWrite(body: unknown): SavedSearchWriteInput {
     throw new BadRequestException('Select at least one source.');
   }
 
-  const countryCode = readOptionalCode(body.countryCode, 'countryCode');
-  const countryName = readOptionalName(body.countryName, 'countryName');
-  const subdivisionCode = readOptionalCode(
-    body.subdivisionCode,
-    'subdivisionCode',
+  const countryName = sanitizeLocationToken(
+    readOptionalName(body.countryName, 'countryName'),
   );
-  const subdivisionName = readOptionalName(
-    body.subdivisionName,
-    'subdivisionName',
+  const subdivisionName = sanitizeLocationToken(
+    readOptionalName(body.subdivisionName, 'subdivisionName'),
   );
-  const hasStructuredLocation = Boolean(
-    countryCode || countryName || subdivisionCode || subdivisionName,
-  );
+  const countryCode =
+    countryName || subdivisionName
+      ? sanitizeCountryCode(readOptionalCode(body.countryCode, 'countryCode'))
+      : null;
+  const subdivisionCode =
+    countryCode && subdivisionName
+      ? readOptionalCode(body.subdivisionCode, 'subdivisionCode')
+      : null;
+  const hasStructuredLocation = Boolean(countryName || subdivisionName);
 
   return {
     name,
@@ -82,7 +87,7 @@ export function parseSavedSearchWrite(body: unknown): SavedSearchWriteInput {
     technologies: readStringArray(body.technologies, 'technologies'),
     locations: hasStructuredLocation
       ? deriveSavedSearchLocations({ countryName, subdivisionName })
-      : readStringArray(body.locations, 'locations'),
+      : sanitizeLocationList(readStringArray(body.locations, 'locations')),
     countryCode,
     countryName,
     subdivisionCode,

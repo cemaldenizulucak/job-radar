@@ -21,9 +21,79 @@ export type ResolvedSearchLocation = {
   country: string | null;
 };
 
+const BLANK_LOCATION_NORMALIZED = new Set([
+  'all',
+  'any',
+  'anywhere',
+  'hepsi',
+  'n a',
+  'na',
+  'none',
+  'null',
+  'tumu',
+  'undefined',
+]);
+
 export function trimLocation(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? '';
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Empty, whitespace, and UI sentinels ("Tümü", "all") are not location filters. */
+export function sanitizeLocationToken(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = trimLocation(value);
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed === '-' || trimmed === '*' || trimmed === '—') {
+    return null;
+  }
+
+  const normalized = normalizeForSearch(trimmed);
+  if (!normalized || BLANK_LOCATION_NORMALIZED.has(normalized)) {
+    return null;
+  }
+
+  return trimmed;
+}
+
+export function sanitizeCountryCode(
+  value: string | null | undefined,
+): string | null {
+  const token = sanitizeLocationToken(value);
+  if (!token) {
+    return null;
+  }
+
+  const upper = token.toUpperCase();
+  if (upper === 'ALL' || upper === 'ANY' || upper === 'NONE') {
+    return null;
+  }
+
+  return upper;
+}
+
+export function sanitizeLocationList(
+  values: readonly string[] | null | undefined,
+): string[] {
+  if (!values) {
+    return [];
+  }
+
+  return uniqueLocations(values.map((value) => sanitizeLocationToken(value)));
+}
+
+export function hasExplicitSearchLocationFilter(
+  search: StructuredSearchLocation,
+): boolean {
+  return (
+    sanitizeLocationToken(search.countryName) !== null ||
+    sanitizeLocationToken(search.subdivisionName) !== null ||
+    sanitizeLocationList(search.locations).length > 0
+  );
 }
 
 export function formatLocationLabel(
@@ -66,8 +136,8 @@ export function deriveSavedSearchLocations(input: {
   subdivisionName?: string | null;
   locations?: readonly string[];
 }): string[] {
-  const country = trimLocation(input.countryName);
-  const subdivision = trimLocation(input.subdivisionName);
+  const country = sanitizeLocationToken(input.countryName);
+  const subdivision = sanitizeLocationToken(input.subdivisionName);
 
   if (subdivision && country) {
     return uniqueLocations([subdivision, `${subdivision}, ${country}`]);
@@ -81,15 +151,26 @@ export function deriveSavedSearchLocations(input: {
     return [country];
   }
 
-  return uniqueLocations(input.locations ?? []);
+  return sanitizeLocationList(input.locations);
 }
 
 export function resolveSavedSearchLocation(
   search: StructuredSearchLocation,
   subdivisionAliases: readonly string[] = [],
 ): ResolvedSearchLocation {
-  const country = trimLocation(search.countryName);
-  const city = trimLocation(search.subdivisionName);
+  const country = sanitizeLocationToken(search.countryName);
+  const city = sanitizeLocationToken(search.subdivisionName);
+  const legacy = sanitizeLocationList(search.locations);
+
+  if (!country && !city && legacy.length === 0) {
+    return {
+      locations: [],
+      label: null,
+      source: 'none',
+      city: null,
+      country: null,
+    };
+  }
 
   if (city && country) {
     const label = formatLocationLabel(city, country);
@@ -122,16 +203,14 @@ export function resolveSavedSearchLocation(
     };
   }
 
-  return resolveEffectiveSearchLocation(search.locations, null);
+  return resolveLegacySearchLocations(legacy);
 }
 
 export function resolveEffectiveSearchLocation(
   savedSearchLocations: readonly string[],
   profile: ProfileLocation | null | undefined,
 ): ResolvedSearchLocation {
-  const explicit = savedSearchLocations
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
+  const explicit = sanitizeLocationList(savedSearchLocations);
   const country = trimLocation(profile?.country);
   const city = trimLocation(profile?.city);
 
@@ -195,7 +274,14 @@ export function jobLocationMatchResult(
   jobLocation: string | null | undefined,
   resolved: ResolvedSearchLocation,
 ): 'pass' | 'fail' | 'skipped' | 'unknown' {
-  if (resolved.source === 'none' || resolved.locations.length === 0) {
+  if (
+    resolved.source === 'none' ||
+    !hasExplicitSearchLocationFilter({
+      locations: resolved.locations,
+      countryName: resolved.country,
+      subdivisionName: resolved.city,
+    })
+  ) {
     return 'skipped';
   }
 
@@ -245,12 +331,18 @@ export function locationTextIncludes(haystack: string, needle: string): boolean 
   return Boolean(need) && hay.includes(need);
 }
 
+function resolveLegacySearchLocations(
+  locations: readonly string[],
+): ResolvedSearchLocation {
+  return resolveEffectiveSearchLocation(locations, null);
+}
+
 function uniqueLocations(values: readonly (string | null | undefined)[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
 
   for (const value of values) {
-    const trimmed = trimLocation(value);
+    const trimmed = sanitizeLocationToken(value);
     if (!trimmed || seen.has(trimmed)) {
       continue;
     }

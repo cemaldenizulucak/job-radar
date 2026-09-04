@@ -4,7 +4,7 @@ import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { SourceId } from '../common/domain.types.js';
-import { resolveSavedSearchLocation } from '../common/search-location.js';
+import { resolveSavedSearchLocation, hasExplicitSearchLocationFilter } from '../common/search-location.js';
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
 import { LocationsService } from '../locations/locations.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
@@ -128,6 +128,13 @@ export class DiscoveryService {
         .filter((code): code is string => Boolean(code)),
     );
 
+    const catalogJobs = await this.loadCatalogJobs();
+    const catalogMatches = this.matchingService.matchJobsToSearches(
+      catalogJobs,
+      searches,
+    );
+    const catalogCreated = await this.jobsService.saveMatches(catalogMatches);
+
     const fetched = await this.fetchNormalizedJobs(searches);
     let jobsInserted = 0;
     const persisted: MatchableJob[] = [];
@@ -149,15 +156,20 @@ export class DiscoveryService {
       });
     }
 
-    const matchableJobs = await this.mergeCatalogJobs(persisted);
-    const matches = this.matchingService.matchJobsToSearches(
-      matchableJobs,
+    const matchableJobs = mergeJobLists(catalogJobs, persisted);
+    const liveMatches = this.matchingService.matchJobsToSearches(
+      persisted,
       searches,
     );
-    const createdMatches = await this.jobsService.saveMatches(matches);
+    const liveCreated = await this.jobsService.saveMatches(liveMatches);
+    const createdMatches = [...catalogCreated, ...liveCreated];
+    const jobsForNotification = mergeNotificationJobs(
+      catalogJobsForNotification(catalogJobs, catalogCreated),
+      persistedForNotification,
+    );
     const visible = selectVisibleNewMatches(
       createdMatches,
-      persistedForNotification,
+      jobsForNotification,
       this.maxAgeDays(),
     );
     const matchesCreated = createdMatches.length;
@@ -179,13 +191,20 @@ export class DiscoveryService {
     );
 
     const usersProcessed = new Set(searches.map((search) => search.userId)).size;
-    this.logSavedSearchOutcomes(searches, matchableJobs, fetched.perSearch);
+    this.logSavedSearchMatchDebug({
+      searches,
+      catalogJobs,
+      allJobs: matchableJobs,
+      fetchStats: fetched.perSearch,
+      createdMatches,
+    });
     this.logDiscoveryCounts({
       usersProcessed,
       searchesProcessed: searches.length,
       jobsFetched: fetched.jobsFetched,
       jobsInserted,
       matchesCreated,
+      catalogJobsChecked: catalogJobs.length,
       rawProviderJobs: fetched.rawProviderJobs,
       normalizedJobs: fetched.uniqueJobs.length,
       visibleMatchesCreated: visible.matches.length,
@@ -212,6 +231,7 @@ export class DiscoveryService {
       stopReason: fetched.stopReason,
       sourceAttempts: fetched.sourceAttempts,
       sourceFailures: fetched.sourceFailures,
+      catalogJobsChecked: catalogJobs.length,
       rawProviderJobs: fetched.rawProviderJobs,
       normalizedJobs: fetched.uniqueJobs.length,
       notifiedJobCount,
@@ -245,26 +265,22 @@ export class DiscoveryService {
     }
   }
 
-  private async mergeCatalogJobs(
-    persisted: readonly MatchableJob[],
-  ): Promise<MatchableJob[]> {
-    const byId = new Map(persisted.map((job) => [job.id, job]));
-
+  private async loadCatalogJobs(): Promise<MatchableJob[]> {
     try {
       const catalog = await this.jobsService.listMatchableActiveJobs();
-      for (const job of catalog) {
-        if (!byId.has(job.id)) {
-          byId.set(job.id, job);
-        }
-      }
+      this.logger.log({
+        message: 'Catalog jobs loaded for rematch',
+        catalogJobsChecked: catalog.length,
+      });
+      return catalog;
     } catch (error) {
-      this.logger.warn({
-        message: 'Failed to load catalog jobs for rematch; using this run only',
+      this.logger.error({
+        message: 'Failed to load catalog jobs for rematch',
+        catalogJobsChecked: 0,
         error: error instanceof Error ? error.message : 'unknown',
       });
+      return [];
     }
-
-    return [...byId.values()];
   }
 
   private async fetchNormalizedJobs(
@@ -431,50 +447,71 @@ export class DiscoveryService {
     }
   }
 
-  private logSavedSearchOutcomes(
-    searches: readonly SavedSearch[],
-    jobs: readonly MatchableJob[],
-    fetchStats: readonly SearchSourceFetchStat[],
-  ): void {
+  private logSavedSearchMatchDebug(input: {
+    searches: readonly SavedSearch[];
+    catalogJobs: readonly MatchableJob[];
+    allJobs: readonly MatchableJob[];
+    fetchStats: readonly SearchSourceFetchStat[];
+    createdMatches: readonly JobSearchMatch[];
+  }): void {
     if (process.env.NODE_ENV === 'test') {
       return;
     }
 
-    for (const search of searches) {
-      const sourceStats = fetchStats.filter(
-        (stat) => stat.savedSearchId === search.id,
+    const createdBySearch = new Map<string, number>();
+    for (const match of input.createdMatches) {
+      createdBySearch.set(
+        match.savedSearchId,
+        (createdBySearch.get(match.savedSearchId) ?? 0) + 1,
       );
-      let matchedCount = 0;
-      let rejectedCount = 0;
-      const rejectReasons: Record<string, number> = {};
+    }
 
-      for (const job of jobs) {
+    const providerFetchedBySearch = new Map<string, number>();
+    for (const stat of input.fetchStats) {
+      providerFetchedBySearch.set(
+        stat.savedSearchId,
+        (providerFetchedBySearch.get(stat.savedSearchId) ?? 0) +
+          stat.fetchedJobCount,
+      );
+    }
+
+    for (const search of input.searches) {
+      let keywordMatches = 0;
+      let locationMatches = 0;
+      const rejectionReasonCounts: Record<string, number> = {};
+
+      for (const job of input.allJobs) {
         const decision = this.matchingService.evaluateMatch(job, search);
+        if (decision.keyword === 'pass') {
+          keywordMatches += 1;
+        }
+        if (decision.location !== 'fail') {
+          locationMatches += 1;
+        }
         if (decision.matched) {
-          matchedCount += 1;
           continue;
         }
-
-        rejectedCount += 1;
         for (const reason of decision.reasons) {
-          rejectReasons[reason] = (rejectReasons[reason] ?? 0) + 1;
+          rejectionReasonCounts[reason] =
+            (rejectionReasonCounts[reason] ?? 0) + 1;
         }
       }
 
-      for (const stat of sourceStats) {
-        this.logger.log({
-          message: 'Saved search discovery',
-          userId: search.userId,
-          savedSearchId: search.id,
-          searchName: search.name,
-          source: stat.source,
-          fetchedJobCount: stat.fetchedJobCount,
-          normalizedJobCount: stat.normalizedJobCount,
-          matchedCount,
-          rejectedCount,
-          rejectReasons,
-        });
-      }
+      this.logger.log({
+        message: 'Saved search match debug',
+        savedSearchId: search.id,
+        userId: search.userId,
+        catalogJobsChecked: input.catalogJobs.length,
+        providerJobsFetched: providerFetchedBySearch.get(search.id) ?? 0,
+        keywordMatches,
+        locationMatches,
+        matchesCreated: createdBySearch.get(search.id) ?? 0,
+        rejectionReasonCounts,
+        locationFilter: hasExplicitSearchLocationFilter(search)
+          ? 'explicit'
+          : 'none',
+        keywords: search.keywords,
+      });
     }
   }
 
@@ -484,6 +521,7 @@ export class DiscoveryService {
     jobsFetched: number;
     jobsInserted: number;
     matchesCreated: number;
+    catalogJobsChecked: number;
     rawProviderJobs: number;
     normalizedJobs: number;
     visibleMatchesCreated: number;
@@ -496,6 +534,9 @@ export class DiscoveryService {
       jobsFetched: counts.jobsFetched,
       jobsInserted: counts.jobsInserted,
       matchesCreated: counts.matchesCreated,
+      catalogJobsChecked: counts.catalogJobsChecked,
+      rawProviderJobs: counts.rawProviderJobs,
+      normalizedJobs: counts.normalizedJobs,
     });
 
     if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'test') {
@@ -575,6 +616,46 @@ function toSourceQuery(
     savedSearchId: search.id,
     maxAgeDays,
   };
+}
+
+function mergeNotificationJobs(
+  catalog: readonly PersistedJobForNotification[],
+  live: readonly PersistedJobForNotification[],
+): PersistedJobForNotification[] {
+  const byId = new Map(catalog.map((job) => [job.id, job]));
+  for (const job of live) {
+    byId.set(job.id, job);
+  }
+  return [...byId.values()];
+}
+
+function catalogJobsForNotification(
+  catalogJobs: readonly MatchableJob[],
+  catalogCreated: readonly JobSearchMatch[],
+): PersistedJobForNotification[] {
+  const matchedIds = new Set(catalogCreated.map((match) => match.jobId));
+  return catalogJobs
+    .filter((job) => matchedIds.has(job.id))
+    .map((job) => ({
+      id: job.id,
+      sourceId: job.sourceId,
+      isActive: true,
+      publishedAt: null,
+    }));
+}
+
+function mergeJobLists(
+  catalog: readonly MatchableJob[],
+  persisted: readonly MatchableJob[],
+): MatchableJob[] {
+  const byId = new Map<string, MatchableJob>();
+  for (const job of catalog) {
+    byId.set(job.id, job);
+  }
+  for (const job of persisted) {
+    byId.set(job.id, job);
+  }
+  return [...byId.values()];
 }
 
 function toMatchableJob(id: string, job: NormalizedJob): MatchableJob {

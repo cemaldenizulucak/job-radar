@@ -114,8 +114,13 @@ function readSourceId(
   }
 
   const value = raw.trim().toLowerCase().replace(/[.\s-]+/g, '_');
-  if (value === 'linkedin' || value === 'kariyer_net' || value === 'kariyer') {
-    return value === 'kariyer' ? 'kariyer_net' : value;
+  if (
+    value === 'linkedin' ||
+    value === 'kariyer_net' ||
+    value === 'kariyer' ||
+    value === 'kariyernet'
+  ) {
+    return value === 'linkedin' ? 'linkedin' : 'kariyer_net';
   }
 
   return null;

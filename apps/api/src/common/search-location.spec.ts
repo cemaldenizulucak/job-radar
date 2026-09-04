@@ -1,6 +1,7 @@
 import {
   deriveSavedSearchLocations,
   formatLocationLabel,
+  hasExplicitSearchLocationFilter,
   jobLocationMatchResult,
   resolveEffectiveSearchLocation,
   resolveSavedSearchLocation,
@@ -113,6 +114,37 @@ describe('resolveSavedSearchLocation', () => {
     });
     expect(jobLocationMatchResult('İzmir', resolved)).toBe('pass');
     expect(jobLocationMatchResult('Berlin', resolved)).toBe('fail');
+  });
+
+  it('treats blank and sentinel location fields as no filter', () => {
+    expect(
+      hasExplicitSearchLocationFilter({
+        locations: ['', ' ', 'Tümü', 'all'],
+        countryCode: 'ALL',
+        countryName: 'Tümü',
+        subdivisionCode: '',
+        subdivisionName: '',
+      }),
+    ).toBe(false);
+    expect(
+      resolveSavedSearchLocation({
+        locations: ['Tümü', ''],
+        countryCode: 'TR',
+        countryName: '',
+        subdivisionName: null,
+      }).source,
+    ).toBe('none');
+    expect(
+      jobLocationMatchResult(
+        'Berlin',
+        resolveSavedSearchLocation({
+          locations: [],
+          countryCode: null,
+          countryName: null,
+          subdivisionName: null,
+        }),
+      ),
+    ).toBe('skipped');
   });
 
   it('falls back to legacy locations text when structured fields are empty', () => {

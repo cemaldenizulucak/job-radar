@@ -525,4 +525,59 @@ describe('MatchingService generic text matching', () => {
       { jobId: 'job-1', savedSearchId: 'search-b' },
     ]);
   });
+
+  it('does not reject on location when only keyword=bilgisayar is set', () => {
+    const saved = search({
+      keywords: ['bilgisayar'],
+      technologies: [],
+      locations: ['', 'Tümü'],
+      countryCode: null,
+      countryName: 'Tümü',
+      subdivisionCode: '',
+      subdivisionName: '',
+      workTypes: [],
+      experienceLevels: [],
+    });
+    const ankara = job({
+      title: 'Bilgisayar Mühendisi',
+      location: 'Ankara',
+      description: null,
+      technologies: [],
+    });
+    const berlin = job({
+      id: 'job-2',
+      title: 'Yazılım Uzmanı',
+      description: 'bilgisayar laboratuvarı',
+      location: 'Berlin',
+      technologies: [],
+    });
+
+    const ankaraDecision = matcher.evaluateMatch(ankara, saved);
+    const berlinDecision = matcher.evaluateMatch(berlin, saved);
+
+    expect(ankaraDecision.location).toBe('skipped');
+    expect(berlinDecision.location).toBe('skipped');
+    expect(ankaraDecision.technology).toBe('skipped');
+    expect(ankaraDecision.experience).toBe('skipped');
+    expect(ankaraDecision.workModel).toBe('skipped');
+    expect(ankaraDecision.reasons).not.toContain('location mismatch');
+    expect(berlinDecision.reasons).not.toContain('location mismatch');
+    expect(ankaraDecision.matched).toBe(true);
+    expect(berlinDecision.matched).toBe(true);
+  });
+
+  it('keeps text matching even if the keyword is not a software role family', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'Bilgisayar Operatörü',
+        description: null,
+        technologies: [],
+      }),
+      search({ keywords: ['BİLGİSAYAR'] }),
+    );
+
+    expect(decision.roleFamily).toBe('none');
+    expect(decision.matched).toBe(true);
+    expect(decision.keyword).toBe('pass');
+  });
 });

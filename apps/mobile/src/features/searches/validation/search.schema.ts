@@ -56,8 +56,8 @@ export function deriveSearchLocations(
   countryName: string,
   subdivisionName: string,
 ): string[] {
-  const country = countryName.trim();
-  const subdivision = subdivisionName.trim();
+  const country = blankLocationToEmpty(countryName);
+  const subdivision = blankLocationToEmpty(subdivisionName);
 
   if (subdivision && country) {
     return [subdivision, `${subdivision}, ${country}`];
@@ -74,17 +74,49 @@ export function deriveSearchLocations(
   return [];
 }
 
+function blankLocationToEmpty(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const folded = trimmed
+    .toLocaleLowerCase('tr-TR')
+    .replaceAll('ı', 'i')
+    .replaceAll('ş', 's')
+    .replaceAll('ğ', 'g')
+    .replaceAll('ü', 'u')
+    .replaceAll('ö', 'o')
+    .replaceAll('ç', 'c');
+
+  if (
+    folded === 'tumu' ||
+    folded === 'all' ||
+    folded === 'any' ||
+    folded === 'hepsi' ||
+    folded === '-' ||
+    folded === '*'
+  ) {
+    return '';
+  }
+
+  return trimmed;
+}
+
 export function formValuesToWriteInput(
   values: SavedSearchFormValues,
 ): z.infer<typeof savedSearchWriteSchema> {
-  const countryCode = values.countryCode.trim() || null;
-  const countryName = values.countryName.trim() || null;
-  const subdivisionCode = countryCode
-    ? values.subdivisionCode.trim() || null
+  const countryName = blankLocationToEmpty(values.countryName) || null;
+  const countryCode = countryName
+    ? values.countryCode.trim() || null
     : null;
   const subdivisionName = countryCode
-    ? values.subdivisionName.trim() || null
+    ? blankLocationToEmpty(values.subdivisionName) || null
     : null;
+  const subdivisionCode =
+    countryCode && subdivisionName
+      ? values.subdivisionCode.trim() || null
+      : null;
 
   return savedSearchWriteSchema.parse({
     name: values.name,

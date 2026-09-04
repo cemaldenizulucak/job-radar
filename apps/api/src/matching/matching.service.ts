@@ -2,6 +2,7 @@ import { Injectable, Optional } from '@nestjs/common';
 
 import { normalizeForSearch } from '../common/normalize-text.js';
 import {
+  hasExplicitSearchLocationFilter,
   jobLocationMatchResult,
   resolveSavedSearchLocation,
 } from '../common/search-location.js';
@@ -65,8 +66,7 @@ export class MatchingService {
 
   evaluateMatch(job: MatchableJob, search: SavedSearch): MatchDecision {
     const terms = collectSearchTerms(search);
-    const searchable = jobSearchableText(job);
-    const keyword = this.keywordResult(searchable, terms);
+    const keyword = this.keywordResult(job, terms);
     const titleMatch = fieldContainsAny(job.title, terms);
     const descriptionMatch = fieldContainsAny(job.description ?? '', terms);
     const location = this.locationResult(job, search);
@@ -137,14 +137,19 @@ export class MatchingService {
   }
 
   private keywordResult(
-    searchable: string,
+    job: MatchableJob,
     terms: readonly string[],
   ): MatchFieldResult {
     if (terms.length === 0) {
       return 'skipped';
     }
 
-    return terms.some((term) => queryAppearsIn(searchable, term))
+    return terms.some(
+      (term) =>
+        queryAppearsIn(job.title, term) ||
+        queryAppearsIn(job.description ?? '', term) ||
+        queryAppearsIn(jobSearchableText(job), term),
+    )
       ? 'pass'
       : 'fail';
   }
@@ -167,6 +172,10 @@ export class MatchingService {
     job: MatchableJob,
     search: SavedSearch,
   ): MatchFieldResult {
+    if (!hasExplicitSearchLocationFilter(search)) {
+      return 'skipped';
+    }
+
     const aliases = search.countryCode
       ? (this.locationsService?.getCachedSubdivisionNames(search.countryCode) ??
         [])

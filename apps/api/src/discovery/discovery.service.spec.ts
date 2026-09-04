@@ -291,6 +291,7 @@ describe('DiscoveryService', () => {
       stopReason: null,
       sourceAttempts: 2,
       sourceFailures: 0,
+      catalogJobsChecked: 0,
       rawProviderJobs: 6,
       normalizedJobs: 6,
       notifiedJobCount: 4,
@@ -1023,6 +1024,7 @@ describe('DiscoveryService', () => {
     );
 
     expect(result.jobsFetched).toBe(0);
+    expect(result.catalogJobsChecked).toBe(1);
     expect(result.matchesCreated).toBe(1);
     expect(jobs.matches).toEqual([
       {
@@ -1075,6 +1077,7 @@ describe('DiscoveryService', () => {
     const result = await discovery.runForSavedSearch(target);
 
     expect(result.jobsFetched).toBe(0);
+    expect(result.catalogJobsChecked).toBe(1);
     expect(result.matchesCreated).toBe(1);
     expect(jobs.matches).toEqual([
       {
@@ -1082,6 +1085,135 @@ describe('DiscoveryService', () => {
         savedSearchId: 'search-bilgisayar',
       },
     ]);
+  });
+
+  it('does not mix User A and User B matches when rematching the catalog', async () => {
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'linkedin',
+      sourceJobId: 'shared-computer',
+      title: 'Bilgisayar Mühendisi',
+      companyName: 'Catalog Co',
+      titleNormalized: 'bilgisayar muhendisi',
+      companyNormalized: 'catalog co',
+      location: 'Ankara',
+      workModel: 'onsite',
+      experienceLevel: 'mid',
+      technologies: [],
+      description: 'Donanım',
+      canonicalUrl: 'https://example.com/shared-computer',
+      publishedAt: null,
+      isActive: true,
+    });
+
+    const emptyAdapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'linkedin', jobs: [] }),
+    };
+
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['bilgisayar'],
+      locations: [],
+      sourceIds: ['linkedin'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['bilgisayar'],
+      locations: [],
+      sourceIds: ['linkedin'],
+    });
+    const { discovery } = createDiscovery(
+      [userA, userB],
+      [emptyAdapter],
+      jobs,
+    );
+
+    await discovery.runForSavedSearch(userA);
+
+    expect(jobs.matches).toEqual([
+      {
+        jobId: sourceListingIdentity('linkedin', 'shared-computer'),
+        savedSearchId: 'search-a',
+      },
+    ]);
+    expect(
+      jobs.matches.some((match) => match.savedSearchId === 'search-b'),
+    ).toBe(false);
+  });
+
+  it('matches catalog jobs even when live discovery returns unrelated listings', async () => {
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'linkedin',
+      sourceJobId: 'catalog-computer',
+      title: 'Bilgisayar Öğretmeni',
+      companyName: 'Catalog Co',
+      titleNormalized: 'bilgisayar ogretmeni',
+      companyNormalized: 'catalog co',
+      location: 'Van',
+      workModel: 'onsite',
+      experienceLevel: null,
+      technologies: [],
+      description: null,
+      canonicalUrl: 'https://example.com/catalog-computer',
+      publishedAt: null,
+      isActive: true,
+    });
+
+    const adapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({
+        sourceId: 'linkedin',
+        jobs: [
+          {
+            sourceJobId: 'live-computer',
+            canonicalUrl: 'https://example.com/live-computer',
+            title: 'Bilgisayar Teknikeri',
+            companyName: 'Live Co',
+            location: 'Berlin',
+          },
+        ],
+      }),
+    };
+
+    const target = search({
+      id: 'search-bilgisayar',
+      keywords: ['bilgisayar'],
+      locations: [],
+      countryName: null,
+      sourceIds: ['linkedin'],
+    });
+    const { discovery } = createDiscovery([target], [adapter], jobs);
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(result.catalogJobsChecked).toBeGreaterThanOrEqual(1);
+    expect(result.matchesCreated).toBe(2);
+    expect(jobs.matches.map((match) => match.jobId).sort()).toEqual(
+      [
+        sourceListingIdentity('linkedin', 'catalog-computer'),
+        sourceListingIdentity('linkedin', 'live-computer'),
+      ].sort(),
+    );
   });
 
   it('enqueues background discovery and marks the run pending until it finishes', async () => {

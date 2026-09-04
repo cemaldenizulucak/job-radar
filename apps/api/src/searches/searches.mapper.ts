@@ -1,4 +1,5 @@
 import type { SourceId, WorkModel } from '../common/domain.types.js';
+import { sanitizeCountryCode, sanitizeLocationList, sanitizeLocationToken } from '../common/search-location.js';
 import type { SavedSearch } from './searches.types.js';
 
 export const SAVED_SEARCH_SELECT =
@@ -42,11 +43,11 @@ export function mapSavedSearchRow(value: unknown): SavedSearch | null {
     isActive,
     keywords: readStringArray(value, 'keywords'),
     technologies: readStringArray(value, 'technologies'),
-    locations: readStringArray(value, 'locations'),
-    countryCode: readString(value, 'country_code'),
-    countryName: readString(value, 'country_name'),
-    subdivisionCode: readString(value, 'subdivision_code'),
-    subdivisionName: readString(value, 'subdivision_name'),
+    locations: sanitizeLocationList(readStringArray(value, 'locations')),
+    countryCode: sanitizeCountryCode(readString(value, 'country_code')),
+    countryName: sanitizeLocationToken(readString(value, 'country_name')),
+    subdivisionCode: sanitizeLocationToken(readString(value, 'subdivision_code')),
+    subdivisionName: sanitizeLocationToken(readString(value, 'subdivision_name')),
     workTypes: readStringArray(value, 'work_types').filter(isWorkModel),
     experienceLevels: readStringArray(value, 'experience_levels'),
     sourceIds: readStringArray(value, 'sources').filter(isSourceId),

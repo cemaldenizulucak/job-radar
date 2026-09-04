@@ -138,6 +138,30 @@ describe('formValuesToWriteInput', () => {
       }).workTypes,
     ).toEqual([]);
   });
+
+  it('treats Tümü as no location filter', () => {
+    expect(
+      formValuesToWriteInput({
+        name: 'bilgisayar',
+        keywords: 'bilgisayar',
+        technologies: '',
+        countryCode: 'ALL',
+        countryName: 'Tümü',
+        subdivisionCode: '',
+        subdivisionName: 'Tümü',
+        experienceLevels: '',
+        workTypes: [],
+        sources: ['linkedin', 'kariyer_net'],
+        isActive: true,
+      }),
+    ).toMatchObject({
+      countryCode: null,
+      countryName: null,
+      subdivisionCode: null,
+      subdivisionName: null,
+      locations: [],
+    });
+  });
 });
 
 describe('shouldRefreshAfterSearchWrite', () => {
