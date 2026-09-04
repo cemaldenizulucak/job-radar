@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { View } from 'react-native';
 
 import { Spacing } from '@/constants/theme';
@@ -12,7 +12,8 @@ import type {
 } from '@/features/locations/types';
 
 import { searchesCopy } from '../copy';
-import { SearchSelectField, type SearchSelectOption } from './search-select-field';
+import { catalogToSelectOptions } from '../utils/location-picker';
+import { SearchSelectField } from './search-select-field';
 
 type SearchLocationFieldsProps = {
   countryCode: string;
@@ -34,67 +35,54 @@ export function SearchLocationFields({
   onSubdivisionChange,
 }: SearchLocationFieldsProps) {
   const [countries, setCountries] = useState<LocationCountry[]>([]);
+  const [countriesLoading, setCountriesLoading] = useState(false);
+  const [countriesError, setCountriesError] = useState<string | null>(null);
   const [subdivisions, setSubdivisions] = useState<LocationSubdivision[]>([]);
+  const [subdivisionsLoading, setSubdivisionsLoading] = useState(false);
+  const [subdivisionsError, setSubdivisionsError] = useState<string | null>(
+    null,
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void listCountries().then((items) => {
-      if (!cancelled) {
-        setCountries(items);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
+  const loadCountries = useCallback(async () => {
+    setCountriesLoading(true);
+    setCountriesError(null);
+    try {
+      setCountries(await listCountries());
+    } catch {
+      setCountries([]);
+      setCountriesError(searchesCopy.locationListError);
+    } finally {
+      setCountriesLoading(false);
+    }
   }, []);
 
-  useEffect(() => {
-    if (!countryCode) {
+  const loadSubdivisions = useCallback(async (code: string) => {
+    if (!code) {
       setSubdivisions([]);
+      setSubdivisionsError(null);
+      setSubdivisionsLoading(false);
       return;
     }
 
-    let cancelled = false;
-    void listSubdivisions(countryCode).then((items) => {
-      if (!cancelled) {
-        setSubdivisions(items);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [countryCode]);
+    setSubdivisionsLoading(true);
+    setSubdivisionsError(null);
+    try {
+      setSubdivisions(await listSubdivisions(code));
+    } catch {
+      setSubdivisions([]);
+      setSubdivisionsError(searchesCopy.locationListError);
+    } finally {
+      setSubdivisionsLoading(false);
+    }
+  }, []);
 
   const countryOptions = useMemo(
-    () =>
-      withSelectedOption(
-        [
-          { value: '', label: searchesCopy.locationAll },
-          ...countries.map((item) => ({ value: item.code, label: item.name })),
-        ],
-        countryCode,
-        countryName,
-      ),
-    [countries, countryCode, countryName],
+    () => catalogToSelectOptions(countries, searchesCopy.locationAll),
+    [countries],
   );
-
   const subdivisionOptions = useMemo(
-    () =>
-      withSelectedOption(
-        [
-          { value: '', label: searchesCopy.locationAll },
-          ...subdivisions.map((item) => ({
-            value: item.code,
-            label: item.name,
-          })),
-        ],
-        subdivisionCode,
-        subdivisionName,
-      ),
-    [subdivisions, subdivisionCode, subdivisionName],
+    () => catalogToSelectOptions(subdivisions, searchesCopy.locationAll),
+    [subdivisions],
   );
 
   return (
@@ -104,10 +92,26 @@ export function SearchLocationFields({
         placeholder={searchesCopy.countryPlaceholder}
         hint={searchesCopy.countryHint}
         value={countryCode}
+        selectedLabel={countryName}
         options={countryOptions}
+        loading={countriesLoading}
+        error={countriesError}
         disabled={disabled}
+        onOpen={() => {
+          void loadCountries();
+        }}
+        onRetry={() => {
+          void loadCountries();
+        }}
         onChange={(code, name) => {
           onCountryChange(code, code ? name : '');
+          onSubdivisionChange('', '');
+          if (code) {
+            void loadSubdivisions(code);
+          } else {
+            setSubdivisions([]);
+            setSubdivisionsError(null);
+          }
         }}
       />
       <SearchSelectField
@@ -115,24 +119,21 @@ export function SearchLocationFields({
         placeholder={searchesCopy.subdivisionPlaceholder}
         hint={searchesCopy.subdivisionHint}
         value={subdivisionCode}
+        selectedLabel={subdivisionName}
         options={subdivisionOptions}
+        loading={subdivisionsLoading}
+        error={subdivisionsError}
         disabled={disabled || !countryCode}
+        onOpen={() => {
+          void loadSubdivisions(countryCode);
+        }}
+        onRetry={() => {
+          void loadSubdivisions(countryCode);
+        }}
         onChange={(code, name) => {
           onSubdivisionChange(code, code ? name : '');
         }}
       />
     </View>
   );
-}
-
-function withSelectedOption(
-  options: SearchSelectOption[],
-  code: string,
-  name: string,
-): SearchSelectOption[] {
-  if (!code || options.some((option) => option.value === code)) {
-    return options;
-  }
-
-  return [...options, { value: code, label: name || code }];
 }

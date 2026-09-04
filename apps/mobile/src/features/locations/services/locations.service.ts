@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { apiGet } from '@/lib/api-client';
+import { ApiClientError, apiGetPublic } from '@/lib/api-client';
 
 import type { LocationCountry, LocationSubdivision } from '../types';
 
@@ -16,17 +16,25 @@ const locationListSchema = z.object({
 let countriesCache: LocationCountry[] | null = null;
 const subdivisionsCache = new Map<string, LocationSubdivision[]>();
 
+export function resetLocationCatalogCache(): void {
+  countriesCache = null;
+  subdivisionsCache.clear();
+}
+
 export async function listCountries(): Promise<LocationCountry[]> {
   if (countriesCache) {
     return countriesCache;
   }
 
   try {
-    const parsed = locationListSchema.parse(await apiGet('/v1/locations/countries'));
+    const parsed = locationListSchema.parse(
+      await apiGetPublic('/v1/locations/countries'),
+    );
     countriesCache = parsed.items;
     return parsed.items;
-  } catch {
-    return [];
+  } catch (error) {
+    logLocationCatalogFailure('/v1/locations/countries', error);
+    throw error;
   }
 }
 
@@ -43,15 +51,28 @@ export async function listSubdivisions(
     return cached;
   }
 
+  const endpoint = `/v1/locations/subdivisions?countryCode=${encodeURIComponent(code)}`;
+
   try {
-    const parsed = locationListSchema.parse(
-      await apiGet(
-        `/v1/locations/subdivisions?countryCode=${encodeURIComponent(code)}`,
-      ),
-    );
+    const parsed = locationListSchema.parse(await apiGetPublic(endpoint));
     subdivisionsCache.set(code, parsed.items);
     return parsed.items;
-  } catch {
-    return [];
+  } catch (error) {
+    logLocationCatalogFailure(endpoint, error);
+    throw error;
   }
+}
+
+export function logLocationCatalogFailure(endpoint: string, error: unknown): void {
+  const status = error instanceof ApiClientError ? error.status : undefined;
+  const message =
+    error instanceof Error && error.message.trim().length > 0
+      ? error.message
+      : 'unknown';
+
+  console.warn('Locations catalog request failed', {
+    endpoint,
+    status,
+    message,
+  });
 }

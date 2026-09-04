@@ -34,16 +34,18 @@ async function apiRequest(
   method: 'GET' | 'PATCH' | 'POST' | 'DELETE',
   path: string,
   body?: unknown,
+  auth: 'required' | 'optional' = 'required',
 ): Promise<unknown> {
   const token = await getAccessToken();
-  if (!token) {
+  if (!token && auth !== 'optional') {
     throw new ApiClientError(uiCopy.sessionExpired, 401);
   }
 
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-  };
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
   const init: RequestInit = { method, headers };
 
   if (body !== undefined) {
@@ -82,6 +84,11 @@ async function apiRequest(
 
 export async function apiGet(path: string): Promise<unknown> {
   return apiRequest('GET', path);
+}
+
+/** Public catalog routes. Sends a bearer token when present, but does not require one. */
+export async function apiGetPublic(path: string): Promise<unknown> {
+  return apiRequest('GET', path, undefined, 'optional');
 }
 
 export async function apiPatch(path: string, body?: unknown): Promise<unknown> {

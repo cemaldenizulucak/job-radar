@@ -1,11 +1,13 @@
 import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 
+import { Public } from '../auth/public.decorator.js';
 import { LocationsService } from './locations.service.js';
 import type {
   LocationCountry,
   LocationSubdivision,
 } from './locations.types.js';
 
+@Public()
 @Controller('v1/locations')
 export class LocationsController {
   constructor(private readonly locationsService: LocationsService) {}

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
@@ -14,20 +15,29 @@ import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 import { searchesCopy } from '../copy';
+import {
+  closeLocationPicker,
+  filterSelectOptions,
+  locationPickerView,
+  selectedLocationLabel,
+  type LocationSelectOption,
+} from '../utils/location-picker';
 
-export type SearchSelectOption = {
-  value: string;
-  label: string;
-};
+export type SearchSelectOption = LocationSelectOption;
 
 type SearchSelectFieldProps = {
   label: string;
   placeholder: string;
   hint?: string;
   value: string;
+  selectedLabel?: string;
   options: readonly SearchSelectOption[];
+  loading?: boolean;
+  error?: string | null;
   emptyLabel?: string;
   disabled?: boolean;
+  onOpen?: () => void;
+  onRetry?: () => void;
   onChange: (value: string, label: string) => void;
 };
 
@@ -36,32 +46,35 @@ export function SearchSelectField({
   placeholder,
   hint,
   value,
+  selectedLabel,
   options,
+  loading = false,
+  error = null,
   emptyLabel = searchesCopy.locationAll,
   disabled = false,
+  onOpen,
+  onRetry,
   onChange,
 }: SearchSelectFieldProps) {
   const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-
-  const selected = options.find((option) => option.value === value);
-  const display = selected?.label ?? emptyLabel;
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase('tr');
-    if (!needle) {
-      return options;
-    }
-
-    return options.filter((option) =>
-      option.label.toLocaleLowerCase('tr').includes(needle),
-    );
-  }, [options, query]);
+  const view = locationPickerView({ loading, error });
+  const display = selectedLocationLabel({
+    value,
+    options,
+    selectedLabel,
+    placeholder,
+  });
+  const filtered = useMemo(
+    () => filterSelectOptions(options, query),
+    [options, query],
+  );
 
   const close = () => {
-    setOpen(false);
-    setQuery('');
+    const next = closeLocationPicker();
+    setOpen(next.open);
+    setQuery(next.query);
   };
 
   return (
@@ -70,7 +83,10 @@ export function SearchSelectField({
       <Pressable
         accessibilityRole="button"
         disabled={disabled}
-        onPress={() => setOpen(true)}
+        onPress={() => {
+          setOpen(true);
+          onOpen?.();
+        }}
         style={[
           styles.input,
           {
@@ -80,9 +96,9 @@ export function SearchSelectField({
           },
         ]}>
         <ThemedText
-          themeColor={selected ? 'text' : 'textSecondary'}
+          themeColor={value ? 'text' : 'textSecondary'}
           numberOfLines={1}>
-          {value ? display : placeholder}
+          {display}
         </ThemedText>
       </Pressable>
       {hint ? (
@@ -105,51 +121,77 @@ export function SearchSelectField({
               <ThemedText type="linkPrimary">{searchesCopy.closePicker}</ThemedText>
             </Pressable>
           </View>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder={searchesCopy.searchLocation}
-            placeholderTextColor={theme.textSecondary}
-            autoCorrect={false}
-            autoCapitalize="none"
-            style={[
-              styles.search,
-              {
-                color: theme.text,
-                backgroundColor: theme.backgroundElement,
-                borderColor: theme.border,
-              },
-            ]}
-          />
-          <FlatList
-            data={filtered}
-            keyExtractor={(item) => item.value || 'all'}
-            keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => {
-              const selectedItem = item.value === value;
-              return (
-                <Pressable
-                  onPress={() => {
-                    onChange(item.value, item.label);
-                    close();
-                  }}
-                  style={[
-                    styles.option,
-                    {
-                      backgroundColor: selectedItem
-                        ? theme.accentMuted
-                        : 'transparent',
-                    },
-                  ]}>
-                  <ThemedText
-                    type={selectedItem ? 'smallBold' : 'default'}
-                    themeColor={selectedItem ? 'accent' : 'text'}>
-                    {item.label}
-                  </ThemedText>
-                </Pressable>
-              );
-            }}
-          />
+          {view === 'list' ? (
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder={searchesCopy.searchLocation}
+              placeholderTextColor={theme.textSecondary}
+              autoCorrect={false}
+              autoCapitalize="none"
+              style={[
+                styles.search,
+                {
+                  color: theme.text,
+                  backgroundColor: theme.backgroundElement,
+                  borderColor: theme.border,
+                },
+              ]}
+            />
+          ) : null}
+          {view === 'loading' ? (
+            <View style={styles.status}>
+              <ActivityIndicator color={theme.accent} />
+              <ThemedText type="smallBold">{searchesCopy.locationLoading}</ThemedText>
+            </View>
+          ) : null}
+          {view === 'error' ? (
+            <View style={styles.status}>
+              <ThemedText type="smallBold">{searchesCopy.locationListError}</ThemedText>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onRetry?.()}
+                style={[styles.retry, { borderColor: theme.border }]}>
+                <ThemedText type="linkPrimary">{searchesCopy.locationRetry}</ThemedText>
+              </Pressable>
+            </View>
+          ) : null}
+          {view === 'list' ? (
+            <FlatList
+              data={filtered}
+              keyExtractor={(item) => item.value || 'all'}
+              keyboardShouldPersistTaps="handled"
+              ListEmptyComponent={
+                <ThemedText type="meta" themeColor="textSecondary">
+                  {searchesCopy.locationEmptyFilter}
+                </ThemedText>
+              }
+              renderItem={({ item }) => {
+                const selectedItem = item.value === value;
+                return (
+                  <Pressable
+                    onPress={() => {
+                      onChange(item.value, item.label);
+                      close();
+                    }}
+                    style={[
+                      styles.option,
+                      {
+                        backgroundColor: selectedItem
+                          ? theme.accentMuted
+                          : 'transparent',
+                      },
+                    ]}>
+                    <ThemedText
+                      type={selectedItem ? 'smallBold' : 'default'}
+                      themeColor={selectedItem ? 'accent' : 'text'}>
+                      {item.label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              }}
+            />
+          ) : null}
         </SafeAreaView>
       </Modal>
     </View>
@@ -185,6 +227,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     borderWidth: 1,
     fontSize: 16,
+  },
+  status: {
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.six,
+  },
+  retry: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.three,
+    borderRadius: Radius.md,
+    borderWidth: 1,
   },
   option: {
     minHeight: 48,

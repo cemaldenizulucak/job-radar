@@ -2,7 +2,7 @@
 
 Public API served by `apps/api` (NestJS). Mobile is the only planned client for MVP.
 
-Auth: `Authorization: Bearer <Supabase access token>` on all routes except the liveness root and explicitly marked temporary development endpoints.
+Auth: `Authorization: Bearer <Supabase access token>` on protected routes. The liveness root and location catalog (`/v1/locations/countries`, `/v1/locations/subdivisions`) are public. Temporary development endpoints are separately marked `@Public()` and gated by `ENABLE_DEV_ENDPOINTS`.
 
 ```text
 Mobile
@@ -20,11 +20,13 @@ Errors: NestJS-style body `{ "statusCode": number, "message": string | string[],
 
 ### Implemented MVP routes
 
-Liveness (no JWT):
+Liveness and public catalog (no JWT):
 
 | Method | Path |
 | --- | --- |
 | GET | `/` |
+| GET | `/v1/locations/countries` |
+| GET | `/v1/locations/subdivisions?countryCode=` |
 
 Protected (JWT required). The user is taken from the token; client `userId` is ignored.
 
@@ -39,7 +41,6 @@ Protected (JWT required). The user is taken from the token; client `userId` is i
 | GET/PATCH | `/v1/notifications`, `/v1/notifications/:id/read` |
 | GET/PATCH | `/v1/profiles` | `country` and `city` are nullable. PATCH accepts any of `notificationsEnabled`, `country`, `city`. Saved search responses include `effectiveLocation` and `locationSource` (`search` / `profile` / `none`) resolved from the stored search location plus the authenticated user's profile. |
 | POST/DELETE | `/v1/push-tokens` |
-| GET | `/v1/locations/countries`, `/v1/locations/subdivisions?countryCode=` | Normalized country / subdivision lists. JWT required. Provider failures return `{ items: [] }`. |
 | GET/POST/PATCH/DELETE | `/v1/searches`, `/v1/searches/:id`, `/v1/searches/:id/toggle` | Search writes accept optional `countryCode`, `countryName`, `subdivisionCode`, `subdivisionName`. `locations[]` stays for older rows. |
 
 Temporary development helpers (not used by mobile). Disabled unless `ENABLE_DEV_ENDPOINTS=true`. When disabled they return **404** and must stay off in production.
