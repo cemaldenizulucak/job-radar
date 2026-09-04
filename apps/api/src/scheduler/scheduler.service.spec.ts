@@ -12,7 +12,7 @@ function createScheduler(run: DiscoveryService['run']): SchedulerService {
   return new SchedulerService(
     { run } as DiscoveryService,
     {
-      getIntervalHours: () => 2,
+      getIntervalHours: () => 1,
     } as unknown as SchedulerConfigService,
   );
 }
@@ -21,7 +21,7 @@ describe('SchedulerService', () => {
   it('exposes the configured discovery interval', () => {
     const scheduler = createScheduler(async () => emptySummary);
 
-    expect(scheduler.getIntervalHours()).toBe(2);
+    expect(scheduler.getIntervalHours()).toBe(1);
   });
 
   it('triggers DiscoveryService and returns the summary', async () => {

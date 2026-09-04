@@ -6,7 +6,7 @@ export const profileCopy = {
   notifications: 'Bildirimler',
   notificationsHint: 'Her tarama sonrası yeni ilan özetleri.',
   scanFrequency: 'Tarama Sıklığı',
-  scanFrequencyValue: 'Her 2 saatte bir',
+  scanFrequencyValue: 'Saatte bir',
   scanFrequencyHint: 'Sunucuda çalışır; telefonunuz kapalı olsa da devam eder.',
   cv: 'CV',
   cvEmpty: 'Henüz CV yüklenmedi.',

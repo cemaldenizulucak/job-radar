@@ -1,5 +1,6 @@
 import type { SourceId, WorkModel } from '../common/domain.types.js';
 import type { SearchLocationOrigin } from '../common/search-location.js';
+import type { ImmediateDiscoveryResult } from '../discovery/discovery.types.js';
 
 export type { SearchLocationOrigin };
 
@@ -54,15 +55,12 @@ export type SavedSearchResponse = {
   sources: readonly SourceId[];
   effectiveLocation: string | null;
   locationSource: SearchLocationOrigin;
+  discovery?: ImmediateDiscoveryResult;
   createdAt: string;
   updatedAt: string;
 };
 
 export type SavedSearchWriteResponse = {
   search: SavedSearchResponse;
-  discovery: {
-    status: 'completed' | 'partial' | 'failed' | 'skipped';
-    jobsFetched: number;
-    matchesCreated: number;
-  };
+  discovery: ImmediateDiscoveryResult;
 };

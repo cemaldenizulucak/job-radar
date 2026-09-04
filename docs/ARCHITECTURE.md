@@ -284,12 +284,12 @@ When a real access method is added, keep the same `JobSourceAdapter` surface. So
 
 Scheduled processing happens only on the backend.
 
-Default cadence: **every 2 hours** (`0 */2 * * *`) in **Europe/Istanbul**. Configurable via `DISCOVERY_INTERVAL_HOURS`. The phone being closed or offline must not stop discovery.
+Default cadence: **every 1 hour** (`0 * * * *`) in **Europe/Istanbul**. Configurable via `DISCOVERY_INTERVAL_HOURS`. The phone being closed or offline must not stop discovery.
 
 Pipeline, aligned with the PRD:
 
 ```text
-1. Scheduler starts a discovery run every 2 hours, or a saved-search create/update triggers an immediate run for that search
+1. Scheduler starts a discovery run every hour, or a saved-search create/update enqueues an immediate background run for that search
 2. Load the target saved searches (all active searches for scheduled runs; one search for immediate runs)
 3. For each search, load selected sources
 4. For each enabled adapter, query with the search criteria
@@ -460,7 +460,7 @@ Discovery **must** be a backend concern.
 
 Recommended MVP approach: NestJS in-process scheduler (`DiscoveryScheduler`) invoking `DiscoveryOrchestrator`.
 
-Production cron (Europe/Istanbul): `0 */2 * * *` (`DISCOVERY_INTERVAL_HOURS=2`). Enable with `DISCOVERY_SCHEDULER_ENABLED=true`. Local default is `false`. See [SCHEDULER.md](./SCHEDULER.md).
+Production cron (Europe/Istanbul): `0 * * * *` (`DISCOVERY_INTERVAL_HOURS=1`). Enable with `DISCOVERY_SCHEDULER_ENABLED=true`. Local default is `false`. See [SCHEDULER.md](./SCHEDULER.md).
 
 Implications:
 

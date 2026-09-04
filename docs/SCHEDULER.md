@@ -6,21 +6,21 @@ Scheduled discovery runs **in the NestJS API process**, not on the phone.
 
 | Setting | Default |
 | --- | --- |
-| Interval | every 2 hours |
-| Cron | `0 */2 * * *` |
+| Interval | every 1 hour |
+| Cron | `0 * * * *` |
 | Timezone | `Europe/Istanbul` |
 
 | Environment | Default |
 | --- | --- |
 | `DISCOVERY_SCHEDULER_ENABLED` | `false` locally in `.env.example`; set `true` in production |
-| `DISCOVERY_INTERVAL_HOURS` | `2` |
+| `DISCOVERY_INTERVAL_HOURS` | `1` |
 | `SCHEDULER_TIMEZONE` | `Europe/Istanbul` |
 
 `SCHEDULER_ENABLED` is still read if `DISCOVERY_SCHEDULER_ENABLED` is unset, for older env files.
 
 On API startup the host logs `Scheduler enabled: true/false`, `intervalHours`, and `timezone`. It does not log secrets.
 
-The in-process cron only fires when the API process is running. Overlapping scheduled/manual runs are skipped (`POST /v1/scheduler/run` and the interval job share the same lock). Immediate discovery after creating or updating a saved search uses the same `DiscoveryService` pipeline and is serialized with scheduled runs so the same search is not processed twice at once. Production scheduled runs do **not** require `ENABLE_DEV_ENDPOINTS`.
+The in-process cron only fires when the API process is running. Overlapping scheduled/manual runs are skipped (`POST /v1/scheduler/run` and the interval job share the same lock). Creating or updating a saved search enqueues background discovery for **that search only**; the HTTP response returns `discovery.status: pending` and does not wait for the crawl. Production scheduled runs do **not** require `ENABLE_DEV_ENDPOINTS`.
 
 ## New-match notifications
 
@@ -47,11 +47,11 @@ Push tokens live in `user_push_tokens`. NestJS uses the service role. Invalid Ex
 
 ```text
 DISCOVERY_SCHEDULER_ENABLED=true
-DISCOVERY_INTERVAL_HOURS=2
+DISCOVERY_INTERVAL_HOURS=1
 SCHEDULER_TIMEZONE=Europe/Istanbul
 EXPO_ACCESS_TOKEN=
 ```
 
 3. Keep `POST /v1/scheduler/run` and `POST /v1/discovery/run` for local testing with `ENABLE_DEV_ENDPOINTS=true`; they are not a substitute for cron in production.
 
-If the API cannot stay warm, call `POST /v1/scheduler/run` from an external every-2-hours cron in Europe/Istanbul. Do not use Expo background fetch as the source of truth.
+If the API cannot stay warm, call `POST /v1/scheduler/run` from an external hourly cron in Europe/Istanbul. Do not use Expo background fetch as the source of truth.

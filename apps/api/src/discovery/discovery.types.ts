@@ -1,4 +1,5 @@
 export type ImmediateDiscoveryStatus =
+  | 'pending'
   | 'completed'
   | 'partial'
   | 'failed'
@@ -44,6 +45,12 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   rawProviderJobs: 0,
   normalizedJobs: 0,
   notifiedJobCount: 0,
+};
+
+export const PENDING_DISCOVERY_RESULT: ImmediateDiscoveryResult = {
+  status: 'pending',
+  jobsFetched: 0,
+  matchesCreated: 0,
 };
 
 export const SKIPPED_DISCOVERY_RESULT: ImmediateDiscoveryResult = {

@@ -8,6 +8,7 @@ import {
   toSearchLocationOrigin,
   type ProfileLocation,
 } from '../common/search-location.js';
+import type { ImmediateDiscoveryResult } from '../discovery/discovery.types.js';
 import type {
   SavedSearch,
   SavedSearchResponse,
@@ -17,6 +18,7 @@ import type {
 export function toSavedSearchResponse(
   search: SavedSearch,
   _profile?: ProfileLocation | null,
+  options?: { discovery?: ImmediateDiscoveryResult | null },
 ): SavedSearchResponse {
   const resolved = resolveSavedSearchLocation(search);
 
@@ -39,6 +41,7 @@ export function toSavedSearchResponse(
     locationSource: toSearchLocationOrigin(resolved.source),
     createdAt: search.createdAt,
     updatedAt: search.updatedAt,
+    ...(options?.discovery ? { discovery: options.discovery } : {}),
   };
 }
 

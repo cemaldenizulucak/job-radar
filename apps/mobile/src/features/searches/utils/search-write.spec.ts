@@ -6,6 +6,7 @@ import {
   createSubmitLock,
   DELETE_SAVED_SEARCH_MESSAGE,
   DELETE_SAVED_SEARCH_TITLE,
+  isDiscoveryPending,
   isDiscoveryWarning,
   PARTIAL_DISCOVERY_MESSAGE,
   selectedSearchIdAfterDelete,
@@ -62,6 +63,8 @@ describe('search write helpers', () => {
     expect(isDiscoveryWarning('failed')).toBe(true);
     expect(isDiscoveryWarning('completed')).toBe(false);
     expect(isDiscoveryWarning('skipped')).toBe(false);
+    expect(isDiscoveryPending('pending')).toBe(true);
+    expect(isDiscoveryPending('completed')).toBe(false);
     expect(PARTIAL_DISCOVERY_MESSAGE).toContain('Arama kaydedildi.');
   });
 

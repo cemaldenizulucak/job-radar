@@ -1,10 +1,6 @@
-import type { SavedSearch, SavedSearchWriteInput } from '../types/search.types';
+import type { SavedSearch, SavedSearchWriteInput, SearchDiscoveryStatus } from '../types/search.types';
 
-export type SearchDiscoveryStatus =
-  | 'completed'
-  | 'partial'
-  | 'failed'
-  | 'skipped';
+export type { SearchDiscoveryStatus };
 
 export type SearchDiscoveryResult = {
   status: SearchDiscoveryStatus;
@@ -19,6 +15,10 @@ export const DELETE_SAVED_SEARCH_TITLE = 'Bu kayıtlı arama silinsin mi?';
 
 export const DELETE_SAVED_SEARCH_MESSAGE =
   'Kayıtlı arama kaldırılacak. İş ilanları silinmez. Bu aramaya ait eşleşmeler sekmesinde görünmez.';
+
+export function isDiscoveryPending(status: SearchDiscoveryStatus): boolean {
+  return status === 'pending';
+}
 
 export function isDiscoveryWarning(status: SearchDiscoveryStatus): boolean {
   return status === 'partial' || status === 'failed';

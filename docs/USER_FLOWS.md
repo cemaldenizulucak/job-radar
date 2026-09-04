@@ -245,12 +245,12 @@ User taps **Create search**.
 3. User leaves **Active** on (default `isActive: true`).
 4. User taps **Create search**.
 5. Client validates with shared Zod (name required, `sources` non-empty, known source ids only). Duplicate taps are ignored while the request is in flight.
-6. Mobile `POST /v1/searches` and shows **Searching LinkedIn and Kariyer.net...**
-7. API persists `saved_searches`, then runs backend discovery **for that search only** (same pipeline as the 2-hour scheduler).
-8. When discovery finishes, the app opens **Jobs** filtered to the new search and refreshes counts.
-9. If a source could not be scanned, the search is still kept and the app shows: “Search saved. Some sources could not be scanned right now.”
+6. Mobile `POST /v1/searches`. The API persists `saved_searches` and returns immediately with `discovery.status: pending`.
+7. API then runs backend discovery **for that search only** in the background (same pipeline as the hourly scheduler), including rematch against existing catalog jobs.
+8. The app opens **Jobs** filtered to the new search and shows **İlanlar aranıyor...** until discovery finishes, then refreshes counts.
+9. If a source could not be scanned, the search is still kept. Discovery failures are logged and do not delete the saved search.
 
-Scheduled discovery continues every 2 hours for all active searches. Creating a search does **not** scrape sources on the device and does **not** require `POST /v1/discovery/run`.
+Scheduled discovery continues every hour for all active searches. Creating a search does **not** scrape sources on the device and does **not** require `POST /v1/discovery/run`.
 
 ### Alternative flow
 

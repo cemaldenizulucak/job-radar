@@ -1,13 +1,10 @@
 import { type Href, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
+import { Alert } from 'react-native';
 
 import { ScreenHeader } from '@/components/screen-header';
 import { ScreenScaffold } from '@/components/screen-scaffold';
-import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
 import { useJobsFilterStore } from '@/features/jobs/stores/jobs-filter.store';
-import { useTheme } from '@/hooks/use-theme';
 import { userErrorMessage } from '@/lib/api-error';
 
 import { SavedSearchForm } from '../components/saved-search-form';
@@ -17,17 +14,19 @@ import { createSavedSearch } from '../services/saved-search.service';
 import type { SavedSearchWriteInput } from '../types/search.types';
 import {
   createSubmitLock,
+  isDiscoveryPending,
   isDiscoveryWarning,
   PARTIAL_DISCOVERY_MESSAGE,
 } from '../utils/search-write';
 
 export function CreateSearchScreen() {
-  const theme = useTheme();
   const router = useRouter();
   const setSavedSearchId = useJobsFilterStore((state) => state.setSavedSearchId);
   const bumpSearchCatalog = useJobsFilterStore((state) => state.bumpSearchCatalog);
+  const beginPendingDiscovery = useJobsFilterStore(
+    (state) => state.beginPendingDiscovery,
+  );
   const [formError, setFormError] = useState<string | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
   const submitLock = useRef(createSubmitLock()).current;
 
   const onSubmit = async (input: SavedSearchWriteInput) => {
@@ -36,12 +35,14 @@ export function CreateSearchScreen() {
     }
 
     setFormError(null);
-    setIsScanning(input.isActive);
 
     try {
       const result = await createSavedSearch(input);
       setSavedSearchId(result.search.id);
       bumpSearchCatalog();
+      if (isDiscoveryPending(result.discovery.status)) {
+        beginPendingDiscovery(result.search.id);
+      }
       if (isDiscoveryWarning(result.discovery.status)) {
         Alert.alert(searchesCopy.savedAlertTitle, PARTIAL_DISCOVERY_MESSAGE);
       }
@@ -50,7 +51,6 @@ export function CreateSearchScreen() {
       setFormError(userErrorMessage(error, searchesCopy.createError));
     } finally {
       submitLock.release();
-      setIsScanning(false);
     }
   };
 
@@ -61,35 +61,12 @@ export function CreateSearchScreen() {
         title={searchesCopy.createTitle}
         subtitle={searchesCopy.createSubtitle}
       />
-      <View>
-        <SavedSearchForm
-          submitLabel={searchesCopy.saveSearch}
-          submittingLabel={searchesCopy.scanning}
-          formError={formError}
-          onSubmit={onSubmit}
-        />
-        {isScanning ? (
-          <View
-            pointerEvents="auto"
-            style={[styles.scanning, { backgroundColor: theme.background }]}>
-            <ActivityIndicator color={theme.accent} />
-            <ThemedText type="smallBold">{searchesCopy.scanning}</ThemedText>
-            <ThemedText type="meta" themeColor="textSecondary">
-              {searchesCopy.scanningHint}
-            </ThemedText>
-          </View>
-        ) : null}
-      </View>
+      <SavedSearchForm
+        submitLabel={searchesCopy.saveSearch}
+        submittingLabel={searchesCopy.saveSearch}
+        formError={formError}
+        onSubmit={onSubmit}
+      />
     </ScreenScaffold>
   );
 }
-
-const styles = StyleSheet.create({
-  scanning: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.two,
-    padding: Spacing.four,
-  },
-});

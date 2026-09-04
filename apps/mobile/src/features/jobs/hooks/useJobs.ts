@@ -31,7 +31,7 @@ export function useJobs(
     seenUserIdRef.current = userId;
   }, [userId]);
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (options?: { silent?: boolean }) => {
     if (!userId) {
       setItems([]);
       setError(jobsCopy.signedInRequired);
@@ -39,7 +39,9 @@ export function useJobs(
       return;
     }
 
-    setIsLoading(true);
+    if (!options?.silent) {
+      setIsLoading(true);
+    }
     setError(null);
 
     try {

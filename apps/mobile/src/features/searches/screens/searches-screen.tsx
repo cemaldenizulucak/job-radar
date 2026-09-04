@@ -26,6 +26,7 @@ import {
   DELETE_SAVED_SEARCH_MESSAGE,
   DELETE_SAVED_SEARCH_TITLE,
   createSubmitLock,
+  isDiscoveryPending,
   isDiscoveryWarning,
   PARTIAL_DISCOVERY_MESSAGE,
 } from '../utils/search-write';
@@ -41,6 +42,9 @@ export function SearchesScreen() {
     (state) => state.clearSavedSearchIfSelected,
   );
   const bumpSearchCatalog = useJobsFilterStore((state) => state.bumpSearchCatalog);
+  const beginPendingDiscovery = useJobsFilterStore(
+    (state) => state.beginPendingDiscovery,
+  );
   const matchCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const job of jobs) {
@@ -77,6 +81,9 @@ export function SearchesScreen() {
 
       try {
         const result = await toggleActive(search.id, isActive);
+        if (isDiscoveryPending(result.discovery.status)) {
+          beginPendingDiscovery(result.search.id);
+        }
         if (isActive && isDiscoveryWarning(result.discovery.status)) {
           setActionError(PARTIAL_DISCOVERY_MESSAGE);
         }
@@ -90,7 +97,7 @@ export function SearchesScreen() {
         actionLock.release();
       }
     },
-    [actionLock, bumpSearchCatalog, refetchJobs, toggleActive],
+    [actionLock, beginPendingDiscovery, bumpSearchCatalog, refetchJobs, toggleActive],
   );
 
   const handleDelete = useCallback(async () => {

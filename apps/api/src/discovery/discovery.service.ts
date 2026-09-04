@@ -32,7 +32,11 @@ import {
 import { DiscoveryRunGate } from './discovery-run-gate.js';
 import {
   EMPTY_DISCOVERY_SUMMARY,
+  FAILED_DISCOVERY_RESULT,
+  PENDING_DISCOVERY_RESULT,
+  toImmediateDiscoveryResult,
   type DiscoveryRunSummary,
+  type ImmediateDiscoveryResult,
 } from './discovery.types.js';
 import { normalizeSourceJob } from './job-normalizer.js';
 
@@ -47,6 +51,7 @@ type SearchSourceFetchStat = {
 export class DiscoveryService {
   private readonly logger = new Logger(DiscoveryService.name);
   private readonly runGate = new DiscoveryRunGate();
+  private readonly immediateRuns = new Map<string, ImmediateDiscoveryResult>();
 
   constructor(
     @Inject(forwardRef(() => SearchesService))
@@ -79,6 +84,34 @@ export class DiscoveryService {
     return this.runGate.runForSearch(savedSearch.id, () =>
       this.execute([savedSearch], { markStale: false }),
     );
+  }
+
+  getImmediateRun(savedSearchId: string): ImmediateDiscoveryResult | null {
+    return this.immediateRuns.get(savedSearchId) ?? null;
+  }
+
+  enqueueForSavedSearch(savedSearch: SavedSearch): ImmediateDiscoveryResult {
+    this.immediateRuns.set(savedSearch.id, PENDING_DISCOVERY_RESULT);
+    void this.runEnqueuedSearch(savedSearch);
+    return PENDING_DISCOVERY_RESULT;
+  }
+
+  private async runEnqueuedSearch(savedSearch: SavedSearch): Promise<void> {
+    try {
+      const summary = await this.runForSavedSearch(savedSearch);
+      this.immediateRuns.set(
+        savedSearch.id,
+        toImmediateDiscoveryResult(summary),
+      );
+    } catch (error) {
+      this.logger.error({
+        message: 'Background discovery failed after the search was saved',
+        savedSearchId: savedSearch.id,
+        userId: savedSearch.userId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+      this.immediateRuns.set(savedSearch.id, FAILED_DISCOVERY_RESULT);
+    }
   }
 
   private async execute(

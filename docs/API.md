@@ -207,7 +207,7 @@ Body: `name`, `keywords`, `technologies`, `locations`, `workTypes`, `sources`, o
 
 Validate with shared Zod. `sources` must be non-empty and members of the catalog. Unknown sources are rejected. Disabled-but-catalogued sources (LinkedIn, Kariyer.net) **are allowed on the search** so the user can express intent; discovery will skip them until adapters are enabled.
 
-If `isActive` is true, the API runs discovery **for that saved search only** (LinkedIn and Kariyer.net according to `sources`) before returning. Other users’ searches are not scanned. Source failures do not roll back the created search.
+If `isActive` is true, the API enqueues discovery **for that saved search only** and returns `discovery.status: pending` without waiting for the crawl. Other users’ searches are not scanned. Source failures do not roll back the created search. Poll `GET /v1/searches/:id` for the latest `discovery` object (`pending`, `completed`, `partial`, `failed`, or omitted when idle).
 
 Response:
 
@@ -215,14 +215,14 @@ Response:
 {
   "search": { "id": "...", "name": "angular", "isActive": true },
   "discovery": {
-    "status": "completed",
-    "jobsFetched": 12,
-    "matchesCreated": 4
+    "status": "pending",
+    "jobsFetched": 0,
+    "matchesCreated": 0
   }
 }
 ```
 
-`discovery.status` is `completed`, `partial`, `failed`, or `skipped` (inactive search). Mobile waits for this response so it knows the initial scan finished.
+`discovery.status` is `pending`, `completed`, `partial`, `failed`, or `skipped` (inactive search). Mobile does not wait for the crawl to finish before opening Jobs.
 
 #### `GET /v1/searches/:id`
 

@@ -4,7 +4,6 @@ import {
   Delete,
   Get,
   Inject,
-  Logger,
   Param,
   Patch,
   Post,
@@ -14,12 +13,7 @@ import {
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { DiscoveryService } from '../discovery/discovery.service.js';
-import {
-  FAILED_DISCOVERY_RESULT,
-  SKIPPED_DISCOVERY_RESULT,
-  toImmediateDiscoveryResult,
-  type ImmediateDiscoveryResult,
-} from '../discovery/discovery.types.js';
+import { SKIPPED_DISCOVERY_RESULT } from '../discovery/discovery.types.js';
 import { ProfilesService } from '../profiles/profiles.service.js';
 import { shouldTriggerSavedSearchDiscovery } from './search-discovery.js';
 import { SearchesService } from './searches.service.js';
@@ -36,8 +30,6 @@ import {
 
 @Controller('v1/searches')
 export class SearchesController {
-  private readonly logger = new Logger(SearchesController.name);
-
   constructor(
     private readonly searchesService: SearchesService,
     @Inject(forwardRef(() => DiscoveryService))
@@ -53,7 +45,11 @@ export class SearchesController {
       this.searchesService.listForUser(user.id),
       this.profilesService.getByUserId(user.id),
     ]);
-    return { items: items.map((item) => toSavedSearchResponse(item, profile)) };
+    return {
+      items: items.map((item) =>
+        this.toSearchResponse(item, profile),
+      ),
+    };
   }
 
   @Post()
@@ -80,7 +76,7 @@ export class SearchesController {
       this.searchesService.getByIdForUser(user.id, id),
       this.profilesService.getByUserId(user.id),
     ]);
-    return toSavedSearchResponse(search, profile);
+    return this.toSearchResponse(search, profile);
   }
 
   @Patch(':id/toggle')
@@ -128,33 +124,27 @@ export class SearchesController {
     return { ok: true };
   }
 
+  private toSearchResponse(
+    search: SavedSearch,
+    profile: Awaited<ReturnType<ProfilesService['getByUserId']>>,
+  ): SavedSearchResponse {
+    return toSavedSearchResponse(search, profile, {
+      discovery: this.discoveryService.getImmediateRun(search.id),
+    });
+  }
+
   private async withDiscovery(
     search: SavedSearch,
     shouldRun: boolean,
   ): Promise<SavedSearchWriteResponse> {
     const profile = await this.profilesService.getByUserId(search.userId);
+    const discovery = shouldRun
+      ? this.discoveryService.enqueueForSavedSearch(search)
+      : SKIPPED_DISCOVERY_RESULT;
 
     return {
-      search: toSavedSearchResponse(search, profile),
-      discovery: shouldRun
-        ? await this.runDiscovery(search)
-        : SKIPPED_DISCOVERY_RESULT,
+      search: toSavedSearchResponse(search, profile, { discovery }),
+      discovery,
     };
-  }
-
-  private async runDiscovery(
-    search: SavedSearch,
-  ): Promise<ImmediateDiscoveryResult> {
-    try {
-      const summary = await this.discoveryService.runForSavedSearch(search);
-      return toImmediateDiscoveryResult(summary);
-    } catch (error) {
-      this.logger.error({
-        message: 'Immediate discovery failed after the search was saved',
-        savedSearchId: search.id,
-        error: error instanceof Error ? error.message : 'unknown',
-      });
-      return FAILED_DISCOVERY_RESULT;
-    }
   }
 }

@@ -1031,4 +1031,115 @@ describe('DiscoveryService', () => {
       },
     ]);
   });
+
+  it('matches a new bilgisayar search against catalog jobs before the next crawl', async () => {
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'linkedin',
+      sourceJobId: 'existing-computer',
+      title: 'Bilgisayar Mühendisi',
+      companyName: 'Catalog Co',
+      titleNormalized: 'bilgisayar muhendisi',
+      companyNormalized: 'catalog co',
+      location: 'Ankara',
+      workModel: 'onsite',
+      experienceLevel: 'mid',
+      technologies: [],
+      description: 'Donanım ve yazılım',
+      canonicalUrl: 'https://example.com/bilgisayar',
+      publishedAt: null,
+      isActive: true,
+    });
+
+    const emptyAdapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'linkedin', jobs: [] }),
+    };
+
+    const target = search({
+      id: 'search-bilgisayar',
+      keywords: ['bilgisayar'],
+      locations: [],
+      sourceIds: ['linkedin'],
+    });
+    const { discovery } = createDiscovery([target], [emptyAdapter], jobs);
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(result.jobsFetched).toBe(0);
+    expect(result.matchesCreated).toBe(1);
+    expect(jobs.matches).toEqual([
+      {
+        jobId: sourceListingIdentity('linkedin', 'existing-computer'),
+        savedSearchId: 'search-bilgisayar',
+      },
+    ]);
+  });
+
+  it('enqueues background discovery and marks the run pending until it finishes', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const adapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        await gate;
+        return { sourceId: 'linkedin', jobs: [] };
+      },
+    };
+    const target = search({ sourceIds: ['linkedin'] });
+    const { discovery } = createDiscovery([target], [adapter]);
+
+    const queued = discovery.enqueueForSavedSearch(target);
+
+    expect(queued.status).toBe('pending');
+    expect(discovery.getImmediateRun(target.id)?.status).toBe('pending');
+
+    release();
+    await vi.waitFor(() => {
+      expect(discovery.getImmediateRun(target.id)?.status).toBe('completed');
+    });
+  });
+
+  it('keeps a failed background discovery status without deleting the search', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        throw new Error('linkedin unavailable');
+      },
+    };
+    const target = search({ sourceIds: ['linkedin'] });
+    const { discovery } = createDiscovery([target], [adapter]);
+
+    discovery.enqueueForSavedSearch(target);
+
+    await vi.waitFor(() => {
+      expect(discovery.getImmediateRun(target.id)?.status).toBe('failed');
+    });
+  });
 });

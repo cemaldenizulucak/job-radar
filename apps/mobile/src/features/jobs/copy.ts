@@ -16,6 +16,8 @@ export const jobsCopy = {
   matchedShort: 'Eşleşti',
   notMatched: 'Eşleşmedi',
   loadingFeed: 'İlanlar yükleniyor...',
+  searchingFeed: 'İlanlar aranıyor...',
+  searchingFeedHint: 'Yeni aramanız için ilanlar taranıyor.',
   feedError: 'İlanlar yüklenemedi.',
   retry: 'Tekrar Dene',
   signedInRequired: 'Oturum açmanız gerekiyor.',

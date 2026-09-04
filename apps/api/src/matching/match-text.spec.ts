@@ -10,6 +10,10 @@ describe('queryAppearsIn', () => {
     expect(queryAppearsIn('Gıda Mühendisi', 'GIDA')).toBe(true);
     expect(queryAppearsIn('Gıda Mühendisi', 'mühendis')).toBe(true);
     expect(queryAppearsIn('İstanbul(Asya)', 'istanbul')).toBe(true);
+    expect(queryAppearsIn('Bilgisayar Mühendisi', 'bilgisayar')).toBe(true);
+    expect(
+      queryAppearsIn('Yazılım uzmanı, bilgisayar laboratuvarı', 'BİLGİSAYAR'),
+    ).toBe(true);
   });
 
   it('collapses hyphens so frontend matches Front-End', () => {

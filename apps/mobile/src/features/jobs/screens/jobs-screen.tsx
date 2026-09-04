@@ -1,6 +1,6 @@
 import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { ChipTabs } from '@/components/chip-tabs';
 import { EmptyState } from '@/components/empty-state';
@@ -19,6 +19,7 @@ import { JobListSkeleton } from '../components/job-list-skeleton';
 import { JobsHeader } from '../components/jobs-header';
 import { jobsCopy, jobsEmptyMessage } from '../copy';
 import { useJobs } from '../hooks/useJobs';
+import { usePendingDiscovery } from '../hooks/usePendingDiscovery';
 import { useJobsFilterStore, type JobsResultsView } from '../stores/jobs-filter.store';
 import type { JobListItem } from '../types/job.types';
 import {
@@ -71,6 +72,7 @@ export function JobsScreen() {
     userId,
     resultsView === 'matched',
   );
+  const isDiscovering = usePendingDiscovery(refetch);
   const { items: favorites, refetch: refetchFavorites } = useFavorites(userId);
   const { unreadCount, refetch: refetchNotifications } = useNotifications(userId);
   const { items: searches, refetch: refetchSearches } = useSavedSearches();
@@ -146,11 +148,13 @@ export function JobsScreen() {
       <JobsHeader
         lastScanLabel={isLoading ? '…' : error ? '—' : lastScanLabel}
         statusLabel={
-          isLoading
-            ? jobsCopy.loadingFeed
-            : error
-              ? jobsCopy.feedError
-              : jobsCopy.jobsLoaded
+          isDiscovering
+            ? jobsCopy.searchingFeed
+            : isLoading
+              ? jobsCopy.loadingFeed
+              : error
+                ? jobsCopy.feedError
+                : jobsCopy.jobsLoaded
         }
         unreadNotificationCount={unreadCount}
         totalCount={countJobsBySource(items, 'all')}
@@ -205,7 +209,19 @@ export function JobsScreen() {
         </View>
       ) : null}
 
-      {isLoading ? <JobListSkeleton /> : null}
+      {isDiscovering ? (
+        <View style={styles.searching}>
+          <ActivityIndicator color={theme.accent} />
+          <ThemedText type="smallBold">{jobsCopy.searchingFeed}</ThemedText>
+          <ThemedText type="meta" themeColor="textSecondary">
+            {jobsCopy.searchingFeedHint}
+          </ThemedText>
+        </View>
+      ) : null}
+
+      {isLoading && !isDiscovering && jobs.length === 0 ? (
+        <JobListSkeleton />
+      ) : null}
 
       {error ? (
         <ErrorState
@@ -216,11 +232,11 @@ export function JobsScreen() {
         />
       ) : null}
 
-      {!isLoading && !error && emptyMessage ? (
+      {!isLoading && !error && !isDiscovering && emptyMessage ? (
         <EmptyState title={emptyMessage} />
       ) : null}
 
-      {!isLoading && !error && jobs.length > 0 ? (
+      {!error && jobs.length > 0 ? (
         <View style={styles.list}>
           {jobs.map((job) => (
             <JobCard
@@ -242,6 +258,11 @@ export function JobsScreen() {
 const styles = StyleSheet.create({
   section: {
     gap: Spacing.one,
+  },
+  searching: {
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.four,
   },
   list: {
     gap: Spacing.three,

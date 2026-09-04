@@ -58,7 +58,7 @@ HTML parsing is **fragile**. Markup changes should fail with `SourceParseError`,
 | `KARIYER_NET_MAX_PAGES` | `10` |
 | `JOB_SOURCE_MAX_AGE_DAYS` | `30` |
 | `JOB_INACTIVE_AFTER_DAYS` | `7` |
-| `DISCOVERY_INTERVAL_HOURS` | `2` |
+| `DISCOVERY_INTERVAL_HOURS` | `1` |
 
 Local live check (API already running, `ENABLE_DEV_ENDPOINTS=true`):
 
@@ -81,7 +81,7 @@ KARIYER_NET_PROVIDER=mock
 - Pages: first page omits `cp`; later pages use `cp=2`, `cp=3`, …
 - Sequential only, with `KARIYER_NET_REQUEST_DELAY_MS` between requests
 - Stop when the oldest reliably parsed `publishedAt` on the page is older than `JOB_SOURCE_MAX_AGE_DAYS`, the page is empty, `KARIYER_NET_MAX_PAGES` is reached, or a later page is blocked after a successful page (`blocked_after_success`)
-- **First-page rolling collection:** Kariyer.net often blocks pagination. Discovery runs every `DISCOVERY_INTERVAL_HOURS` (default 2). Each run observes current page 1; previously seen jobs stay in the database. Listings stay `is_active` until `JOB_INACTIVE_AFTER_DAYS` (default 7) without being seen. The feed shows active jobs published within `JOB_SOURCE_MAX_AGE_DAYS` (default 30), including rows with unknown `published_at`. A single run does not need to fetch the full 30-day catalog.
+- **First-page rolling collection:** Kariyer.net often blocks pagination. Discovery runs every `DISCOVERY_INTERVAL_HOURS` (default 1). Each run observes current page 1; previously seen jobs stay in the database. Listings stay `is_active` until `JOB_INACTIVE_AFTER_DAYS` (default 7) without being seen. The feed shows active jobs published within `JOB_SOURCE_MAX_AGE_DAYS` (default 30), including rows with unknown `published_at`. A single run does not need to fetch the full 30-day catalog.
 - Work type and experience are **not** encoded; JobRadar matching applies them after ingest
 
 ### Parser

@@ -29,6 +29,7 @@ import {
   DELETE_SAVED_SEARCH_MESSAGE,
   DELETE_SAVED_SEARCH_TITLE,
   createSubmitLock,
+  isDiscoveryPending,
   isDiscoveryWarning,
   PARTIAL_DISCOVERY_MESSAGE,
 } from '../utils/search-write';
@@ -50,6 +51,9 @@ export function SearchDetailScreen() {
     (state) => state.clearSavedSearchIfSelected,
   );
   const bumpSearchCatalog = useJobsFilterStore((state) => state.bumpSearchCatalog);
+  const beginPendingDiscovery = useJobsFilterStore(
+    (state) => state.beginPendingDiscovery,
+  );
   const matchCount = useMemo(
     () =>
       search
@@ -74,6 +78,9 @@ export function SearchDetailScreen() {
 
     try {
       const result = await toggleSavedSearchActive(search.id, isActive);
+      if (isDiscoveryPending(result.discovery.status)) {
+        beginPendingDiscovery(result.search.id);
+      }
       if (isActive && isDiscoveryWarning(result.discovery.status)) {
         setActionError(PARTIAL_DISCOVERY_MESSAGE);
       }

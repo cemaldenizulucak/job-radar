@@ -1,9 +1,5 @@
 import type { AuthenticatedUser } from '../auth/auth.types.js';
 import { DiscoveryService } from '../discovery/discovery.service.js';
-import {
-  EMPTY_DISCOVERY_SUMMARY,
-  type DiscoveryRunSummary,
-} from '../discovery/discovery.types.js';
 import { SearchesController } from './searches.controller.js';
 import { SearchesService } from './searches.service.js';
 import type { SavedSearch } from './searches.types.js';
@@ -40,29 +36,13 @@ const createBody = {
   isActive: true,
 };
 
-function completedSummary(
-  overrides: Partial<DiscoveryRunSummary> = {},
-): DiscoveryRunSummary {
-  return {
-    ...EMPTY_DISCOVERY_SUMMARY,
-    searchesProcessed: 1,
-    jobsFetched: 4,
-    jobsInserted: 4,
-    matchesCreated: 3,
-    sourceAttempts: 2,
-    sourceFailures: 0,
-    ...overrides,
-  };
-}
-
 function createController(options: {
   created?: SavedSearch;
   previous?: SavedSearch;
   updated?: SavedSearch;
-  discovery?: DiscoveryRunSummary | Error;
 }): {
   controller: SearchesController;
-  discovery: { runForSavedSearch: ReturnType<typeof vi.fn> };
+  discovery: { enqueueForSavedSearch: ReturnType<typeof vi.fn> };
   searches: {
     createForUser: ReturnType<typeof vi.fn>;
     getByIdForUser: ReturnType<typeof vi.fn>;
@@ -78,10 +58,12 @@ function createController(options: {
     toggleActiveForUser: vi.fn().mockResolvedValue(options.updated ?? created),
   };
   const discovery = {
-    runForSavedSearch:
-      options.discovery instanceof Error
-        ? vi.fn().mockRejectedValue(options.discovery)
-        : vi.fn().mockResolvedValue(options.discovery ?? completedSummary()),
+    enqueueForSavedSearch: vi.fn().mockReturnValue({
+      status: 'pending',
+      jobsFetched: 0,
+      matchesCreated: 0,
+    }),
+    getImmediateRun: vi.fn().mockReturnValue(null),
   };
 
   return {
@@ -106,7 +88,7 @@ function createController(options: {
 }
 
 describe('SearchesController immediate discovery', () => {
-  it('creates an active search and discovers only that search', async () => {
+  it('creates an active search and enqueues discovery for that search only', async () => {
     const created = search();
     const { controller, discovery, searches } = createController({ created });
 
@@ -120,14 +102,22 @@ describe('SearchesController immediate discovery', () => {
         locations: ['izmir'],
       }),
     );
-    expect(discovery.runForSavedSearch).toHaveBeenCalledTimes(1);
-    expect(discovery.runForSavedSearch).toHaveBeenCalledWith(created);
+    expect(discovery.enqueueForSavedSearch).toHaveBeenCalledTimes(1);
+    expect(discovery.enqueueForSavedSearch).toHaveBeenCalledWith(created);
     expect(result).toEqual({
-      search: expect.objectContaining({ id: 'search-1', name: 'angular' }),
+      search: expect.objectContaining({
+        id: 'search-1',
+        name: 'angular',
+        discovery: {
+          status: 'pending',
+          jobsFetched: 0,
+          matchesCreated: 0,
+        },
+      }),
       discovery: {
-        status: 'completed',
-        jobsFetched: 4,
-        matchesCreated: 3,
+        status: 'pending',
+        jobsFetched: 0,
+        matchesCreated: 0,
       },
     });
   });
@@ -142,7 +132,7 @@ describe('SearchesController immediate discovery', () => {
       isActive: false,
     });
 
-    expect(discovery.runForSavedSearch).not.toHaveBeenCalled();
+    expect(discovery.enqueueForSavedSearch).not.toHaveBeenCalled();
     expect(result.discovery.status).toBe('skipped');
   });
 
@@ -153,8 +143,8 @@ describe('SearchesController immediate discovery', () => {
 
     const result = await controller.toggle(user, 'search-1', { isActive: true });
 
-    expect(discovery.runForSavedSearch).toHaveBeenCalledWith(updated);
-    expect(result.discovery.status).toBe('completed');
+    expect(discovery.enqueueForSavedSearch).toHaveBeenCalledWith(updated);
+    expect(result.discovery.status).toBe('pending');
   });
 
   it('discovers when keywords change', async () => {
@@ -167,7 +157,7 @@ describe('SearchesController immediate discovery', () => {
       keywords: ['react'],
     });
 
-    expect(discovery.runForSavedSearch).toHaveBeenCalledWith(updated);
+    expect(discovery.enqueueForSavedSearch).toHaveBeenCalledWith(updated);
   });
 
   it('discovers when location changes', async () => {
@@ -180,7 +170,7 @@ describe('SearchesController immediate discovery', () => {
       locations: ['istanbul'],
     });
 
-    expect(discovery.runForSavedSearch).toHaveBeenCalledWith(updated);
+    expect(discovery.enqueueForSavedSearch).toHaveBeenCalledWith(updated);
   });
 
   it('does not discover when only the name changes', async () => {
@@ -193,44 +183,25 @@ describe('SearchesController immediate discovery', () => {
       name: 'Angular jobs',
     });
 
-    expect(discovery.runForSavedSearch).not.toHaveBeenCalled();
+    expect(discovery.enqueueForSavedSearch).not.toHaveBeenCalled();
     expect(result.discovery.status).toBe('skipped');
   });
 
-  it('keeps the created search when a source fails during discovery', async () => {
+  it('keeps the created search when discovery is only enqueued in the background', async () => {
     const created = search();
-    const { controller, searches } = createController({
+    const { controller, searches, discovery } = createController({
       created,
-      discovery: new Error('linkedin unavailable'),
     });
 
     const result = await controller.create(user, createBody);
 
     expect(searches.createForUser).toHaveBeenCalled();
+    expect(discovery.enqueueForSavedSearch).toHaveBeenCalledWith(created);
     expect(result.search.id).toBe('search-1');
     expect(result.discovery).toEqual({
-      status: 'failed',
+      status: 'pending',
       jobsFetched: 0,
       matchesCreated: 0,
-    });
-  });
-
-  it('reports partial discovery when some sources fail', async () => {
-    const { controller } = createController({
-      discovery: completedSummary({
-        sourceAttempts: 2,
-        sourceFailures: 1,
-        jobsFetched: 3,
-        matchesCreated: 2,
-      }),
-    });
-
-    const result = await controller.create(user, createBody);
-
-    expect(result.discovery).toEqual({
-      status: 'partial',
-      jobsFetched: 3,
-      matchesCreated: 2,
     });
   });
 });

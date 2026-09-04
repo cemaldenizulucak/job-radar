@@ -110,6 +110,29 @@ describe('MatchingService generic text matching', () => {
     ).toBe(true);
   });
 
+  it('matches bilgisayar in the title or description without a role family', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Bilgisayar Mühendisi',
+          description: null,
+          technologies: [],
+        }),
+        search({ keywords: ['bilgisayar'] }),
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Yazılım Uzmanı',
+          description: 'BİLGİSAYAR laboratuvarı deneyimi',
+          technologies: [],
+        }),
+        search({ keywords: ['Bilgisayar'] }),
+      ),
+    ).toBe(true);
+  });
+
   it('matches a phrase inside a longer English sentence', () => {
     expect(
       matcher.jobMatchesSearch(

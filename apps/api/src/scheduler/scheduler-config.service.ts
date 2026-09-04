@@ -43,7 +43,7 @@ export class SchedulerConfigService {
 
 export function toIntervalCron(intervalHours: number): string {
   const hours = Math.min(24, Math.max(1, Math.floor(intervalHours)));
-  return `0 */${hours} * * *`;
+  return hours === 1 ? '0 * * * *' : `0 */${hours} * * *`;
 }
 
 export function isDiscoverySchedulerEnabled(

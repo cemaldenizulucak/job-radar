@@ -2,13 +2,12 @@ import { z } from 'zod';
 
 import { ApiClientError, apiGet, apiPatch, apiPost, apiDelete } from '@/lib/api-client';
 
-import type { SavedSearch, SavedSearchWriteInput, SearchSourceId, WorkType } from '../types/search.types';
+import type { SavedSearch, SavedSearchWriteInput, SearchDiscoveryResult, SearchSourceId, WorkType } from '../types/search.types';
 import {
   savedSearchWriteSchema,
   SEARCH_SOURCE_IDS,
   WORK_TYPES,
 } from '../validation/search.schema';
-import type { SearchDiscoveryResult } from '../utils/search-write';
 
 export class SavedSearchServiceError extends Error {
   constructor(message: string) {
@@ -21,6 +20,12 @@ export type SavedSearchWriteResult = {
   search: SavedSearch;
   discovery: SearchDiscoveryResult;
 };
+
+const searchDiscoveryApiSchema = z.object({
+  status: z.enum(['pending', 'completed', 'partial', 'failed', 'skipped']),
+  jobsFetched: z.number(),
+  matchesCreated: z.number(),
+});
 
 const savedSearchApiSchema = z.object({
   id: z.string(),
@@ -39,14 +44,9 @@ const savedSearchApiSchema = z.object({
   sources: z.array(z.string()),
   effectiveLocation: z.string().nullable().optional(),
   locationSource: z.enum(['search', 'profile', 'none']).optional(),
+  discovery: searchDiscoveryApiSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
-});
-
-const searchDiscoveryApiSchema = z.object({
-  status: z.enum(['completed', 'partial', 'failed', 'skipped']),
-  jobsFetched: z.number(),
-  matchesCreated: z.number(),
 });
 
 const savedSearchWriteApiSchema = z.object({
@@ -85,6 +85,7 @@ function mapSearch(row: z.infer<typeof savedSearchApiSchema>): SavedSearch {
     effectiveLocation: row.effectiveLocation ?? null,
     locationSource:
       row.locationSource ?? (row.locations.length > 0 ? 'search' : 'none'),
+    discovery: row.discovery,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

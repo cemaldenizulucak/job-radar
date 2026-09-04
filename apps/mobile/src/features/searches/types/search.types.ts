@@ -4,6 +4,19 @@ export type SearchSourceId = 'linkedin' | 'kariyer_net';
 
 export type WorkType = 'remote' | 'hybrid' | 'onsite';
 
+export type SearchDiscoveryStatus =
+  | 'pending'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'skipped';
+
+export type SearchDiscoveryResult = {
+  status: SearchDiscoveryStatus;
+  jobsFetched: number;
+  matchesCreated: number;
+};
+
 export type SavedSearch = {
   id: string;
   userId: string;
@@ -21,6 +34,7 @@ export type SavedSearch = {
   sources: readonly SearchSourceId[];
   effectiveLocation: string | null;
   locationSource: SearchLocationOrigin;
+  discovery?: SearchDiscoveryResult;
   createdAt: string;
   updatedAt: string;
 };

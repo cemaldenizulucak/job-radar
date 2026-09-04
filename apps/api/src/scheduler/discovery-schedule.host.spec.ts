@@ -14,8 +14,8 @@ function createHost(
     {
       isEnabled: () => enabled,
       getTimezone: () => DEFAULT_SCHEDULER_TIMEZONE,
-      getCron: () => '0 */2 * * *',
-      getIntervalHours: () => 2,
+      getCron: () => '0 * * * *',
+      getIntervalHours: () => 1,
     } as SchedulerConfigService,
     {
       runScheduled: async () => undefined,
