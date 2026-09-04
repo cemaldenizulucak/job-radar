@@ -17,6 +17,24 @@ describe('normalizeCountries', () => {
     ]);
   });
 
+  it('reads REST Countries v5 codes and Turkish translations', () => {
+    expect(
+      normalizeCountries({
+        data: [
+          {
+            codes: { alpha_2: 'TR' },
+            names: {
+              common: 'Turkey',
+              translations: {
+                tur: { common: 'Türkiye', official: 'Türkiye Cumhuriyeti' },
+              },
+            },
+          },
+        ],
+      }),
+    ).toEqual([{ code: 'TR', name: 'Türkiye' }]);
+  });
+
   it('reads restcountries-style native names', () => {
     expect(
       normalizeCountries([

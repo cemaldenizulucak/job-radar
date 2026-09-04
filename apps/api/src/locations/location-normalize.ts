@@ -1,11 +1,36 @@
 import type { LocationCountry, LocationSubdivision } from './locations.types.js';
 
+export function sortLocationItems<T extends { name: string }>(
+  items: readonly T[],
+): T[] {
+  return [...items].sort((left, right) =>
+    left.name.localeCompare(right.name, 'tr'),
+  );
+}
+
+export function mergeCountryCatalogs(
+  fallback: readonly LocationCountry[],
+  remote: readonly LocationCountry[],
+): LocationCountry[] {
+  const byCode = new Map<string, LocationCountry>();
+
+  for (const item of remote) {
+    byCode.set(item.code, item);
+  }
+
+  for (const item of fallback) {
+    byCode.set(item.code, item);
+  }
+
+  return sortLocationItems([...byCode.values()]);
+}
+
 export function normalizeCountries(value: unknown): LocationCountry[] {
   const rows = asRecords(value);
   const byCode = new Map<string, LocationCountry>();
 
   for (const row of rows) {
-    const code = readCode(row, ['iso2', 'cca2', 'code', 'country_code']);
+    const code = readCountryCode(row);
     if (!code) {
       continue;
     }
@@ -18,9 +43,7 @@ export function normalizeCountries(value: unknown): LocationCountry[] {
     byCode.set(code, { code, name });
   }
 
-  return [...byCode.values()].sort((left, right) =>
-    left.name.localeCompare(right.name, 'tr'),
-  );
+  return sortLocationItems([...byCode.values()]);
 }
 
 export function normalizeSubdivisions(
@@ -50,9 +73,7 @@ export function normalizeSubdivisions(
     byCode.set(`${needle}:${code}`, { code, name });
   }
 
-  return [...byCode.values()].sort((left, right) =>
-    left.name.localeCompare(right.name, 'tr'),
-  );
+  return sortLocationItems([...byCode.values()]);
 }
 
 function asRecords(value: unknown): Record<string, unknown>[] {
@@ -76,7 +97,26 @@ function asRecords(value: unknown): Record<string, unknown>[] {
     return value.states.filter(isRecord);
   }
 
+  if (Array.isArray(value.items)) {
+    return value.items.filter(isRecord);
+  }
+
+  if (isRecord(value.data) && Array.isArray(value.data.items)) {
+    return value.data.items.filter(isRecord);
+  }
+
   return [];
+}
+
+function readCountryCode(row: Record<string, unknown>): string | null {
+  if (isRecord(row.codes)) {
+    const nested = readCode(row.codes, ['alpha_2', 'alpha2', 'cca2']);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return readCode(row, ['iso2', 'cca2', 'code', 'country_code', 'alpha_2']);
 }
 
 function readCode(
@@ -103,6 +143,13 @@ function readName(row: Record<string, unknown>): string | null {
     return native;
   }
 
+  if (isRecord(row.names)) {
+    const fromV5 = readV5Names(row.names);
+    if (fromV5) {
+      return fromV5;
+    }
+  }
+
   const name = row.name;
   if (isRecord(name)) {
     const localized = readNativeNameMap(name.nativeName);
@@ -117,6 +164,31 @@ function readName(row: Record<string, unknown>): string | null {
   }
 
   return readNativeNameMap(row.nativeName) ?? trimName(name);
+}
+
+function readV5Names(names: Record<string, unknown>): string | null {
+  const turkish = readTurkishTranslation(names.translations);
+  if (turkish) {
+    return turkish;
+  }
+
+  if (isRecord(names.native)) {
+    const nativeName =
+      trimName(names.native.common) ?? trimName(names.native.official);
+    if (nativeName) {
+      return nativeName;
+    }
+  }
+
+  return trimName(names.common) ?? trimName(names.official);
+}
+
+function readTurkishTranslation(value: unknown): string | null {
+  if (!isRecord(value) || !isRecord(value.tur)) {
+    return null;
+  }
+
+  return trimName(value.tur.common) ?? trimName(value.tur.official);
 }
 
 function readNativeNameMap(value: unknown): string | null {

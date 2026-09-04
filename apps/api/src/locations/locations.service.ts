@@ -1,15 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { FALLBACK_COUNTRIES } from './iso-country-catalog.js';
 import { LocationCache } from './location-cache.js';
 import { LocationCatalogProvider } from './location-catalog.provider.js';
 import {
+  mergeCountryCatalogs,
   normalizeCountries,
   normalizeSubdivisions,
+  sortLocationItems,
 } from './location-normalize.js';
 import type {
   LocationCountry,
   LocationSubdivision,
 } from './locations.types.js';
+import { TURKEY_PROVINCES } from './turkey-subdivision-catalog.js';
 
 @Injectable()
 export class LocationsService {
@@ -24,16 +28,29 @@ export class LocationsService {
       return [...cached];
     }
 
+    const fallback = sortLocationItems(FALLBACK_COUNTRIES);
+
     try {
-      const items = normalizeCountries(await this.provider.fetchCountries());
+      const remote = await this.provider.fetchCountries();
+      if (remote == null) {
+        this.cache.setCountries(fallback);
+        return [...fallback];
+      }
+
+      const merged = mergeCountryCatalogs(
+        FALLBACK_COUNTRIES,
+        normalizeCountries(remote),
+      );
+      const items = merged.length > 0 ? merged : fallback;
       this.cache.setCountries(items);
-      return items;
+      return [...items];
     } catch (error) {
       this.logger.warn({
-        message: 'Country catalog unavailable; returning empty list',
+        message: 'Country provider failed; using built-in fallback catalog',
         error: error instanceof Error ? error.message : 'unknown',
       });
-      return [];
+      this.cache.setCountries(fallback);
+      return [...fallback];
     }
   }
 
@@ -65,6 +82,12 @@ export class LocationsService {
     const cached = this.cache.getSubdivisions(code);
     if (cached) {
       return [...cached];
+    }
+
+    if (code === 'TR') {
+      const items = sortLocationItems(TURKEY_PROVINCES);
+      this.cache.setSubdivisions(code, items);
+      return [...items];
     }
 
     try {
