@@ -29,6 +29,7 @@ export const jobListItemSchema = z.object({
   isMatched: z.boolean().optional(),
   isNew: z.boolean(),
   isSeen: z.boolean(),
+  isFavorite: z.boolean().optional(),
 });
 
 export const duplicateJobLinkSchema = z.object({
@@ -68,6 +69,7 @@ export const jobDetailSchema = jobListItemSchema.extend({
               field: z.enum(['title', 'description', 'technologies']),
               snippet: z.string().nullable(),
               kind: z.enum(['title', 'skill']),
+              basis: z.enum(['education_field']).optional(),
             }),
           )
           .optional(),

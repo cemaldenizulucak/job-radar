@@ -1,9 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 
-import { AppButton } from '@/components/app-button';
-import { useTheme } from '@/hooks/use-theme';
-
-import { jobsCopy } from '../copy';
+import { BackButton } from '@/components/back-button';
+import { FavoriteHeartButton } from '@/features/favorites/components/favorite-heart-button';
 
 type JobDetailHeaderProps = {
   onBack: () => void;
@@ -16,23 +14,10 @@ export function JobDetailHeader({
   isFavorite,
   onToggleFavorite,
 }: JobDetailHeaderProps) {
-  const theme = useTheme();
-
   return (
     <View style={styles.row}>
-      <AppButton label={jobsCopy.back} variant="ghost" onPress={onBack} />
-      <AppButton
-        label={isFavorite ? jobsCopy.favoriteRemove : jobsCopy.favoriteAdd}
-        variant={isFavorite ? 'secondary' : 'ghost'}
-        accessibilityLabel={
-          isFavorite ? jobsCopy.favoriteRemove : jobsCopy.favoriteAdd
-        }
-        accessibilityState={{ selected: isFavorite }}
-        onPress={onToggleFavorite}
-        style={{
-          backgroundColor: isFavorite ? theme.accentMuted : undefined,
-        }}
-      />
+      <BackButton onPress={onBack} />
+      <FavoriteHeartButton isFavorite={isFavorite} onToggle={onToggleFavorite} />
     </View>
   );
 }
@@ -42,7 +27,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    flexWrap: 'wrap',
     gap: 8,
   },
 });

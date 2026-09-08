@@ -24,7 +24,7 @@ describe('mapKariyerNetSearch', () => {
     expect(mapped).not.toHaveProperty('savedSearchId');
   });
 
-  it('includes work type and experience only when the source supports them', () => {
+  it('includes experience only when the source supports it and never workplace type', () => {
     const mapped = mapKariyerNetSearch(query, {
       supportsKeywordSearch: true,
       supportsLocation: true,
@@ -32,7 +32,7 @@ describe('mapKariyerNetSearch', () => {
       supportsExperienceLevel: true,
     });
 
-    expect(mapped.workTypes).toEqual(['hybrid', 'remote']);
+    expect(mapped.workTypes).toEqual([]);
     expect(mapped.experienceLevels).toEqual(['mid']);
   });
 

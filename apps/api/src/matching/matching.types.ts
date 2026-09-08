@@ -32,6 +32,7 @@ export type MatchEvidence = {
   field: MatchEvidenceField;
   snippet: string | null;
   kind: 'title' | 'skill';
+  basis?: 'education_field';
 };
 
 export type MatchDecision = {

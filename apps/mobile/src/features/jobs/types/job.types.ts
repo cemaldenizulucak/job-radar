@@ -25,6 +25,7 @@ export type JobListItem = {
   isMatched: boolean;
   isNew: boolean;
   isSeen: boolean;
+  isFavorite: boolean;
 };
 
 export type DuplicateJobLink = {
@@ -41,6 +42,7 @@ export type MatchedSearchEvidence = {
   field: 'title' | 'description' | 'technologies';
   snippet: string | null;
   kind: 'title' | 'skill';
+  basis?: 'education_field';
 };
 
 export type MatchedSearch = {

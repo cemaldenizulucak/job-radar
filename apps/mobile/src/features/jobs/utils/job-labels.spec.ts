@@ -22,6 +22,7 @@ function job(overrides: Partial<JobListItem>): JobListItem {
     isMatched: true,
     isNew: false,
     isSeen: true,
+    isFavorite: false,
     ...overrides,
   };
 }

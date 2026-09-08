@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
@@ -6,14 +7,18 @@ import { Spacing } from '@/constants/theme';
 type EmptyStateProps = {
   title: string;
   message?: string;
+  icon?: ReactNode;
 };
 
-export function EmptyState({ title, message }: EmptyStateProps) {
+export function EmptyState({ title, message, icon }: EmptyStateProps) {
   return (
     <View style={styles.wrap}>
-      <ThemedText type="cardTitle">{title}</ThemedText>
+      {icon ? <View style={styles.icon}>{icon}</View> : null}
+      <ThemedText type="cardTitle" style={styles.title}>
+        {title}
+      </ThemedText>
       {message ? (
-        <ThemedText type="meta" themeColor="textSecondary">
+        <ThemedText type="meta" themeColor="textSecondary" style={styles.title}>
           {message}
         </ThemedText>
       ) : null}
@@ -23,7 +28,15 @@ export function EmptyState({ title, message }: EmptyStateProps) {
 
 const styles = StyleSheet.create({
   wrap: {
-    gap: Spacing.one,
-    paddingVertical: Spacing.four,
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.five,
+    paddingHorizontal: Spacing.three,
+  },
+  icon: {
+    marginBottom: Spacing.one,
+  },
+  title: {
+    textAlign: 'center',
   },
 });

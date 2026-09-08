@@ -207,6 +207,61 @@ describe('JobsService listForUser', () => {
         companyName: 'ABC Technology',
         isSeen: false,
         isMatched: false,
+        isFavorite: false,
+      }),
+    ]);
+  });
+
+  it('attaches favorite state in bulk for the authenticated user', async () => {
+    const jobsQuery = chainableQuery({ data: [jobRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'favorites') {
+        return {
+          select: () => ({
+            eq: (column: string, value: string) => {
+              expect(column).toBe('user_id');
+              expect(value).toBe('user-1');
+              return Promise.resolve({
+                data: [{ job_id: 'job-1' }],
+                error: null,
+              });
+            },
+          }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({
+            data: [],
+            error: null,
+          });
+          return Object.assign(result, {
+            eq: () => result,
+            in: () => result,
+          });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({ userId: 'user-1' });
+
+    expect(from).toHaveBeenCalledWith('favorites');
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: 'job-1',
+        isFavorite: true,
       }),
     ]);
   });

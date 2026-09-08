@@ -32,4 +32,10 @@ describe('shouldBlockDescriptionKeyword', () => {
       shouldBlockDescriptionKeyword('Makine Mühendisi', 'JavaScript'),
     ).toBe(false);
   });
+
+  it('does not block a food-engineering graduation requirement on a quality-engineer title', () => {
+    expect(
+      shouldBlockDescriptionKeyword('Kalite Mühendisi', 'gıda mühendisi'),
+    ).toBe(false);
+  });
 });

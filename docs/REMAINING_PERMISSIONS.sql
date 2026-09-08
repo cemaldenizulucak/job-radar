@@ -37,17 +37,40 @@ create table if not exists public.profiles (
 );
 
 create index if not exists favorites_user_id_idx on public.favorites (user_id);
+create index if not exists favorites_user_job_idx on public.favorites (user_id, job_id);
 create index if not exists applications_user_id_idx on public.applications (user_id);
 
 alter table public.favorites enable row level security;
 alter table public.applications enable row level security;
 alter table public.profiles enable row level security;
 
-grant usage on schema public to service_role;
+grant usage on schema public to service_role, authenticated;
 
 grant select, insert, update, delete on table public.favorites to service_role;
+grant select, insert, delete on table public.favorites to authenticated;
 grant select, insert, update, delete on table public.applications to service_role;
 grant select, insert, update on table public.profiles to service_role;
+
+drop policy if exists favorites_select_own on public.favorites;
+create policy favorites_select_own on public.favorites
+  for select to authenticated
+  using (auth.uid() = user_id);
+
+drop policy if exists favorites_insert_own on public.favorites;
+create policy favorites_insert_own on public.favorites
+  for insert to authenticated
+  with check (auth.uid() = user_id);
+
+drop policy if exists favorites_update_own on public.favorites;
+create policy favorites_update_own on public.favorites
+  for update to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists favorites_delete_own on public.favorites;
+create policy favorites_delete_own on public.favorites
+  for delete to authenticated
+  using (auth.uid() = user_id);
 
 -- Live profiles tables may predate these columns. Safe to re-run.
 alter table public.profiles add column if not exists display_name text;

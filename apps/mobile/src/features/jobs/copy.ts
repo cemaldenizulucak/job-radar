@@ -71,6 +71,8 @@ export const jobsCopy = {
   matchKindLabel: 'Eşleşme türü',
   matchKindDirect: 'Doğrudan eşleşme',
   matchKindSkill: 'Beceri eşleşmesi',
+  matchBasisLabel: 'Neden',
+  matchBasisEducation: 'Eğitim alanı eşdeğerliği',
   matchedTermsLabel: 'Eşleşen terimler',
   matchEvidenceLabel: 'Kanıt',
 } as const;

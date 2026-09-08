@@ -4,6 +4,7 @@ import {
   tokensCoverQueryInWindow,
 } from './fuzzy-text.js';
 import { ROLE_ALIAS_PAIRS } from './role-aliases.js';
+import { professionFieldAppearsIn } from './profession-forms.js';
 import type { MatchableJob } from './matching.types.js';
 
 export type QueryMatchKind = 'phrase' | 'tokens' | 'fuzzy' | 'alias' | null;
@@ -91,6 +92,10 @@ export function queryMatchKind(haystack: string, query: string): QueryMatchKind 
   }
   if (tokenKind === 'exact' || tokenKind === 'stem') {
     return 'tokens';
+  }
+
+  if (professionFieldAppearsIn(haystack, query)) {
+    return 'alias';
   }
 
   if (needleTokens.length > 1 || needle.length >= 4) {

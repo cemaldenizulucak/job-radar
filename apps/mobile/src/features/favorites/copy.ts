@@ -1,6 +1,6 @@
 export const favoritesCopy = {
   screenTitle: 'Favoriler',
   subtitle: 'Kayıtlı ilanlar, arama duraklatılsa da burada kalır.',
-  empty: 'Henüz favorilere eklediğiniz ilan yok.',
+  empty: 'Henüz favori ilan eklemedin',
   loadError: 'Favoriler yüklenemedi.',
 } as const;

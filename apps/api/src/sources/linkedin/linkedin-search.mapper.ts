@@ -3,7 +3,7 @@ import type { LinkedInSearchInput } from './linkedin.types.js';
 
 /**
  * Maps JobRadar search criteria onto LinkedIn public query params.
- * Unsupported capabilities are omitted so matching can filter later.
+ * Workplace type is never sent. Unsupported capabilities are omitted.
  */
 export function mapLinkedInSearch(
   query: SourceSearchQuery,
@@ -16,9 +16,7 @@ export function mapLinkedInSearch(
     locations: capabilities.supportsLocation
       ? uniqueNonEmpty([...query.locations])
       : [],
-    workTypes: capabilities.supportsRemoteFilter
-      ? query.workModels.filter((model) => model !== 'unknown')
-      : [],
+    workTypes: [],
     experienceLevels: capabilities.supportsExperienceLevel
       ? uniqueNonEmpty([...query.experienceLevels])
       : [],

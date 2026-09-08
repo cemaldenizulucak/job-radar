@@ -1,4 +1,3 @@
-import type { WorkModel } from '../../common/domain.types.js';
 import { DEFAULT_JOB_SOURCE_MAX_AGE_DAYS } from '../../discovery/discovery-window.js';
 import type { LinkedInSearchInput } from './linkedin.types.js';
 import {
@@ -8,18 +7,12 @@ import {
 
 const SECONDS_PER_DAY = 86_400;
 
-const WORKPLACE_FILTER: Partial<Record<WorkModel, string>> = {
-  onsite: '1',
-  remote: '2',
-  hybrid: '3',
-};
-
 /**
  * Builds a public LinkedIn guest job-search URL.
  * keywords → `keywords`, first location → `location`,
- * max-age → `f_TPR=r{seconds}`, date-sorted `sortBy=DD`,
- * a single workplace type → `f_WT`.
- * Experience is not encoded. Pagination uses `start` (25 results per page).
+ * max-age → `f_TPR=r{seconds}`, date-sorted `sortBy=DD`.
+ * Workplace type is not encoded. Experience is not encoded.
+ * Pagination uses `start` (25 results per page).
  */
 export function buildLinkedInSearchUrl(
   input: LinkedInSearchInput,
@@ -44,12 +37,7 @@ export function buildLinkedInSearchUrl(
     url.searchParams.set('f_TPR', `r${postedSeconds}`);
   }
 
-  const workplace = workplaceFilter(input.workTypes);
   url.searchParams.set('sortBy', 'DD');
-
-  if (workplace) {
-    url.searchParams.set('f_WT', workplace);
-  }
 
   if (page > 1) {
     url.searchParams.set('start', String((page - 1) * pageSize));
@@ -67,18 +55,6 @@ export function postedSecondsForMaxAge(
   }
 
   return Math.trunc(days) * SECONDS_PER_DAY;
-}
-
-export function workplaceFilter(
-  workTypes: readonly WorkModel[],
-): string | null {
-  const distinct = [...new Set(workTypes.filter((model) => model !== 'unknown'))];
-  if (distinct.length !== 1) {
-    return null;
-  }
-
-  const code = WORKPLACE_FILTER[distinct[0] ?? 'unknown'];
-  return code ?? null;
 }
 
 function originFromBase(baseUrl: string): string {

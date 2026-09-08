@@ -88,4 +88,19 @@ describe('phraseAppearsIn', () => {
     expect(queryAppearsIn('Build guides for the product.', 'UI')).toBe(false);
     expect(queryAppearsIn('quick circuit', 'UI')).toBe(false);
   });
+
+  it('matches gıda mühendisi against gıda mühendisliği without treating gıda OR mühendis as independent', () => {
+    expect(
+      queryAppearsIn(
+        'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+        'Gıda Mühendisi',
+      ),
+    ).toBe(true);
+    expect(
+      queryAppearsIn(
+        'Gıda sektöründe çalışacak makine mühendisi',
+        'Gıda Mühendisi',
+      ),
+    ).toBe(false);
+  });
 });

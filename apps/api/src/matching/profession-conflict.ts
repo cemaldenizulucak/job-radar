@@ -1,5 +1,11 @@
 import { normalizeForSearch } from '../common/normalize-text.js';
 import { tokenizeNormalized } from './fuzzy-text.js';
+import {
+  ENGINEERING_DISCIPLINES,
+  exclusiveDisciplineInTitle,
+  parseEngineeringProfession,
+  titleHasCompetingEngineeringDiscipline,
+} from './profession-forms.js';
 import { isRoleSearchTerm } from './search-term-kind.js';
 
 /**
@@ -7,30 +13,7 @@ import { isRoleSearchTerm } from './search-term-kind.js';
  * appear in a job title with a generic role (mühendis, uzman, …).
  * This is not a company denylist.
  */
-const EXCLUSIVE_TITLE_QUALIFIERS = new Set([
-  'gida',
-  'makine',
-  'mekanik',
-  'elektrik',
-  'elektronik',
-  'insaat',
-  'kimya',
-  'cevre',
-  'endustri',
-  'metalurji',
-  'maden',
-  'petrol',
-  'ziraat',
-  'orman',
-  'harita',
-  'jeoloji',
-  'jeofizik',
-  'tekstil',
-  'gemi',
-  'havacilik',
-  'otomotiv',
-  'mekatronik',
-]);
+const EXCLUSIVE_TITLE_QUALIFIERS = ENGINEERING_DISCIPLINES;
 
 const SOFTWARE_TITLE_TOKENS = [
   'yazilim',
@@ -63,35 +46,52 @@ export function titleBlocksDescriptionKeywordMatch(
   title: string,
   terms: readonly string[],
 ): boolean {
-  const titleTokens = tokenizeNormalized(normalizeForSearch(title));
-  const hasExclusiveQualifier = titleTokens.some((token) =>
-    EXCLUSIVE_TITLE_QUALIFIERS.has(token),
-  );
-
-  if (hasExclusiveQualifier) {
+  if (terms.some((term) => titleHasCompetingEngineeringDiscipline(title, term))) {
     return true;
+  }
+
+  const hasExclusiveQualifier = Boolean(exclusiveDisciplineInTitle(title));
+  if (hasExclusiveQualifier && terms.some((term) => !parseEngineeringProfession(term))) {
+    return (
+      searchLooksLikePhysicalDiscipline(terms) ||
+      terms.some((term) => isRoleSearchTerm(term) && !parseEngineeringProfession(term))
+    );
   }
 
   return titleLooksLikeSoftware(title) && searchLooksLikePhysicalDiscipline(terms);
 }
 
 /**
- * Exclusive titles (Makine, Gıda, …) still block role/physical description
- * matches. Explicit skill tokens such as UI or JavaScript stay eligible.
+ * Competing engineering titles (Makine vs Gıda) still block description
+ * matches. Kalite Mühendisi is not a competing discipline, so an explicit
+ * Gıda Mühendisliği graduation requirement may match.
  */
 export function shouldBlockDescriptionKeyword(
   title: string,
   term: string,
 ): boolean {
-  if (!titleBlocksDescriptionKeywordMatch(title, [term])) {
-    return false;
+  if (titleHasCompetingEngineeringDiscipline(title, term)) {
+    return true;
+  }
+
+  if (titleLooksLikeSoftware(title) && searchLooksLikePhysicalDiscipline([term])) {
+    return true;
   }
 
   if (!isRoleSearchTerm(term) && !searchLooksLikePhysicalDiscipline([term])) {
     return false;
   }
 
-  return true;
+  const titleDiscipline = exclusiveDisciplineInTitle(title);
+  if (
+    titleDiscipline &&
+    searchLooksLikePhysicalDiscipline([term]) &&
+    !parseEngineeringProfession(term)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function searchLooksLikePhysicalDiscipline(terms: readonly string[]): boolean {

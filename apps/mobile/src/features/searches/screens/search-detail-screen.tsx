@@ -20,7 +20,7 @@ import { userErrorMessage } from '@/lib/api-error';
 
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { SearchBackButton } from '../components/search-back-button';
-import { searchesCopy, sourceName, workTypeLabel } from '../copy';
+import { searchesCopy, sourceName } from '../copy';
 import { useSavedSearch } from '../hooks/useSavedSearches';
 import { deleteSavedSearch, toggleSavedSearchActive } from '../services/saved-search.service';
 import type { SavedSearch } from '../types/search.types';
@@ -197,19 +197,12 @@ export function SearchDetailScreen() {
       </SectionCard>
 
       {search.technologies.length > 0 ||
-      search.workTypes.length > 0 ||
       search.experienceLevels.length > 0 ? (
         <SectionCard title={searchesCopy.sectionAdvanced}>
           {search.technologies.length > 0 ? (
             <DetailLine
               label={searchesCopy.tags}
               value={formatList(search.technologies)}
-            />
-          ) : null}
-          {search.workTypes.length > 0 ? (
-            <DetailLine
-              label={searchesCopy.workTypes}
-              value={formatList(search.workTypes.map(workTypeLabel))}
             />
           ) : null}
           {search.experienceLevels.length > 0 ? (

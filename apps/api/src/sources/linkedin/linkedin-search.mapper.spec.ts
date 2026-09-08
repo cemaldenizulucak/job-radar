@@ -12,13 +12,13 @@ const query: SourceSearchQuery = {
 };
 
 describe('mapLinkedInSearch', () => {
-  it('sends keyword, location, and workplace filters and omits experience', () => {
+  it('sends keyword and location filters and omits workplace type', () => {
     const mapped = mapLinkedInSearch(query, LINKEDIN_CAPABILITIES);
 
     expect(mapped).toEqual({
       keywords: ['frontend'],
       locations: ['Istanbul'],
-      workTypes: ['hybrid', 'remote'],
+      workTypes: [],
       experienceLevels: [],
     });
     expect(mapped).not.toHaveProperty('savedSearchId');

@@ -87,14 +87,13 @@ export class MatchingService {
     const location = this.locationResult(job, search);
     const technology = this.optionalTagResult(job, search);
     const experience = this.experienceResult(job, search);
-    const workModel = this.workModelResult(job, search);
+    const workModel = this.workModelResult();
     const reasons = rejectionReasons({
       isActive: search.isActive,
       sourceAllowed: this.matchesSources(job, search),
       keyword,
       location,
       experience,
-      workModel,
     });
     const matched = reasons.length === 0;
     const score = matched ? scoreTextMatch(job, terms) : 0;
@@ -211,20 +210,12 @@ export class MatchingService {
     );
   }
 
-  private workModelResult(
-    job: MatchableJob,
-    search: SavedSearch,
-  ): MatchFieldResult {
-    const allowed = search.workTypes.filter((model) => model !== 'unknown');
-    if (allowed.length === 0) {
-      return 'skipped';
-    }
-
-    if (!job.workModel || job.workModel === 'unknown') {
-      return 'unknown';
-    }
-
-    return allowed.includes(job.workModel) ? 'pass' : 'fail';
+  /**
+   * Saved-search workTypes are not a match filter. Unknown/unspecified
+   * listings stay eligible. Job.workModel is still stored and shown.
+   */
+  private workModelResult(): MatchFieldResult {
+    return 'skipped';
   }
 
   private experienceResult(
@@ -363,7 +354,6 @@ function rejectionReasons(input: {
   keyword: MatchFieldResult;
   location: MatchFieldResult;
   experience: MatchFieldResult;
-  workModel: MatchFieldResult;
 }): string[] {
   const reasons: string[] = [];
 
@@ -385,14 +375,6 @@ function rejectionReasons(input: {
 
   if (input.experience === 'fail') {
     reasons.push('experience conflict');
-  }
-
-  if (input.workModel === 'fail') {
-    reasons.push('work model mismatch');
-  }
-
-  if (input.workModel === 'unknown') {
-    reasons.push('work model unknown');
   }
 
   return reasons;

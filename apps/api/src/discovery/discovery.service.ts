@@ -12,6 +12,7 @@ import { JobsService } from '../jobs/jobs.service.js';
 import type { NormalizedJob } from '../jobs/jobs.types.js';
 import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { MatchingService } from '../matching/matching.service.js';
+import { expandKeywordsForSourceQuery } from '../matching/profession-forms.js';
 import { queryMatchKind } from '../matching/match-text.js';
 import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -742,7 +743,7 @@ function toSourceQuery(
   maxAgeDays: number,
 ): SourceSearchQuery {
   return {
-    keywords: [...search.keywords],
+    keywords: expandKeywordsForSourceQuery(search.keywords),
     technologies: [],
     locations: adapterLocationsForFetch(search),
     workModels: [],

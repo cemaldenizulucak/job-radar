@@ -29,6 +29,7 @@ describe('mapJobFeedRow', () => {
         canonicalUrl: 'https://linkedin.example/abc-frontend',
         matchedSearchIds: ['search-1'],
         isMatched: true,
+        isFavorite: false,
       }),
     );
     expect(mapped?.duplicateGroupId).toBe('group-1');

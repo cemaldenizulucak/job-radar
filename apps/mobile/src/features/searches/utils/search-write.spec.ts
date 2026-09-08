@@ -124,7 +124,7 @@ describe('formValuesToWriteInput', () => {
     });
   });
 
-  it('persists selected work types without sending them to source adapters', () => {
+  it('does not persist work types from the form', () => {
     expect(
       formValuesToWriteInput({
         name: 'Frontend',
@@ -138,7 +138,7 @@ describe('formValuesToWriteInput', () => {
         sources: ['linkedin', 'kariyer_net'],
         isActive: true,
       }).workTypes,
-    ).toEqual(['remote', 'hybrid']);
+    ).toEqual([]);
   });
 
   it('treats Tümü as no location filter', () => {

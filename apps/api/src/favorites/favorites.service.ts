@@ -57,6 +57,8 @@ export class FavoritesService {
   }
 
   async add(userId: string, jobId: string): Promise<FavoriteRecord> {
+    await this.jobsService.getByIdForUserOrThrow(userId, jobId);
+
     const { data, error } = await this.supabase
       .getClient()
       .from('favorites')
@@ -80,7 +82,7 @@ export class FavoritesService {
       throw new InternalServerErrorException('Failed to save favorite.');
     }
 
-    const [job] = await this.jobsService.getMappedByIds([jobId]);
+    const [job] = await this.jobsService.getMappedByIds([jobId], userId);
     return { ...favorite, job: job ?? null };
   }
 

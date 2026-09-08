@@ -25,6 +25,7 @@ import {
 } from '../searches/searches.mapper.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { decideListingWrite } from './job-identity.js';
+import { attachFavoriteState } from './attach-favorite-state.js';
 import { applyJobNewness, resolveJobNewWindowHours } from './job-newness.js';
 import { clampJobFeedLimit, JOB_FEED_MAX_LIMIT } from './job-feed-visibility.js';
 import {
@@ -94,7 +95,10 @@ export class JobsService {
     }
 
     const rows = await this.loadJobsFromTable(query, limit, scopedJobIds);
-    const seenJobIds = await this.loadSeenJobIds(query.userId);
+    const [seenJobIds, favoriteJobIds] = await Promise.all([
+      this.loadSeenJobIds(query.userId),
+      this.loadFavoriteJobIds(query.userId),
+    ]);
     const feedRows: JobFeedRow[] = [];
 
     this.logger.log({
@@ -132,12 +136,15 @@ export class JobsService {
       ),
     );
 
-    const page = applyJobNewness(
-      items.slice(0, limit),
-      userMatches,
-      new Date(),
-      this.getNewWindowHours(),
-      seenJobIds,
+    const page = attachFavoriteState(
+      applyJobNewness(
+        items.slice(0, limit),
+        userMatches,
+        new Date(),
+        this.getNewWindowHours(),
+        seenJobIds,
+      ),
+      favoriteJobIds,
     );
 
     this.logger.log({
@@ -300,20 +307,26 @@ export class JobsService {
     const seenJobIds = userId
       ? await this.loadSeenJobIds(userId)
       : new Set<string>();
+    const favoriteJobIds = userId
+      ? await this.loadFavoriteJobIds(userId)
+      : new Set<string>();
 
-    return applyJobNewness(
-      attachDuplicateGroupSizes(
-        feedRows,
-        await this.countDuplicateGroupSizes(
-          feedRows
-            .map((row) => row.duplicateGroupId)
-            .filter((groupId): groupId is string => groupId !== null),
+    return attachFavoriteState(
+      applyJobNewness(
+        attachDuplicateGroupSizes(
+          feedRows,
+          await this.countDuplicateGroupSizes(
+            feedRows
+              .map((row) => row.duplicateGroupId)
+              .filter((groupId): groupId is string => groupId !== null),
+          ),
         ),
+        userMatches,
+        new Date(),
+        this.getNewWindowHours(),
+        seenJobIds,
       ),
-      userMatches,
-      new Date(),
-      this.getNewWindowHours(),
-      seenJobIds,
+      favoriteJobIds,
     );
   }
 
@@ -357,6 +370,43 @@ export class JobsService {
       this.config.get<string>('JOB_SOURCE_MAX_AGE_DAYS'),
       DEFAULT_JOB_SOURCE_MAX_AGE_DAYS,
     );
+  }
+
+  private async loadFavoriteJobIds(userId: string): Promise<Set<string>> {
+    const ids = new Set<string>();
+    if (!userId || userId === 'anonymous') {
+      return ids;
+    }
+
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('favorites')
+      .select('job_id')
+      .eq('user_id', userId);
+
+    if (error) {
+      this.logger.warn({
+        message: 'Favorites lookup failed; continuing without favorite state',
+      });
+      return ids;
+    }
+
+    if (!Array.isArray(data)) {
+      return ids;
+    }
+
+    for (const row of data) {
+      if (!isRecord(row)) {
+        continue;
+      }
+
+      const jobId = readString(row, 'job_id');
+      if (jobId) {
+        ids.add(jobId);
+      }
+    }
+
+    return ids;
   }
 
   private async loadSeenJobIds(userId: string): Promise<Set<string>> {
@@ -586,6 +636,7 @@ export class JobsService {
           field: item.field,
           snippet: item.snippet,
           kind: item.kind,
+          basis: item.basis,
         })),
       };
     });

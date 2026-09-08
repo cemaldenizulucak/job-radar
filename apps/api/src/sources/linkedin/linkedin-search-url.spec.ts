@@ -1,4 +1,4 @@
-import { buildLinkedInSearchUrl, workplaceFilter } from './linkedin-search-url.js';
+import { buildLinkedInSearchUrl } from './linkedin-search-url.js';
 
 describe('buildLinkedInSearchUrl', () => {
   it('puts keywords, first location, and the 30-day date filter on the public search URL', () => {
@@ -23,7 +23,7 @@ describe('buildLinkedInSearchUrl', () => {
     expect(parsed.searchParams.has('start')).toBe(false);
   });
 
-  it('encodes a single workplace type and omits mixed workplace filters', () => {
+  it('does not encode workplace type on the public search URL', () => {
     const remote = new URL(
       buildLinkedInSearchUrl({
         keywords: ['frontend'],
@@ -41,11 +41,8 @@ describe('buildLinkedInSearchUrl', () => {
       }),
     );
 
-    expect(remote.searchParams.get('f_WT')).toBe('2');
+    expect(remote.searchParams.has('f_WT')).toBe(false);
     expect(mixed.searchParams.has('f_WT')).toBe(false);
-    expect(workplaceFilter(['hybrid'])).toBe('3');
-    expect(workplaceFilter(['onsite'])).toBe('1');
-    expect(workplaceFilter(['remote', 'hybrid'])).toBeNull();
   });
 
   it('adds start for pages after the first', () => {

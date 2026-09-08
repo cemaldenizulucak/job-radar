@@ -59,6 +59,7 @@ export type JobListItem = {
   isMatched: boolean;
   isNew: boolean;
   isSeen: boolean;
+  isFavorite: boolean;
 };
 
 export type JobDetail = JobListItem & {
@@ -88,6 +89,7 @@ export type MatchEvidenceSummary = {
   field: MatchEvidenceField;
   snippet: string | null;
   kind: 'title' | 'skill';
+  basis?: 'education_field';
 };
 
 export type MatchedSearchSummary = {

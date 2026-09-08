@@ -17,7 +17,7 @@ export function normalizeForSearch(value: string): string {
     .trim();
 }
 
-function foldTurkishAscii(value: string): string {
+export function foldTurkishAscii(value: string): string {
   return value
     .replaceAll('ı', 'i')
     .replaceAll('ş', 's')

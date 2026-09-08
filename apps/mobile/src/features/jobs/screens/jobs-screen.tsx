@@ -9,7 +9,8 @@ import { ScreenScaffold } from '@/components/screen-scaffold';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useAuthStore } from '@/features/auth/stores/auth.store';
-import { useFavorites } from '@/features/favorites/hooks/useFavorites';
+import { useFavoriteToggle } from '@/features/favorites/hooks/useFavoriteToggle';
+import { useFavoritesStatusStore } from '@/features/favorites/stores/favorites-status.store';
 import { useNotifications } from '@/features/notifications/hooks/useNotifications';
 import { useSavedSearches } from '@/features/searches/hooks/useSavedSearches';
 import { useTheme } from '@/hooks/use-theme';
@@ -82,12 +83,8 @@ export function JobsScreen() {
     refetch,
   } = useJobs(userId, resultsView === 'matched', selectedSearchId);
   const isDiscovering = usePendingDiscovery(refetch);
-  const { items: favorites, refetch: refetchFavorites } = useFavorites(userId);
   const { unreadCount, refetch: refetchNotifications } = useNotifications(userId);
-  const favoriteIds = useMemo(
-    () => new Set(favorites.map((item) => item.jobId)),
-    [favorites],
-  );
+  const { isFavorite, error: favoriteError, toggleFavorite } = useFavoriteToggle();
   const searchNames = useMemo(
     () => new Map(searches.map((search) => [search.id, search.name])),
     [searches],
@@ -98,9 +95,20 @@ export function JobsScreen() {
       void refetch();
       void refetchSearches();
       void refetchNotifications();
-      void refetchFavorites();
-    }, [refetch, refetchFavorites, refetchNotifications, refetchSearches]),
+    }, [refetch, refetchNotifications, refetchSearches]),
   );
+
+  useEffect(() => {
+    if (!userId) {
+      useFavoritesStatusStore.getState().clear();
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    useFavoritesStatusStore.getState().hydrate(
+      items.map((job) => ({ jobId: job.id, isFavorite: job.isFavorite })),
+    );
+  }, [items]);
 
   useEffect(() => {
     if (searchCatalogEpoch === 0 && feedRefreshEpoch === 0) {
@@ -245,13 +253,22 @@ export function JobsScreen() {
         <EmptyState title={emptyMessage} />
       ) : null}
 
+      {favoriteError ? (
+        <ThemedText type="meta" style={{ color: theme.danger }}>
+          {favoriteError}
+        </ThemedText>
+      ) : null}
+
       {!error && jobs.length > 0 ? (
         <View style={styles.list}>
           {jobs.map((job) => (
             <JobCard
               key={job.id}
               job={job}
-              isFavorite={favoriteIds.has(job.id)}
+              isFavorite={isFavorite(job.id, job.isFavorite)}
+              onToggleFavorite={() => {
+                void toggleFavorite(job.id, isFavorite(job.id, job.isFavorite));
+              }}
               relevanceLabel={
                 resultsView === 'all' ? jobRelevanceLabel(job, searchNames) : undefined
               }

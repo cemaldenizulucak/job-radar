@@ -6,7 +6,7 @@ import { AppBadge } from '@/components/app-badge';
 import { AppButton } from '@/components/app-button';
 import { SectionCard } from '@/components/section-card';
 import { ThemedText } from '@/components/themed-text';
-import { Spacing } from '@/constants/theme';
+import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 import { searchesCopy } from '../copy';
@@ -18,13 +18,11 @@ import {
   joinTags,
   previewTags,
   savedSearchFormSchema,
-  WORK_TYPES,
   type SavedSearchFormValues,
 } from '../validation/search.schema';
 import { SearchLocationFields } from './search-location-fields';
 import { SearchTextField } from './search-text-field';
 import { SourceSelector } from './source-selector';
-import { WorkTypeSelector } from './work-type-selector';
 
 type SavedSearchFormProps = {
   initialSearch?: SavedSearch;
@@ -58,9 +56,7 @@ function toDefaultValues(search?: SavedSearch): SavedSearchFormValues {
     subdivisionCodes: coalesceSubdivisionCodes(search),
     subdivisionNames: coalesceSubdivisionNames(search),
     experienceLevels: joinTags(search.experienceLevels),
-    workTypes: search.workTypes.filter((type): type is (typeof WORK_TYPES)[number] =>
-      (WORK_TYPES as readonly string[]).includes(type),
-    ),
+    workTypes: [],
     sources: [...search.sources],
     isActive: search.isActive,
   };
@@ -158,6 +154,9 @@ export function SavedSearchForm({
             </View>
           )}
         />
+      </SectionCard>
+
+      <SectionCard title={searchesCopy.locations}>
         <SearchLocationFields
           countryCode={countryCode}
           countryName={countryName}
@@ -195,17 +194,6 @@ export function SavedSearchForm({
         />
         <Controller
           control={control}
-          name="workTypes"
-          render={({ field: { onChange, value } }) => (
-            <WorkTypeSelector
-              selected={value}
-              onChange={onChange}
-              disabled={isSubmitting}
-            />
-          )}
-        />
-        <Controller
-          control={control}
           name="sources"
           render={({ field: { onChange, value } }) => (
             <SourceSelector
@@ -220,7 +208,14 @@ export function SavedSearchForm({
           control={control}
           name="isActive"
           render={({ field: { onChange, value } }) => (
-            <View style={styles.activeRow}>
+            <View
+              style={[
+                styles.activeRow,
+                {
+                  backgroundColor: theme.backgroundSelected,
+                  borderColor: theme.border,
+                },
+              ]}>
               <View style={styles.activeCopy}>
                 <ThemedText type="smallBold">{searchesCopy.active}</ThemedText>
                 <ThemedText type="meta" themeColor="textSecondary">
@@ -231,7 +226,7 @@ export function SavedSearchForm({
                 value={value}
                 disabled={isSubmitting}
                 onValueChange={onChange}
-                trackColor={{ false: theme.backgroundSelected, true: theme.accent }}
+                trackColor={{ false: theme.backgroundElement, true: theme.accent }}
               />
             </View>
           )}
@@ -269,6 +264,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.three,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    padding: Spacing.three,
   },
   activeCopy: {
     flex: 1,

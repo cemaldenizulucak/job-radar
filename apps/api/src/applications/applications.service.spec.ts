@@ -37,6 +37,7 @@ describe('ApplicationsService', () => {
             duplicateGroupSize: 1,
             isNew: false,
             isSeen: false,
+            isFavorite: false,
           },
         ],
       } as unknown as JobsService,

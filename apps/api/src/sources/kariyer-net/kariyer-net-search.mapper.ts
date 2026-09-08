@@ -3,7 +3,7 @@ import type { KariyerNetSearchInput } from './kariyer-net.types.js';
 
 /**
  * Maps JobRadar search criteria onto Kariyer.net query params.
- * Unsupported capabilities are omitted so matching can filter later.
+ * Workplace type is never sent. Unsupported capabilities are omitted.
  */
 export function mapKariyerNetSearch(
   query: SourceSearchQuery,
@@ -16,9 +16,7 @@ export function mapKariyerNetSearch(
     locations: capabilities.supportsLocation
       ? uniqueNonEmpty([...query.locations])
       : [],
-    workTypes: capabilities.supportsRemoteFilter
-      ? query.workModels.filter((model) => model !== 'unknown')
-      : [],
+    workTypes: [],
     experienceLevels: capabilities.supportsExperienceLevel
       ? uniqueNonEmpty([...query.experienceLevels])
       : [],

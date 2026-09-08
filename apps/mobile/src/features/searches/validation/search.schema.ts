@@ -153,7 +153,7 @@ export function formValuesToWriteInput(
     subdivisionName: subdivisionNames[0] ?? null,
     subdivisionCodes,
     subdivisionNames,
-    workTypes: values.workTypes,
+    workTypes: [],
     experienceLevels: splitTags(values.experienceLevels),
     sources: values.sources,
   });

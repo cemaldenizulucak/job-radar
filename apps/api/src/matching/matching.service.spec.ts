@@ -532,7 +532,7 @@ describe('MatchingService generic text matching', () => {
       experienceLevels: [],
     });
 
-    for (const workModel of ['remote', 'hybrid', 'onsite'] as const) {
+    for (const workModel of ['remote', 'hybrid', 'onsite', 'unknown'] as const) {
       expect(
         matcher.jobMatchesSearch(
           job({
@@ -550,18 +550,27 @@ describe('MatchingService generic text matching', () => {
     }
   });
 
-  it('rejects an onsite job when the search only allows remote', () => {
-    expect(
-      matcher.jobMatchesSearch(
-        job({
-          title: 'Frontend Developer',
-          workModel: 'onsite',
-          description: null,
-          technologies: [],
-        }),
-        search({ keywords: ['Frontend Developer'], workTypes: ['remote'] }),
-      ),
-    ).toBe(false);
+  it('does not exclude other work models when an old search only listed remote', () => {
+    const saved = search({
+      keywords: ['Frontend Developer'],
+      workTypes: ['remote'],
+    });
+
+    for (const workModel of ['remote', 'hybrid', 'onsite', 'unknown'] as const) {
+      expect(
+        matcher.jobMatchesSearch(
+          job({
+            id: `job-${workModel}`,
+            title: 'Frontend Developer',
+            location: 'Ankara',
+            workModel,
+            description: null,
+            technologies: [],
+          }),
+          saved,
+        ),
+      ).toBe(true);
+    }
   });
 
   it('does not reject on technologies or experience when those filters are empty', () => {
@@ -900,7 +909,7 @@ describe('MatchingService generic text matching', () => {
     ).toBe(false);
   });
 
-  it('does not assume an unknown work model matches a remote filter', () => {
+  it('accepts an unknown work model even when the saved search listed remote', () => {
     const decision = matcher.evaluateMatch(
       job({
         title: 'Frontend Developer',
@@ -909,9 +918,10 @@ describe('MatchingService generic text matching', () => {
       search({ keywords: ['Frontend Developer'], workTypes: ['remote'] }),
     );
 
-    expect(decision.workModel).toBe('unknown');
-    expect(decision.matched).toBe(false);
-    expect(decision.reasons).toContain('work model unknown');
+    expect(decision.workModel).toBe('skipped');
+    expect(decision.matched).toBe(true);
+    expect(decision.reasons).not.toContain('work model unknown');
+    expect(decision.reasons).not.toContain('work model mismatch');
   });
 
   it('does not match Makine Mühendisi because the company name contains GIDA', () => {
@@ -1129,19 +1139,35 @@ describe('MatchingService role vs skill evidence', () => {
     expect(decision.evidence).toEqual([]);
   });
 
-  it('keeps location and work model filters after skill matching', () => {
+  it('keeps country and city filters after skill matching even when workTypes are ignored', () => {
     const listing = eLearning();
+    const izmirSearch = search({
+      keywords: ['UI'],
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+      workTypes: ['remote'],
+    });
+
     expect(
       matcher.jobMatchesSearch(
         { ...listing, location: 'Berlin, Germany', workModel: 'onsite' },
-        search({
-          keywords: ['UI'],
-          countryCode: 'TR',
-          countryName: 'Türkiye',
-          workTypes: ['remote'],
-        }),
+        izmirSearch,
       ),
     ).toBe(false);
+    expect(
+      matcher.jobMatchesSearch(
+        { ...listing, location: 'İzmir, Türkiye', workModel: 'onsite' },
+        izmirSearch,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        { ...listing, location: 'İzmir, Türkiye', workModel: 'unknown' },
+        izmirSearch,
+      ),
+    ).toBe(true);
     expect(
       matcher.jobMatchesSearch(
         { ...listing, location: 'İzmir, Türkiye', workModel: 'remote' },
@@ -1151,6 +1177,12 @@ describe('MatchingService role vs skill evidence', () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        { ...listing, title: 'Unrelated Role', description: null, technologies: [] },
+        izmirSearch,
+      ),
+    ).toBe(false);
   });
 
   it('does not treat JavaScript in the title as a frontend role', () => {
@@ -1192,5 +1224,114 @@ describe('MatchingService role vs skill evidence', () => {
     expect(decision.matched).toBe(true);
     expect(decision.matchKind).toBe('skill');
     expect(decision.evidence[0]?.field).toBe('description');
+  });
+});
+
+describe('MatchingService food-engineering field equivalence', () => {
+  const qualityFoodListing = () =>
+    job({
+      sourceId: 'kariyer_net',
+      title: 'Kalite Mühendisi',
+      companyName: 'TUKAŞ GIDA SANAYİ VE TİCARET ANONİM ŞİRKETİ',
+      location: 'Manisa / Akhisar',
+      description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+      technologies: [],
+    });
+
+  it('matches Kalite Mühendisi when the description requires Gıda Mühendisliği', () => {
+    const decision = matcher.evaluateMatch(
+      qualityFoodListing(),
+      search({
+        keywords: ['Gıda Mühendisi', 'Kalite güvence', 'denetçi'],
+      }),
+    );
+
+    expect(decision.matched).toBe(true);
+    expect(decision.matchKind).toBe('skill');
+    expect(decision.evidence[0]?.term).toBe('Gıda Mühendisi');
+    expect(decision.evidence[0]?.matchedText).toBe('Gıda Mühendisliği');
+    expect(decision.evidence[0]?.field).toBe('description');
+    expect(decision.evidence[0]?.kind).toBe('skill');
+    expect(decision.evidence[0]?.basis).toBe('education_field');
+    expect(decision.evidence[0]?.snippet).toContain(
+      'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+    );
+  });
+
+  it('matches case and inflected food-engineering forms', () => {
+    const saved = search({ keywords: ['Gıda Mühendisi'] });
+
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Kalite Mühendisi',
+          description: 'GIDA MÜHENDİSLİĞİ mezunu',
+        }),
+        saved,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-ablative',
+          title: 'Kalite Mühendisi',
+          description: 'Gıda mühendisliğinden mezun adaylar aranır',
+        }),
+        saved,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-plural',
+          title: 'Kalite Uzmanı',
+          description: 'Gıda mühendisleri tercih edilir',
+        }),
+        saved,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not match a machine engineer at a food company without a food-engineering requirement', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Makine Mühendisi',
+          companyName: 'TUKAŞ GIDA SANAYİ VE TİCARET ANONİM ŞİRKETİ',
+          description: 'Gıda sektöründe çalışacak makine mühendisi',
+          technologies: [],
+        }),
+        search({ keywords: ['Gıda Mühendisi'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not match a food technician without food-engineering evidence', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Gıda Teknikeri',
+          companyName: 'TUKAŞ GIDA SANAYİ VE TİCARET ANONİM ŞİRKETİ',
+          description: 'Üretim hattında kalite kontrol',
+          technologies: [],
+        }),
+        search({ keywords: ['Gıda Mühendisi'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not match Manisa when the search location is İzmir', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        qualityFoodListing(),
+        search({
+          keywords: ['Gıda Mühendisi'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          subdivisionCode: '35',
+          subdivisionName: 'İzmir',
+        }),
+      ),
+    ).toBe(false);
   });
 });

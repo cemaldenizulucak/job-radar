@@ -38,6 +38,7 @@ export function mapJobListItem(
   return {
     ...parsed,
     isMatched: parsed.isMatched ?? parsed.matchedSearchIds.length > 0,
+    isFavorite: parsed.isFavorite ?? false,
   };
 }
 

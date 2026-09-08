@@ -992,6 +992,47 @@ describe('DiscoveryService', () => {
     expect(received[0]?.keywords).toEqual(['Frontend Developer']);
   });
 
+  it('does not send stored work types to adapters and still sends location', async () => {
+    const received: SourceSearchQuery[] = [];
+    const capture: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: true,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query);
+        return { sourceId: 'linkedin', jobs: [] };
+      },
+    };
+
+    const { discovery } = createDiscovery(
+      [
+        search({
+          keywords: ['Frontend Developer'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          subdivisionCode: '35',
+          subdivisionName: 'İzmir',
+          workTypes: ['remote'],
+          sourceIds: ['linkedin'],
+        }),
+      ],
+      [capture],
+    );
+
+    await discovery.run();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.workModels).toEqual([]);
+    expect(received[0]?.locations).toEqual(['Türkiye']);
+    expect(received[0]?.keywords).toEqual(['Frontend Developer']);
+  });
+
   it('includes every user active search in a scheduled run', async () => {
     const userA = search({
       id: 'search-a',
@@ -1064,7 +1105,7 @@ describe('DiscoveryService', () => {
           name: 'Frontend Developer',
           keywords: ['Frontend Developer'],
           locations: [],
-          workTypes: [],
+          workTypes: ['remote'],
           experienceLevels: [],
           sourceIds: ['linkedin'],
         }),
@@ -1080,7 +1121,7 @@ describe('DiscoveryService', () => {
         name: 'Frontend Developer',
         keywords: ['Frontend Developer'],
         locations: [],
-        workTypes: [],
+        workTypes: ['remote'],
         experienceLevels: [],
         sourceIds: ['linkedin'],
       }),
@@ -1575,7 +1616,10 @@ describe('DiscoveryService', () => {
 
     const result = await discovery.runForSavedSearch(target);
 
-    expect(received[0]?.keywords).toEqual(['Gıda Mühendisi']);
+    expect(received[0]?.keywords).toEqual([
+      'Gıda Mühendisi',
+      'Gıda Mühendisliği',
+    ]);
     expect(received[0]?.locations).toEqual(['Türkiye']);
     expect(result.matchesCreated).toBe(1);
     expect(jobs.matches).toEqual([

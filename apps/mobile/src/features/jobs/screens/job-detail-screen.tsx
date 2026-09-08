@@ -14,10 +14,7 @@ import {
   deleteApplication,
   upsertApplication,
 } from '@/features/applications/services/applications.service';
-import {
-  addFavorite,
-  removeFavorite,
-} from '@/features/favorites/services/favorites.service';
+import { useFavoriteToggle } from '@/features/favorites/hooks/useFavoriteToggle';
 import { useSavedSearches } from '@/features/searches/hooks/useSavedSearches';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -51,6 +48,12 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
   const { items: searches } = useSavedSearches();
   const [actionError, setActionError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const {
+    isFavorite,
+    error: favoriteError,
+    toggleFavorite: persistFavorite,
+  } = useFavoriteToggle();
+  const favorite = isFavorite(job.id, job.isFavorite);
   const matchedSearches = useMemo(() => {
     const names = new Map(searches.map((search) => [search.id, search.name]));
     const raw =
@@ -85,26 +88,17 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
   };
 
   const toggleFavorite = async () => {
-    if (!user || isBusy) {
+    if (!user) {
       return;
     }
 
     setActionError(null);
-    setIsBusy(true);
-    const nextFavorite = !job.isFavorite;
-    onJobChange({ ...job, isFavorite: nextFavorite });
-
-    try {
-      if (nextFavorite) {
-        await addFavorite(job.id);
-      } else {
-        await removeFavorite(job.id);
-      }
-    } catch (caught) {
-      onJobChange({ ...job, isFavorite: job.isFavorite });
-      setActionError(jobsUiError(caught, jobsCopy.favoriteError));
-    } finally {
-      setIsBusy(false);
+    const result = await persistFavorite(job.id, favorite);
+    if (result === 'ok') {
+      onJobChange({ ...job, isFavorite: !favorite });
+    }
+    if (result === 'error') {
+      onJobChange({ ...job, isFavorite: favorite });
     }
   };
 
@@ -121,6 +115,7 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
     };
     onJobChange({
       ...job,
+      isFavorite: favorite,
       applicationStatus: status,
       applicationId: status ? job.applicationId : null,
     });
@@ -132,6 +127,7 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
         }
         onJobChange({
           ...job,
+          isFavorite: favorite,
           applicationStatus: null,
           applicationId: null,
         });
@@ -141,12 +137,14 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
       const saved = await upsertApplication(job.id, status);
       onJobChange({
         ...job,
+        isFavorite: favorite,
         applicationStatus: saved.status,
         applicationId: saved.id,
       });
     } catch (caught) {
       onJobChange({
         ...job,
+        isFavorite: favorite,
         applicationStatus: previous.applicationStatus,
         applicationId: previous.applicationId,
       });
@@ -160,7 +158,7 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
     <ScreenScaffold>
       <JobDetailHeader
         onBack={() => router.back()}
-        isFavorite={job.isFavorite}
+        isFavorite={favorite}
         onToggleFavorite={() => {
           void toggleFavorite();
         }}
@@ -189,10 +187,14 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
             />
           ) : null}
         </View>
-        <ThemedText type="screenTitle">{job.title}</ThemedText>
-        <ThemedText type="cardTitle">{job.companyName}</ThemedText>
-        <ThemedText type="meta" themeColor="textSecondary">
-          {formatLocation(job.location)}
+        <ThemedText type="screenTitle" numberOfLines={3} ellipsizeMode="tail">
+          {job.title}
+        </ThemedText>
+        <ThemedText type="smallBold" numberOfLines={2} ellipsizeMode="tail">
+          {job.companyName}
+        </ThemedText>
+        <ThemedText type="meta" themeColor="textSecondary" numberOfLines={2}>
+          {formatLocation(job.location)} · {workModelLabel(job.workModel)}
         </ThemedText>
       </View>
 
@@ -264,9 +266,9 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
         />
       </SectionCard>
 
-      {actionError ? (
+      {actionError || favoriteError ? (
         <ThemedText type="meta" style={{ color: theme.danger }}>
-          {actionError}
+          {actionError ?? favoriteError}
         </ThemedText>
       ) : null}
 
@@ -292,6 +294,12 @@ function MatchedSearchBlock({ search }: { search: MatchedSearch }) {
     <View style={styles.matchBlock}>
       <DetailRow label={jobsCopy.matchedSearchLabel} value={search.name} />
       {kind ? <DetailRow label={jobsCopy.matchKindLabel} value={kind} /> : null}
+      {search.evidence.some((item) => item.basis === 'education_field') ? (
+        <DetailRow
+          label={jobsCopy.matchBasisLabel}
+          value={jobsCopy.matchBasisEducation}
+        />
+      ) : null}
       {terms ? (
         <DetailRow label={jobsCopy.matchedTermsLabel} value={terms} />
       ) : null}

@@ -57,6 +57,7 @@ export function mapJobFeedRow(
       duplicateGroupSize: 1,
       isNew: false,
       isSeen: false,
+      isFavorite: false,
     },
   };
 }

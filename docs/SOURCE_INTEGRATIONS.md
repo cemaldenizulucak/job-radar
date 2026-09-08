@@ -164,7 +164,7 @@ LINKEDIN_PROVIDER=disabled
 - `location` = first saved-search location only
 - `sortBy=DD` (newest first)
 - `f_TPR=r{maxAgeDays * 86400}` (30 days → `r2592000`) when a positive max-age is present
-- `f_WT` only when a **single** workplace type is requested (`1` on-site, `2` remote, `3` hybrid). Mixed workplace filters are omitted; JobRadar matching applies them
+- Workplace type is **not** encoded (`f_WT` is never set). Matching also does not filter by saved-search work model.
 - Experience is **not** encoded
 - Pages: first page omits `start`; later pages use `start=25`, `start=50`, … (25 results per page)
 - Sequential only, with `LINKEDIN_REQUEST_DELAY_MS` between requests

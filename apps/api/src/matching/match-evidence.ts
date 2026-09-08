@@ -1,5 +1,7 @@
+import { foldTurkishAscii } from '../common/normalize-text.js';
 import { expandNormalizedPhrases, queryAppearsIn } from './match-text.js';
 import { shouldBlockDescriptionKeyword } from './profession-conflict.js';
+import { locateProfessionFieldSpan, parseEngineeringProfession } from './profession-forms.js';
 import { collectKeywordPhrases } from './search-phrases.js';
 import { isRoleSearchTerm } from './search-term-kind.js';
 import type {
@@ -94,16 +96,40 @@ function evidenceInField(
   phrase: string,
   field: MatchEvidenceField,
 ): MatchEvidence | null {
-  if (!haystack.trim() || !queryAppearsIn(haystack, phrase)) {
+  if (!haystack.trim()) {
+    return null;
+  }
+
+  const professionSpan = locateProfessionFieldSpan(haystack, phrase);
+  if (professionSpan) {
+    return {
+      term,
+      matchedText: professionSpan.text,
+      field,
+      snippet: snippetAround(
+        haystack,
+        professionSpan.start,
+        professionSpan.length,
+      ),
+      kind: field === 'title' && isRoleSearchTerm(term) ? 'title' : 'skill',
+      ...(professionSpan.educationField
+        ? { basis: 'education_field' as const }
+        : {}),
+    };
+  }
+
+  if (parseEngineeringProfession(phrase) || !queryAppearsIn(haystack, phrase)) {
     return null;
   }
 
   const span = locateEvidenceSpan(haystack, phrase);
   return {
     term,
-    matchedText: span?.text ?? term,
+    matchedText: span?.text ?? haystack.trim(),
     field,
-    snippet: span ? snippetAround(haystack, span.start, span.length) : null,
+    snippet: span
+      ? snippetAround(haystack, span.start, span.length)
+      : snippetAround(haystack, 0, Math.min(haystack.length, SNIPPET_RADIUS * 2)),
     kind: field === 'title' && isRoleSearchTerm(term) ? 'title' : 'skill',
   };
 }
@@ -112,6 +138,11 @@ function locateEvidenceSpan(
   haystack: string,
   query: string,
 ): { start: number; length: number; text: string } | null {
+  const profession = locateProfessionFieldSpan(haystack, query);
+  if (profession) {
+    return profession;
+  }
+
   const trimmed = query.trim();
   if (!trimmed) {
     return null;
@@ -155,7 +186,9 @@ function locateEvidenceSpan(
 }
 
 function indexOfIgnoreCase(haystack: string, needle: string): number {
-  return haystack.toLocaleLowerCase('tr-TR').indexOf(needle.toLocaleLowerCase('tr-TR'));
+  return foldTurkishAscii(haystack.toLocaleLowerCase('tr-TR')).indexOf(
+    foldTurkishAscii(needle.toLocaleLowerCase('tr-TR')),
+  );
 }
 
 function indexOfBounded(haystack: string, needle: string): number {

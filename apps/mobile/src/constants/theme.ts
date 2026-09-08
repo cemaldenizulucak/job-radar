@@ -117,5 +117,10 @@ export const Fonts = Platform.select({
   },
 });
 
-export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
+export const BottomTabInset = Platform.select({
+  ios: 56,
+  android: 80,
+  web: 72,
+  default: 56,
+}) ?? 56;
 export const MaxContentWidth = 720;
