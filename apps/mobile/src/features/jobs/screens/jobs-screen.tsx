@@ -23,12 +23,11 @@ import { usePendingDiscovery } from '../hooks/usePendingDiscovery';
 import { useJobsFilterStore, type JobsResultsView } from '../stores/jobs-filter.store';
 import type { JobListItem } from '../types/job.types';
 import {
-  countJobsBySource,
+  countJobsBySourceForSearch,
   buildSourceTabs,
   filterJobs,
   formatJobDateLabel,
   isSourceFilter,
-  latestFirstDiscoveredAt,
 } from '../utils/job-labels';
 import { getJobSourceAppearance } from '../utils/job-source-appearance';
 
@@ -68,14 +67,23 @@ export function JobsScreen() {
   const setResultsView = useJobsFilterStore((state) => state.setResultsView);
   const searchCatalogEpoch = useJobsFilterStore((state) => state.searchCatalogEpoch);
   const feedRefreshEpoch = useJobsFilterStore((state) => state.feedRefreshEpoch);
-  const { items, isLoading, error, refetch } = useJobs(
-    userId,
-    resultsView === 'matched',
-  );
+  const { items: searches, refetch: refetchSearches } = useSavedSearches();
+  const selectedSearchId =
+    savedSearchId === 'all' || searches.some((search) => search.id === savedSearchId)
+      ? savedSearchId
+      : 'all';
+  const {
+    items,
+    lastDiscoveryAt,
+    totalCount,
+    savedSearchCounts,
+    isLoading,
+    error,
+    refetch,
+  } = useJobs(userId, resultsView === 'matched', selectedSearchId);
   const isDiscovering = usePendingDiscovery(refetch);
   const { items: favorites, refetch: refetchFavorites } = useFavorites(userId);
   const { unreadCount, refetch: refetchNotifications } = useNotifications(userId);
-  const { items: searches, refetch: refetchSearches } = useSavedSearches();
   const favoriteIds = useMemo(
     () => new Set(favorites.map((item) => item.jobId)),
     [favorites],
@@ -103,44 +111,45 @@ export function JobsScreen() {
     void refetchSearches();
   }, [feedRefreshEpoch, refetch, refetchSearches, searchCatalogEpoch]);
 
+  const sourceCounts = useMemo(
+    () => countJobsBySourceForSearch(items, selectedSearchId),
+    [items, selectedSearchId],
+  );
   const sourceTabs = useMemo(
     () =>
-      buildSourceTabs(items).map((tab) => ({
+      buildSourceTabs(filterJobs(items, 'all', selectedSearchId)).map((tab) => ({
         ...tab,
         selectedColor:
           tab.id === 'all'
             ? undefined
             : getJobSourceAppearance(tab.id, theme.scheme).accentColor,
       })),
-    [items, theme.scheme],
+    [items, selectedSearchId, theme.scheme],
   );
   const searchTabs = useMemo(
     () => [
-      { id: 'all', label: jobsCopy.all, count: items.length },
+      { id: 'all', label: jobsCopy.all, count: totalCount },
       ...searches.map((search) => ({
         id: search.id,
         label: search.name,
-        count: items.filter((job) => job.matchedSearchIds.includes(search.id)).length,
+        count:
+          savedSearchCounts.find((item) => item.id === search.id)?.count ??
+          items.filter((job) => job.matchedSearchIds.includes(search.id)).length,
       })),
     ],
-    [items, searches],
+    [items, savedSearchCounts, searches, totalCount],
   );
-  const selectedSearchId =
-    savedSearchId === 'all' || searches.some((search) => search.id === savedSearchId)
-      ? savedSearchId
-      : 'all';
-
   const jobs = useMemo(
     () => filterJobs(items, sourceId, selectedSearchId),
     [items, selectedSearchId, sourceId],
   );
 
-  const lastScan = latestFirstDiscoveredAt(items);
-  const lastScanLabel = lastScan ? formatJobDateLabel(lastScan) : '—';
+  const lastScanLabel = lastDiscoveryAt ? formatJobDateLabel(lastDiscoveryAt) : '—';
   const emptyMessage = jobsEmptyMessage({
     itemCount: items.length,
     visibleCount: jobs.length,
     resultsView,
+    isDiscovering,
   });
 
   return (
@@ -157,9 +166,9 @@ export function JobsScreen() {
                 : jobsCopy.jobsLoaded
         }
         unreadNotificationCount={unreadCount}
-        totalCount={countJobsBySource(items, 'all')}
-        linkedInCount={countJobsBySource(items, 'linkedin')}
-        kariyerCount={countJobsBySource(items, 'kariyer_net')}
+        totalCount={sourceCounts.total}
+        linkedInCount={sourceCounts.linkedin}
+        kariyerCount={sourceCounts.kariyerNet}
         onPressNotifications={() => router.push('/jobs/notifications' as Href)}
         onPressFavorites={() => router.push('/jobs/favorites' as Href)}
       />

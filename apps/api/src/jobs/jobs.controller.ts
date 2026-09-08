@@ -38,7 +38,7 @@ export class JobsController {
     return this.jobsService.listForUser({
       userId: user.id,
       sourceId: parseSourceFilter(sourceId),
-      savedSearchId,
+      savedSearchId: parseSavedSearchId(savedSearchId),
       cursor,
       matchedOnly: parseMatchedOnly(matchedOnly),
       includeInactive: parseBooleanFlag(includeInactive, false),
@@ -61,6 +61,15 @@ export class JobsController {
   ): Promise<JobDetail> {
     return this.jobsService.getByIdForUserOrThrow(user.id, id);
   }
+}
+
+function parseSavedSearchId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed || trimmed === 'all') {
+    return undefined;
+  }
+
+  return trimmed;
 }
 
 function parseSourceFilter(

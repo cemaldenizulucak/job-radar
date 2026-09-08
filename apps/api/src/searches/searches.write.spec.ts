@@ -94,7 +94,34 @@ describe('parseSavedSearchWrite', () => {
       countryName: null,
       subdivisionCode: null,
       subdivisionName: null,
+      subdivisionCodes: [],
+      subdivisionNames: [],
       locations: ['istanbul'],
+    });
+  });
+
+  it('accepts multiple subdivision names with OR location matching data', () => {
+    expect(
+      parseSavedSearchWrite({
+        name: 'gıda',
+        keywords: ['gıda mühendisi'],
+        sources: ['linkedin'],
+        countryCode: 'TR',
+        countryName: 'Türkiye',
+        subdivisionCodes: ['35', '34'],
+        subdivisionNames: ['İzmir', 'İstanbul'],
+      }),
+    ).toMatchObject({
+      subdivisionCodes: ['35', '34'],
+      subdivisionNames: ['İzmir', 'İstanbul'],
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+      locations: [
+        'İzmir',
+        'İstanbul',
+        'İzmir, Türkiye',
+        'İstanbul, Türkiye',
+      ],
     });
   });
 
@@ -115,6 +142,8 @@ describe('parseSavedSearchWrite', () => {
       countryName: null,
       subdivisionCode: null,
       subdivisionName: null,
+      subdivisionCodes: [],
+      subdivisionNames: [],
       locations: [],
     });
   });

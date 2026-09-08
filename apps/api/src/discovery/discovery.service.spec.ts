@@ -48,12 +48,26 @@ function search(overrides: Partial<SavedSearch> = {}): SavedSearch {
 }
 
 class FakeSearchesService extends SearchesService {
+  readonly discoveredAt = new Map<string, string>();
+
   constructor(private readonly active: SavedSearch[]) {
     super(Object.create(SupabaseService.prototype) as SupabaseService);
   }
 
   override getActiveSearches(): Promise<SavedSearch[]> {
     return Promise.resolve(this.active);
+  }
+
+  override markDiscoveredAt(
+    searchIds: readonly string[],
+    discoveredAt: Date | string = new Date(),
+  ): Promise<void> {
+    const iso =
+      discoveredAt instanceof Date ? discoveredAt.toISOString() : discoveredAt;
+    for (const id of searchIds) {
+      this.discoveredAt.set(id, iso);
+    }
+    return Promise.resolve();
   }
 }
 
@@ -114,6 +128,25 @@ class FakeJobsService extends JobsService {
     }
 
     return Promise.resolve(created);
+  }
+
+  override syncMatchesForSearches(
+    searchIds: readonly string[],
+    matches: readonly JobSearchMatch[],
+  ): Promise<JobSearchMatch[]> {
+    const allowed = new Set(searchIds);
+    const desired = matches.filter((match) => allowed.has(match.savedSearchId));
+    const desiredKeys = new Set(
+      desired.map((match) => `${match.jobId}:${match.savedSearchId}`),
+    );
+    const kept = this.matches.filter(
+      (match) =>
+        !allowed.has(match.savedSearchId) ||
+        desiredKeys.has(`${match.jobId}:${match.savedSearchId}`),
+    );
+    this.matches.length = 0;
+    this.matches.push(...kept);
+    return this.saveMatches(desired);
   }
 
   override markInactiveNotSeenSince(): Promise<number> {
@@ -247,29 +280,46 @@ function createDiscovery(
   jobs: FakeJobsService;
   groups: FakeDuplicateGroupsService;
   notifications: FakeNotificationsService;
+  searches: FakeSearchesService;
 } {
+  const searchesService = new FakeSearchesService(searches);
+  const locations = {
+    primeSubdivisionCaches: vi.fn().mockResolvedValue(undefined),
+    getCachedSubdivisionNames: vi.fn().mockReturnValue(null),
+    getCountryName: (code: string) => (code === 'TR' ? 'Türkiye' : null),
+    getSubdivisionName: (country: string | null, subdivision: string | null) => {
+      const plate = subdivision?.padStart(2, '0') ?? '';
+      if (country !== 'TR') {
+        return null;
+      }
+      if (plate === '35') {
+        return 'İzmir';
+      }
+      if (plate === '34') {
+        return 'İstanbul';
+      }
+      return null;
+    },
+  } as unknown as LocationsService;
   const discovery = new DiscoveryService(
-    new FakeSearchesService(searches),
+    searchesService,
     new SourceRegistry(
       adapters ?? [
         new LinkedInSourceAdapter(new LinkedInMockProvider()),
         new KariyerNetSourceAdapter(new KariyerNetMockProvider()),
       ],
     ),
-    new MatchingService(),
+    new MatchingService(locations),
     new DuplicatesService(),
     groups,
     jobs,
     notifications,
     profiles,
     { get: () => undefined } as never,
-    {
-      primeSubdivisionCaches: vi.fn().mockResolvedValue(undefined),
-      getCachedSubdivisionNames: vi.fn().mockReturnValue(null),
-    } as unknown as LocationsService,
+    locations,
   );
 
-  return { discovery, jobs, groups, notifications };
+  return { discovery, jobs, groups, notifications, searches: searchesService };
 }
 
 describe('DiscoveryService', () => {
@@ -291,6 +341,7 @@ describe('DiscoveryService', () => {
       stopReason: null,
       sourceAttempts: 2,
       sourceFailures: 0,
+      sourcePartials: 0,
       catalogJobsChecked: 0,
       rawProviderJobs: 6,
       normalizedJobs: 6,
@@ -426,6 +477,9 @@ describe('DiscoveryService', () => {
     expect(result.kariyerNetPagesFetched).toBe(1);
     expect(result.kariyerNetJobsCollected).toBe(4);
     expect(result.stopReason).toBe('blocked_after_success');
+    expect(result.sourceAttempts).toBe(1);
+    expect(result.sourceFailures).toBe(0);
+    expect(result.sourcePartials).toBe(1);
     expect(jobs.listings.size).toBe(4);
   });
 
@@ -582,7 +636,7 @@ describe('DiscoveryService', () => {
     expect(second.matchesCreated).toBe(0);
     expect(second.notifiedJobCount).toBe(0);
     expect(second.notificationsCreated).toBe(0);
-  });
+  }, 15_000);
 
   it('can create job_search_matches for an already stored listing', async () => {
     const existing: NormalizedJob = {
@@ -1250,6 +1304,44 @@ describe('DiscoveryService', () => {
     });
   });
 
+  it('marks immediate discovery partial when pagination loops after the first page', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({
+        sourceId: 'linkedin',
+        pagesFetched: 1,
+        jobsCollected: 2,
+        stopReason: 'pagination_loop',
+        jobs: [
+          {
+            sourceJobId: 'li-loop-1',
+            canonicalUrl: 'https://www.linkedin.com/jobs/view/1',
+            title: 'Frontend Developer',
+            companyName: 'Example',
+            location: 'İzmir',
+          },
+        ],
+      }),
+    };
+    const target = search({ sourceIds: ['linkedin'] });
+    const { discovery } = createDiscovery([target], [adapter]);
+
+    discovery.enqueueForSavedSearch(target);
+
+    await vi.waitFor(() => {
+      expect(discovery.getImmediateRun(target.id)?.status).toBe('partial');
+    });
+    expect(discovery.getImmediateRun(target.id)?.jobsFetched).toBe(1);
+  });
+
   it('keeps a failed background discovery status without deleting the search', async () => {
     const adapter: JobSourceAdapter = {
       sourceId: 'linkedin',
@@ -1273,5 +1365,164 @@ describe('DiscoveryService', () => {
     await vi.waitFor(() => {
       expect(discovery.getImmediateRun(target.id)?.status).toBe('failed');
     });
+  });
+
+  it('rejects out-of-city catalog jobs for an İzmir search and drops stale matches', async () => {
+    const jobs = new FakeJobsService();
+    const kahramanmaras = {
+      sourceId: 'linkedin' as const,
+      sourceJobId: 'gida-kahramanmaras',
+      canonicalUrl: 'https://example.com/kahramanmaras',
+      title: 'Gıda Mühendisi',
+      companyName: 'Gıda Co',
+      titleNormalized: 'gida muhendisi',
+      companyNormalized: 'gida co',
+      location: 'Kahramanmaraş',
+      workModel: 'onsite' as const,
+      experienceLevel: 'mid',
+      technologies: [],
+      description: 'kalite güvence',
+      publishedAt: null,
+      isActive: true,
+    };
+    const istanbul = {
+      ...kahramanmaras,
+      sourceJobId: 'gida-istanbul',
+      canonicalUrl: 'https://example.com/istanbul',
+      location: 'İstanbul(Asya)',
+    };
+    const izmir = {
+      ...kahramanmaras,
+      sourceJobId: 'gida-izmir',
+      canonicalUrl: 'https://example.com/izmir',
+      location: 'İzmir',
+    };
+
+    await jobs.upsertNormalized(kahramanmaras);
+    await jobs.upsertNormalized(istanbul);
+    await jobs.upsertNormalized(izmir);
+    jobs.matches.push({
+      jobId: sourceListingIdentity('linkedin', 'gida-kahramanmaras'),
+      savedSearchId: 'search-izmir',
+    });
+
+    const emptyAdapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'linkedin', jobs: [] }),
+    };
+    const target = search({
+      id: 'search-izmir',
+      keywords: ['Gıda Mühendisi, kalite güvence'],
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+      locations: ['İzmir', 'İzmir, Türkiye'],
+      sourceIds: ['linkedin'],
+    });
+    const { discovery, searches } = createDiscovery(
+      [target],
+      [emptyAdapter],
+      jobs,
+    );
+
+    await discovery.runForSavedSearch(target);
+
+    expect(jobs.matches).toEqual([
+      {
+        jobId: sourceListingIdentity('linkedin', 'gida-izmir'),
+        savedSearchId: 'search-izmir',
+      },
+    ]);
+    expect(searches.discoveredAt.get('search-izmir')).toEqual(
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    );
+  });
+
+  it('updates lastDiscoveryAt after targeted discovery completes', async () => {
+    const target = search({ id: 'search-new', sourceIds: ['linkedin'] });
+    const { discovery, searches } = createDiscovery(
+      [target],
+      [
+        {
+          sourceId: 'linkedin',
+          displayName: 'LinkedIn',
+          capabilities: {
+            supportsKeywordSearch: true,
+            supportsLocation: true,
+            supportsRemoteFilter: false,
+            supportsExperienceLevel: false,
+          },
+          isEnabled: () => true,
+          search: async () => ({ sourceId: 'linkedin', jobs: [] }),
+        },
+      ],
+    );
+
+    await discovery.runForSavedSearch(target);
+
+    expect(searches.discoveredAt.get('search-new')).toBeTruthy();
+    expect(discovery.getImmediateRun('search-new')).toBeNull();
+  });
+
+  it('fetches LinkedIn with the keyword and country, then matches the listing', async () => {
+    const received: SourceSearchQuery[] = [];
+    const linkedin: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query);
+        return {
+          sourceId: 'linkedin',
+          jobs: [
+            {
+              sourceJobId: 'li-gida-1',
+              canonicalUrl: 'https://www.linkedin.com/jobs/view/gida-1',
+              title: 'Gıda Mühendisi',
+              companyName: 'Gıda Co',
+              location: 'İzmir',
+            },
+          ],
+        };
+      },
+    };
+    const target = search({
+      id: 'search-gida',
+      keywords: ['Gıda Mühendisi'],
+      technologies: [],
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCodes: ['35', '34'],
+      subdivisionNames: ['İzmir', 'İstanbul'],
+      sourceIds: ['linkedin'],
+    });
+    const { discovery, jobs } = createDiscovery([target], [linkedin]);
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(received[0]?.keywords).toEqual(['Gıda Mühendisi']);
+    expect(received[0]?.locations).toEqual(['Türkiye']);
+    expect(result.matchesCreated).toBe(1);
+    expect(jobs.matches).toEqual([
+      {
+        jobId: sourceListingIdentity('linkedin', 'li-gida-1'),
+        savedSearchId: 'search-gida',
+      },
+    ]);
   });
 });

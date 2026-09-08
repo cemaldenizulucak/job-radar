@@ -22,11 +22,10 @@ export const savedSearchFormSchema = z.object({
     .trim()
     .min(1, searchesCopy.keywordRequired)
     .refine((value) => splitTags(value).length > 0, searchesCopy.keywordRequired),
-  technologies: z.string(),
   countryCode: z.string(),
   countryName: z.string(),
-  subdivisionCode: z.string(),
-  subdivisionName: z.string(),
+  subdivisionCodes: z.array(z.string()),
+  subdivisionNames: z.array(z.string()),
   experienceLevels: z.string(),
   workTypes: z.array(workTypeSchema),
   sources: z
@@ -47,6 +46,8 @@ export const savedSearchWriteSchema = z.object({
   countryName: z.string().nullable(),
   subdivisionCode: z.string().nullable(),
   subdivisionName: z.string().nullable(),
+  subdivisionCodes: z.array(z.string().trim().min(1)),
+  subdivisionNames: z.array(z.string().trim().min(1)),
   workTypes: z.array(workTypeSchema),
   experienceLevels: z.array(z.string().trim().min(1)),
   sources: z.array(searchSourceSchema).min(1, searchesCopy.sourceRequired),
@@ -54,17 +55,22 @@ export const savedSearchWriteSchema = z.object({
 
 export function deriveSearchLocations(
   countryName: string,
-  subdivisionName: string,
+  subdivisionNames: readonly string[],
 ): string[] {
   const country = blankLocationToEmpty(countryName);
-  const subdivision = blankLocationToEmpty(subdivisionName);
+  const cities = subdivisionNames
+    .map((name) => blankLocationToEmpty(name))
+    .filter((name) => name.length > 0);
 
-  if (subdivision && country) {
-    return [subdivision, `${subdivision}, ${country}`];
+  if (cities.length > 0 && country) {
+    return unique([
+      ...cities,
+      ...cities.map((city) => `${city}, ${country}`),
+    ]);
   }
 
-  if (subdivision) {
-    return [subdivision];
+  if (cities.length > 0) {
+    return cities;
   }
 
   if (country) {
@@ -72,6 +78,19 @@ export function deriveSearchLocations(
   }
 
   return [];
+}
+
+function unique(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
 }
 
 function blankLocationToEmpty(value: string): string {
@@ -110,28 +129,31 @@ export function formValuesToWriteInput(
   const countryCode = countryName
     ? values.countryCode.trim() || null
     : null;
-  const subdivisionName = countryCode
-    ? blankLocationToEmpty(values.subdivisionName) || null
-    : null;
-  const subdivisionCode =
-    countryCode && subdivisionName
-      ? values.subdivisionCode.trim() || null
-      : null;
+  const subdivisionNames = countryCode
+    ? values.subdivisionNames
+        .map((name) => blankLocationToEmpty(name))
+        .filter((name) => name.length > 0)
+    : [];
+  const subdivisionCodes = countryCode
+    ? values.subdivisionCodes
+        .map((code) => code.trim())
+        .filter((code) => code.length > 0)
+        .slice(0, subdivisionNames.length)
+    : [];
 
   return savedSearchWriteSchema.parse({
     name: values.name,
     isActive: values.isActive,
     keywords: splitTags(values.keywords),
-    technologies: splitTags(values.technologies),
-    locations: deriveSearchLocations(
-      countryName ?? '',
-      subdivisionName ?? '',
-    ),
+    technologies: [],
+    locations: deriveSearchLocations(countryName ?? '', subdivisionNames),
     countryCode,
     countryName,
-    subdivisionCode,
-    subdivisionName,
-    workTypes: [],
+    subdivisionCode: subdivisionCodes[0] ?? null,
+    subdivisionName: subdivisionNames[0] ?? null,
+    subdivisionCodes,
+    subdivisionNames,
+    workTypes: values.workTypes,
     experienceLevels: splitTags(values.experienceLevels),
     sources: values.sources,
   });
@@ -143,4 +165,28 @@ export function joinTags(values: readonly string[]): string {
 
 export function previewTags(value: string): string[] {
   return splitTags(value);
+}
+
+export function coalesceSubdivisionCodes(search: {
+  subdivisionCodes?: readonly string[] | null;
+  subdivisionCode?: string | null;
+}): string[] {
+  if (search.subdivisionCodes && search.subdivisionCodes.length > 0) {
+    return [...search.subdivisionCodes];
+  }
+
+  const single = search.subdivisionCode?.trim();
+  return single ? [single] : [];
+}
+
+export function coalesceSubdivisionNames(search: {
+  subdivisionNames?: readonly string[] | null;
+  subdivisionName?: string | null;
+}): string[] {
+  if (search.subdivisionNames && search.subdivisionNames.length > 0) {
+    return [...search.subdivisionNames];
+  }
+
+  const single = search.subdivisionName?.trim();
+  return single ? [single] : [];
 }

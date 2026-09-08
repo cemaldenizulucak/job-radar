@@ -3,6 +3,8 @@ import { BadRequestException } from '@nestjs/common';
 import type { SourceId, WorkModel } from '../common/domain.types.js';
 import { isRecord } from '../common/request.js';
 import {
+  coalesceSubdivisionCodes,
+  coalesceSubdivisionNames,
   deriveSavedSearchLocations,
   sanitizeCountryCode,
   sanitizeLocationList,
@@ -37,6 +39,8 @@ export function toSavedSearchResponse(
     countryName: search.countryName,
     subdivisionCode: search.subdivisionCode,
     subdivisionName: search.subdivisionName,
+    subdivisionCodes: coalesceSubdivisionCodes(search),
+    subdivisionNames: coalesceSubdivisionNames(search),
     workTypes: [...search.workTypes],
     experienceLevels: [...search.experienceLevels],
     sources: [...search.sourceIds],
@@ -44,6 +48,7 @@ export function toSavedSearchResponse(
     locationSource: toSearchLocationOrigin(resolved.source),
     createdAt: search.createdAt,
     updatedAt: search.updatedAt,
+    lastDiscoveredAt: search.lastDiscoveredAt ?? null,
     ...(options?.discovery ? { discovery: options.discovery } : {}),
   };
 }
@@ -67,18 +72,38 @@ export function parseSavedSearchWrite(body: unknown): SavedSearchWriteInput {
   const countryName = sanitizeLocationToken(
     readOptionalName(body.countryName, 'countryName'),
   );
-  const subdivisionName = sanitizeLocationToken(
-    readOptionalName(body.subdivisionName, 'subdivisionName'),
+  const subdivisionNames = sanitizeLocationList(
+    readStringArray(body.subdivisionNames, 'subdivisionNames'),
   );
+  const subdivisionName =
+    subdivisionNames[0] ??
+    sanitizeLocationToken(readOptionalName(body.subdivisionName, 'subdivisionName'));
+  const names = subdivisionNames.length > 0
+    ? subdivisionNames
+    : subdivisionName
+      ? [subdivisionName]
+      : [];
   const countryCode =
-    countryName || subdivisionName
+    countryName || names.length > 0
       ? sanitizeCountryCode(readOptionalCode(body.countryCode, 'countryCode'))
       : null;
+  const subdivisionCodes = sanitizeLocationList(
+    readStringArray(body.subdivisionCodes, 'subdivisionCodes'),
+  );
   const subdivisionCode =
-    countryCode && subdivisionName
-      ? readOptionalCode(body.subdivisionCode, 'subdivisionCode')
+    countryCode && names.length > 0
+      ? subdivisionCodes[0] ??
+        readOptionalCode(body.subdivisionCode, 'subdivisionCode')
       : null;
-  const hasStructuredLocation = Boolean(countryName || subdivisionName);
+  const codes =
+    countryCode && names.length > 0
+      ? subdivisionCodes.length > 0
+        ? subdivisionCodes
+        : subdivisionCode
+          ? [subdivisionCode]
+          : []
+      : [];
+  const hasStructuredLocation = Boolean(countryName || names.length > 0);
 
   return {
     name,
@@ -86,12 +111,17 @@ export function parseSavedSearchWrite(body: unknown): SavedSearchWriteInput {
     keywords,
     technologies: readStringArray(body.technologies, 'technologies'),
     locations: hasStructuredLocation
-      ? deriveSavedSearchLocations({ countryName, subdivisionName })
+      ? deriveSavedSearchLocations({
+          countryName,
+          subdivisionNames: names,
+        })
       : sanitizeLocationList(readStringArray(body.locations, 'locations')),
     countryCode,
     countryName,
     subdivisionCode,
-    subdivisionName,
+    subdivisionName: names[0] ?? null,
+    subdivisionCodes: codes,
+    subdivisionNames: names,
     workTypes: readStringArray(body.workTypes, 'workTypes').filter(isWorkModel),
     experienceLevels: readStringArray(body.experienceLevels, 'experienceLevels'),
     sources,

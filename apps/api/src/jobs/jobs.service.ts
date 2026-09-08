@@ -59,21 +59,29 @@ export class JobsService {
 
   async listForUser(query: JobListQuery): Promise<JobListResult> {
     const limit = clampJobFeedLimit(query.limit);
-    const matches = await this.loadMatchesSafe(query.savedSearchId);
-    const userSearchIds = await this.loadUserSearchIds(query.userId);
-    if (
-      (query.matchedOnly || query.savedSearchId) &&
-      userSearchIds === null
-    ) {
-      return { items: [], nextCursor: null };
+    const savedSearchId = parseSavedSearchId(query.savedSearchId);
+    const matches = await this.loadMatchesSafe();
+    const searchMeta = await this.loadUserSearchMeta(query.userId);
+    if ((query.matchedOnly || savedSearchId) && searchMeta === null) {
+      return emptyJobListResult();
     }
 
+    const userSearchIds = searchMeta?.ids ?? null;
     const userMatches = filterMatchesForUser(matches, userSearchIds);
+    const listMatches = savedSearchId
+      ? userMatches.filter((match) => match.savedSearchId === savedSearchId)
+      : userMatches;
     const matchedSearchIdsByJob = groupMatchIds(userMatches);
-    const scopedJobIds = resolveScopedJobIds(query, userMatches);
+    const scopedQuery = { ...query, savedSearchId };
+    const scopedJobIds = resolveScopedJobIds(scopedQuery, listMatches);
 
     if (scopedJobIds && scopedJobIds.length === 0) {
-      return { items: [], nextCursor: null };
+      return {
+        ...emptyJobListResult(),
+        lastDiscoveryAt: resolveLastDiscoveryAt(savedSearchId, searchMeta),
+        totalCount: uniqueStrings(listMatches.map((match) => match.jobId)).length,
+        savedSearchCounts: countMatchesBySearch(userMatches),
+      };
     }
 
     const rows = await this.loadJobsFromTable(query, limit, scopedJobIds);
@@ -84,7 +92,7 @@ export class JobsService {
       message: 'Job feed loaded from public.jobs',
       loadedJobCount: rows.length,
       sourceFilter: query.sourceId ?? null,
-      savedSearchId: query.savedSearchId ?? null,
+      savedSearchId: savedSearchId ?? null,
     });
 
     for (const row of rows) {
@@ -128,9 +136,17 @@ export class JobsService {
       itemCount: page.length,
     });
 
+    const totalCount =
+      query.matchedOnly || savedSearchId
+        ? uniqueStrings(listMatches.map((match) => match.jobId)).length
+        : items.length;
+
     return {
       items: page,
       nextCursor: items.length > limit ? page[page.length - 1]?.id ?? null : null,
+      lastDiscoveryAt: resolveLastDiscoveryAt(savedSearchId, searchMeta),
+      totalCount,
+      savedSearchCounts: countMatchesBySearch(userMatches),
     };
   }
 
@@ -370,6 +386,13 @@ export class JobsService {
   private async loadUserSearchIds(
     userId: string,
   ): Promise<ReadonlySet<string> | null> {
+    const meta = await this.loadUserSearchMeta(userId);
+    return meta ? meta.ids : null;
+  }
+
+  private async loadUserSearchMeta(
+    userId: string,
+  ): Promise<UserSearchMeta | null> {
     if (!userId || userId === 'anonymous') {
       return null;
     }
@@ -377,7 +400,7 @@ export class JobsService {
     const { data, error } = await this.supabase
       .getClient()
       .from('saved_searches')
-      .select('id')
+      .select('id, last_discovered_at')
       .eq('user_id', userId);
 
     if (error) {
@@ -388,8 +411,9 @@ export class JobsService {
     }
 
     const ids = new Set<string>();
+    const lastDiscoveryAtById = new Map<string, string>();
     if (!Array.isArray(data)) {
-      return ids;
+      return { ids, lastDiscoveryAtById };
     }
 
     for (const row of data) {
@@ -398,12 +422,49 @@ export class JobsService {
       }
 
       const id = readString(row, 'id');
-      if (id) {
-        ids.add(id);
+      if (!id) {
+        continue;
+      }
+
+      ids.add(id);
+      const discoveredAt = readString(row, 'last_discovered_at');
+      if (discoveredAt) {
+        lastDiscoveryAtById.set(id, discoveredAt);
       }
     }
 
-    return ids;
+    return { ids, lastDiscoveryAtById };
+  }
+
+  private async countUnscopedFeedJobs(query: JobListQuery): Promise<number> {
+    try {
+      let request = this.supabase
+        .getClient()
+        .from('jobs')
+        .select('id', { count: 'exact', head: true });
+
+      if (!query.includeInactive) {
+        request = request.eq('is_active', true);
+      }
+
+      const publishedCutoff = sourceMaxAgeCutoff(this.maxAgeDays()).toISOString();
+      request = request.or(
+        `published_at.is.null,published_at.gte."${publishedCutoff}"`,
+      );
+
+      if (query.sourceId && query.sourceId !== 'all') {
+        request = request.eq('source', query.sourceId);
+      }
+
+      const { count, error } = await request;
+      if (error || typeof count !== 'number') {
+        return 0;
+      }
+
+      return count;
+    } catch {
+      return 0;
+    }
   }
 
   private async loadSearchNames(
@@ -837,6 +898,37 @@ export class JobsService {
     return created;
   }
 
+  async syncMatchesForSearches(
+    searchIds: readonly string[],
+    matches: readonly JobSearchMatch[],
+  ): Promise<JobSearchMatch[]> {
+    const allowed = new Set(
+      searchIds.filter((id) => id.trim().length > 0),
+    );
+    if (allowed.size === 0) {
+      return [];
+    }
+
+    const desired = matches.filter((match) => allowed.has(match.savedSearchId));
+    const desiredBySearch = new Map<string, Set<string>>();
+    for (const searchId of allowed) {
+      desiredBySearch.set(searchId, new Set());
+    }
+    for (const match of desired) {
+      desiredBySearch.get(match.savedSearchId)?.add(match.jobId);
+    }
+
+    for (const [searchId, jobIds] of desiredBySearch) {
+      const existing = await this.loadMatches(searchId);
+      const staleJobIds = existing
+        .map((row) => row.jobId)
+        .filter((jobId) => !jobIds.has(jobId));
+      await this.deleteMatches(searchId, staleJobIds);
+    }
+
+    return this.saveMatches(desired);
+  }
+
   async markInactiveNotSeenSince(cutoffIso: string): Promise<number> {
     const now = new Date().toISOString();
     const { data, error } = await this.supabase
@@ -965,6 +1057,28 @@ export class JobsService {
     return data !== null;
   }
 
+  private async deleteMatches(
+    savedSearchId: string,
+    jobIds: readonly string[],
+  ): Promise<void> {
+    const uniqueIds = uniqueStrings(jobIds);
+    if (uniqueIds.length === 0) {
+      return;
+    }
+
+    const { error } = await this.supabase
+      .getClient()
+      .from('job_search_matches')
+      .delete()
+      .eq('saved_search_id', savedSearchId)
+      .in('job_id', uniqueIds);
+
+    if (error) {
+      this.logSupabaseError(error);
+      throw new InternalServerErrorException('Failed to update job matches.');
+    }
+  }
+
   private async insertMatch(match: JobSearchMatch): Promise<void> {
     const now = new Date().toISOString();
     const { error } = await this.supabase
@@ -1045,6 +1159,69 @@ function readDate(row: Record<string, unknown>, key: string): Date | null {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseSavedSearchId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed || trimmed === 'all') {
+    return undefined;
+  }
+
+  return trimmed;
+}
+
+function emptyJobListResult(): JobListResult {
+  return {
+    items: [],
+    nextCursor: null,
+    lastDiscoveryAt: null,
+    totalCount: 0,
+    savedSearchCounts: [],
+  };
+}
+
+type UserSearchMeta = {
+  ids: ReadonlySet<string>;
+  lastDiscoveryAtById: ReadonlyMap<string, string>;
+};
+
+function resolveLastDiscoveryAt(
+  savedSearchId: string | undefined,
+  meta: UserSearchMeta | null,
+): string | null {
+  if (!meta) {
+    return null;
+  }
+
+  if (savedSearchId) {
+    return meta.lastDiscoveryAtById.get(savedSearchId) ?? null;
+  }
+
+  let latest: string | null = null;
+  for (const iso of meta.lastDiscoveryAtById.values()) {
+    if (!latest || iso > latest) {
+      latest = iso;
+    }
+  }
+
+  return latest;
+}
+
+function countMatchesBySearch(
+  matches: readonly JobMatchRow[],
+): { id: string; count: number }[] {
+  const jobsBySearch = new Map<string, Set<string>>();
+
+  for (const match of matches) {
+    const jobs = jobsBySearch.get(match.savedSearchId) ?? new Set<string>();
+    jobs.add(match.jobId);
+    jobsBySearch.set(match.savedSearchId, jobs);
+  }
+
+  return [...jobsBySearch.entries()].map(([id, jobs]) => ({
+    id,
+    count: jobs.size,
+  }));
 }
 
 type JobMatchRow = {

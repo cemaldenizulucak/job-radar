@@ -29,12 +29,15 @@ export type SavedSearch = {
   countryName: string | null;
   subdivisionCode: string | null;
   subdivisionName: string | null;
+  subdivisionCodes?: readonly string[];
+  subdivisionNames?: readonly string[];
   workTypes: readonly WorkType[];
   experienceLevels: readonly string[];
   sources: readonly SearchSourceId[];
   effectiveLocation: string | null;
   locationSource: SearchLocationOrigin;
   discovery?: SearchDiscoveryResult;
+  lastDiscoveredAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -49,6 +52,8 @@ export type SavedSearchWriteInput = {
   countryName: string | null;
   subdivisionCode: string | null;
   subdivisionName: string | null;
+  subdivisionCodes: readonly string[];
+  subdivisionNames: readonly string[];
   workTypes: readonly WorkType[];
   experienceLevels: readonly string[];
   sources: readonly SearchSourceId[];

@@ -27,6 +27,18 @@ describe('immediateDiscoveryStatus', () => {
     ).toBe('partial');
   });
 
+  it('is partial when a source kept earlier pages after a pagination loop', () => {
+    expect(
+      immediateDiscoveryStatus({
+        ...EMPTY_DISCOVERY_SUMMARY,
+        sourceAttempts: 2,
+        sourceFailures: 0,
+        sourcePartials: 1,
+        jobsFetched: 6,
+      }),
+    ).toBe('partial');
+  });
+
   it('is failed when every attempted source fails', () => {
     expect(
       toImmediateDiscoveryResult({
@@ -38,6 +50,7 @@ describe('immediateDiscoveryStatus', () => {
       status: 'failed',
       jobsFetched: 0,
       matchesCreated: 0,
+      lastDiscoveryAt: null,
     });
   });
 });

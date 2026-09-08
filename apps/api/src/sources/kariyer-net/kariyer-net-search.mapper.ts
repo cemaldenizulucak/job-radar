@@ -11,7 +11,7 @@ export function mapKariyerNetSearch(
 ): KariyerNetSearchInput {
   return {
     keywords: capabilities.supportsKeywordSearch
-      ? uniqueNonEmpty([...query.keywords, ...query.technologies])
+      ? uniqueNonEmpty([...query.keywords])
       : [],
     locations: capabilities.supportsLocation
       ? uniqueNonEmpty([...query.locations])

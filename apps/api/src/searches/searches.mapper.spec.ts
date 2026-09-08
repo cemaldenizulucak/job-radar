@@ -27,11 +27,14 @@ describe('mapSavedSearchRow', () => {
       countryName: null,
       subdivisionCode: null,
       subdivisionName: null,
+      subdivisionCodes: [],
+      subdivisionNames: [],
       workTypes: ['remote'],
       experienceLevels: ['mid'],
       sourceIds: ['linkedin'],
       createdAt: '',
       updatedAt: '',
+      lastDiscoveredAt: null,
     });
   });
 
@@ -50,6 +53,8 @@ describe('mapSavedSearchRow', () => {
         countryName: 'Türkiye',
         subdivisionCode: '35',
         subdivisionName: 'İzmir',
+        subdivisionCodes: ['35'],
+        subdivisionNames: ['İzmir'],
       }),
     );
   });
@@ -69,6 +74,40 @@ describe('mapSavedSearchRow', () => {
         countryCode: null,
         countryName: null,
         subdivisionName: null,
+      }),
+    );
+  });
+
+  it('lifts a legacy scalar subdivision into arrays', () => {
+    expect(
+      mapSavedSearchRow({
+        ...validRow,
+        country_code: 'TR',
+        country_name: 'Türkiye',
+        subdivision_code: '35',
+        subdivision_name: 'İzmir',
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        subdivisionCodes: ['35'],
+        subdivisionNames: ['İzmir'],
+      }),
+    );
+  });
+
+  it('maps stored subdivision arrays when present', () => {
+    expect(
+      mapSavedSearchRow({
+        ...validRow,
+        country_code: 'TR',
+        country_name: 'Türkiye',
+        subdivision_codes: ['35', '34'],
+        subdivision_names: ['İzmir', 'İstanbul'],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        subdivisionCodes: ['35', '34'],
+        subdivisionNames: ['İzmir', 'İstanbul'],
       }),
     );
   });

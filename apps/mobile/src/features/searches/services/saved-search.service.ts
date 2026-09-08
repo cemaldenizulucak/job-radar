@@ -39,12 +39,15 @@ const savedSearchApiSchema = z.object({
   countryName: z.string().nullable().optional(),
   subdivisionCode: z.string().nullable().optional(),
   subdivisionName: z.string().nullable().optional(),
+  subdivisionCodes: z.array(z.string()).optional(),
+  subdivisionNames: z.array(z.string()).optional(),
   workTypes: z.array(z.string()),
   experienceLevels: z.array(z.string()),
   sources: z.array(z.string()),
   effectiveLocation: z.string().nullable().optional(),
   locationSource: z.enum(['search', 'profile', 'none']).optional(),
   discovery: searchDiscoveryApiSchema.optional(),
+  lastDiscoveredAt: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -79,6 +82,18 @@ function mapSearch(row: z.infer<typeof savedSearchApiSchema>): SavedSearch {
     countryName: row.countryName ?? null,
     subdivisionCode: row.subdivisionCode ?? null,
     subdivisionName: row.subdivisionName ?? null,
+    subdivisionCodes:
+      row.subdivisionCodes && row.subdivisionCodes.length > 0
+        ? row.subdivisionCodes
+        : row.subdivisionCode
+          ? [row.subdivisionCode]
+          : [],
+    subdivisionNames:
+      row.subdivisionNames && row.subdivisionNames.length > 0
+        ? row.subdivisionNames
+        : row.subdivisionName
+          ? [row.subdivisionName]
+          : [],
     workTypes: row.workTypes.filter(isWorkType),
     experienceLevels: row.experienceLevels,
     sources: row.sources.filter(isSearchSourceId),
@@ -86,6 +101,7 @@ function mapSearch(row: z.infer<typeof savedSearchApiSchema>): SavedSearch {
     locationSource:
       row.locationSource ?? (row.locations.length > 0 ? 'search' : 'none'),
     discovery: row.discovery,
+    lastDiscoveredAt: row.lastDiscoveredAt ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

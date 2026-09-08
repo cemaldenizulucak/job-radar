@@ -211,4 +211,17 @@ describe('parseKariyerNetSearchHtml', () => {
       reason: 'Kariyer.net HTML did not contain parseable job listings.',
     });
   });
+
+  it('does not treat a login footer as a block when job cards are present', () => {
+    const parsed = parseKariyerNetSearchHtml(
+      `${fixture('search-listing.html')}<footer>Giriş Yap · Referans No 123</footer>`,
+    );
+
+    expect(parsed.kind).toBe('jobs');
+    if (parsed.kind !== 'jobs') {
+      return;
+    }
+
+    expect(parsed.jobs.length).toBeGreaterThan(0);
+  });
 });

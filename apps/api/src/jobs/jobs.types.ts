@@ -87,4 +87,7 @@ export type JobTabs = {
 export type JobListResult = {
   items: readonly JobListItem[];
   nextCursor: string | null;
+  lastDiscoveryAt: string | null;
+  totalCount: number;
+  savedSearchCounts: readonly { id: string; count: number }[];
 };

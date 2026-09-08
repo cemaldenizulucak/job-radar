@@ -3,7 +3,7 @@ import { sanitizeCountryCode, sanitizeLocationList, sanitizeLocationToken } from
 import type { SavedSearch } from './searches.types.js';
 
 export const SAVED_SEARCH_SELECT =
-  'id, user_id, name, is_active, keywords, technologies, locations, country_code, country_name, subdivision_code, subdivision_name, work_types, experience_levels, sources, created_at, updated_at';
+  'id, user_id, name, is_active, keywords, technologies, locations, country_code, country_name, subdivision_code, subdivision_name, subdivision_codes, subdivision_names, work_types, experience_levels, sources, created_at, updated_at, last_discovered_at';
 
 export function mapSavedSearchRows(value: unknown): SavedSearch[] {
   if (!Array.isArray(value)) {
@@ -48,11 +48,20 @@ export function mapSavedSearchRow(value: unknown): SavedSearch | null {
     countryName: sanitizeLocationToken(readString(value, 'country_name')),
     subdivisionCode: sanitizeLocationToken(readString(value, 'subdivision_code')),
     subdivisionName: sanitizeLocationToken(readString(value, 'subdivision_name')),
+    subdivisionCodes: coalesceMappedList(
+      readStringArray(value, 'subdivision_codes'),
+      readString(value, 'subdivision_code'),
+    ),
+    subdivisionNames: coalesceMappedList(
+      readStringArray(value, 'subdivision_names'),
+      readString(value, 'subdivision_name'),
+    ),
     workTypes: readStringArray(value, 'work_types').filter(isWorkModel),
     experienceLevels: readStringArray(value, 'experience_levels'),
     sourceIds: readStringArray(value, 'sources').filter(isSourceId),
     createdAt: readString(value, 'created_at') ?? '',
     updatedAt: readString(value, 'updated_at') ?? '',
+    lastDiscoveredAt: readString(value, 'last_discovered_at'),
   };
 }
 
@@ -98,4 +107,17 @@ function readStringArray(row: Record<string, unknown>, key: string): string[] {
   }
 
   return value.filter((item): item is string => typeof item === 'string');
+}
+
+function coalesceMappedList(
+  values: readonly string[],
+  scalar: string | null,
+): string[] {
+  const fromArray = sanitizeLocationList(values);
+  if (fromArray.length > 0) {
+    return fromArray;
+  }
+
+  const single = sanitizeLocationToken(scalar);
+  return single ? [single] : [];
 }

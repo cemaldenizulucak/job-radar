@@ -20,4 +20,15 @@ describe('jobsEmptyMessage', () => {
       jobsEmptyMessage({ itemCount: 4, visibleCount: 0, resultsView: 'matched' }),
     ).toBe('Bu filtre için henüz eşleşen ilan yok.');
   });
+
+  it('does not show an empty-match message while discovery is still running', () => {
+    expect(
+      jobsEmptyMessage({
+        itemCount: 0,
+        visibleCount: 0,
+        resultsView: 'matched',
+        isDiscovering: true,
+      }),
+    ).toBeNull();
+  });
 });

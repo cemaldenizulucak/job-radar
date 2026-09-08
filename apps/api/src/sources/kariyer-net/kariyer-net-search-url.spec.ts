@@ -44,6 +44,22 @@ describe('buildKariyerNetSearchUrl', () => {
     expect(url).toBe('https://www.kariyer.net/is-ilanlari/istanbul');
   });
 
+  it('does not use a country name as a city slug', () => {
+    const parsed = new URL(
+      buildKariyerNetSearchUrl({
+        keywords: ['angular'],
+        locations: ['Türkiye'],
+        workTypes: [],
+        experienceLevels: [],
+      }),
+    );
+
+    expect(parsed.pathname).toBe('/is-ilanlari');
+    expect(parsed.searchParams.get('kw')).toBe('angular');
+    expect(toLocationSlug('Türkiye')).toBe('');
+    expect(toLocationSlug('Turkey')).toBe('');
+  });
+
   it('adds cp for pages after the first', () => {
     const parsed = new URL(
       buildKariyerNetSearchUrl(

@@ -5,11 +5,17 @@ import {
   hasExplicitSearchLocationFilter,
   jobLocationMatchResult,
   resolveSavedSearchLocation,
+  coalesceSubdivisionCodes,
+  coalesceSubdivisionNames,
 } from '../common/search-location.js';
 import { LocationsService } from '../locations/locations.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { logMatchDecision } from './matching-dev-log.js';
 import { jobSearchableText, queryAppearsIn } from './match-text.js';
+import {
+  searchLooksLikeSoftware,
+  titleLooksUnrelatedToSoftware,
+} from './unrelated-profession.js';
 import type {
   JobSearchMatch,
   MatchableJob,
@@ -20,8 +26,8 @@ import type {
 /**
  * Profession-agnostic matching.
  *
- * Keywords (and optional technologies) are OR'd against searchable job text.
- * Empty optional filters never reject. Work model is never a match criterion.
+ * Keywords are OR'd against title, description, and structured skills.
+ * Empty optional filters never reject. Work model and location stay separate.
  * Score is for sorting only and never excludes a textual match.
  */
 export const MATCH_SCORE = {
@@ -72,13 +78,14 @@ export class MatchingService {
     const location = this.locationResult(job, search);
     const technology = this.optionalTagResult(job, search);
     const experience = this.experienceResult(job, search);
-    const workModel = this.workModelResult();
+    const workModel = this.workModelResult(job, search);
     const reasons = rejectionReasons({
       isActive: search.isActive,
       sourceAllowed: this.matchesSources(job, search),
       keyword,
       location,
       experience,
+      workModel,
     });
     const matched = reasons.length === 0;
     const score = matched ? scoreTextMatch(job, terms) : 0;
@@ -144,6 +151,13 @@ export class MatchingService {
       return 'skipped';
     }
 
+    if (
+      searchLooksLikeSoftware(terms) &&
+      titleLooksUnrelatedToSoftware(job.title)
+    ) {
+      return 'fail';
+    }
+
     return terms.some(
       (term) =>
         queryAppearsIn(job.title, term) ||
@@ -163,32 +177,55 @@ export class MatchingService {
     }
 
     const searchable = jobSearchableText(job);
-    return search.technologies.some((term) => queryAppearsIn(searchable, term))
-      ? 'pass'
-      : 'skipped';
+    if (search.technologies.some((term) => queryAppearsIn(searchable, term))) {
+      return 'pass';
+    }
+
+    if (!job.description) {
+      return 'unknown';
+    }
+
+    return 'skipped';
   }
 
   private locationResult(
     job: MatchableJob,
     search: SavedSearch,
   ): MatchFieldResult {
-    if (!hasExplicitSearchLocationFilter(search)) {
+    const hydrated = hydrateSearchLocation(search, this.locationsService);
+    if (!hasExplicitSearchLocationFilter(hydrated)) {
       return 'skipped';
     }
 
-    const aliases = search.countryCode
-      ? (this.locationsService?.getCachedSubdivisionNames(search.countryCode) ??
+    const aliases = hydrated.countryCode
+      ? (this.locationsService?.getCachedSubdivisionNames(hydrated.countryCode) ??
         [])
       : [];
 
     return jobLocationMatchResult(
       job.location,
-      resolveSavedSearchLocation(search, aliases),
+      resolveSavedSearchLocation(hydrated, aliases),
+      {
+        workModel: job.workModel,
+        countryCityAliases: aliases,
+      },
     );
   }
 
-  private workModelResult(): MatchFieldResult {
-    return 'skipped';
+  private workModelResult(
+    job: MatchableJob,
+    search: SavedSearch,
+  ): MatchFieldResult {
+    const allowed = search.workTypes.filter((model) => model !== 'unknown');
+    if (allowed.length === 0) {
+      return 'skipped';
+    }
+
+    if (!job.workModel || job.workModel === 'unknown') {
+      return 'unknown';
+    }
+
+    return allowed.includes(job.workModel) ? 'pass' : 'fail';
   }
 
   private experienceResult(
@@ -212,9 +249,49 @@ export class MatchingService {
 }
 
 function collectSearchTerms(search: SavedSearch): string[] {
-  return [...search.keywords, ...search.technologies]
+  return search.keywords
+    .flatMap((term) => term.split(','))
     .map((term) => term.trim())
     .filter((term) => term.length > 0);
+}
+
+function hydrateSearchLocation(
+  search: SavedSearch,
+  locations: LocationsService | null,
+): SavedSearch {
+  const countryName =
+    search.countryName ??
+    (typeof locations?.getCountryName === 'function'
+      ? locations.getCountryName(search.countryCode)
+      : null) ??
+    null;
+  const codes = coalesceSubdivisionCodes(search);
+  const existingNames = coalesceSubdivisionNames(search);
+  const names =
+    existingNames.length > 0
+      ? existingNames
+      : codes
+          .map((code) =>
+            typeof locations?.getSubdivisionName === 'function'
+              ? locations.getSubdivisionName(search.countryCode, code)
+              : null,
+          )
+          .filter((name): name is string => Boolean(name));
+  const subdivisionName =
+    names[0] ??
+    search.subdivisionName ??
+    (typeof locations?.getSubdivisionName === 'function'
+      ? locations.getSubdivisionName(search.countryCode, search.subdivisionCode)
+      : null) ??
+    null;
+
+  return {
+    ...search,
+    countryName,
+    subdivisionName,
+    subdivisionCodes: codes,
+    subdivisionNames: names.length > 0 ? names : subdivisionName ? [subdivisionName] : [],
+  };
 }
 
 function fieldContainsAny(
@@ -271,6 +348,7 @@ function rejectionReasons(input: {
   keyword: MatchFieldResult;
   location: MatchFieldResult;
   experience: MatchFieldResult;
+  workModel: MatchFieldResult;
 }): string[] {
   const reasons: string[] = [];
 
@@ -292,6 +370,14 @@ function rejectionReasons(input: {
 
   if (input.experience === 'fail') {
     reasons.push('experience conflict');
+  }
+
+  if (input.workModel === 'fail') {
+    reasons.push('work model mismatch');
+  }
+
+  if (input.workModel === 'unknown') {
+    reasons.push('work model unknown');
   }
 
   return reasons;

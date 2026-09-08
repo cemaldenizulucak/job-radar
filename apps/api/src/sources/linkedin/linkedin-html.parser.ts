@@ -45,10 +45,6 @@ export function parseLinkedInSearchHtml(
     return { kind: 'mismatch', reason: 'LinkedIn returned an empty document.' };
   }
 
-  if (looksLikeChallenge(html)) {
-    return { kind: 'blocked', reason: 'challenge' };
-  }
-
   const fromJsonLd = extractJobsFromJsonLd(html, baseUrl);
   const fromCards = extractJobsFromCards(html, baseUrl);
   const fromAnchors = extractJobsFromAnchors(html, baseUrl);
@@ -56,6 +52,10 @@ export function parseLinkedInSearchHtml(
 
   if (jobs.length > 0) {
     return { kind: 'jobs', jobs };
+  }
+
+  if (looksLikeChallenge(html)) {
+    return { kind: 'blocked', reason: 'challenge' };
   }
 
   if (

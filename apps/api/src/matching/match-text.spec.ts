@@ -23,6 +23,19 @@ describe('queryAppearsIn', () => {
   it('does not match unrelated text', () => {
     expect(queryAppearsIn('Satış Temsilcisi', 'muhasebe')).toBe(false);
   });
+
+  it('matches Gıda Mühendisi variants without accepting unrelated engineer titles', () => {
+    expect(queryAppearsIn('Gıda Mühendisi', 'Gıda Mühendisi')).toBe(true);
+    expect(queryAppearsIn('Gıda Mühendisliği Uzmanı', 'Gıda Mühendisi')).toBe(true);
+    expect(queryAppearsIn('Gida Muhendisi', 'Gıda Mühendisi')).toBe(true);
+    expect(queryAppearsIn('Gıda Mühendis', 'Gıda Mühendisi')).toBe(true);
+    expect(queryAppearsIn('Senior Gıda Mühendisi', 'Gıda Mühendisi')).toBe(true);
+    expect(queryAppearsIn('Gıda Mühendisi', 'Gida Muhendisi')).toBe(true);
+    expect(queryAppearsIn('Gıda Mühendisi', 'Gıda Muhendis')).toBe(true);
+    expect(queryAppearsIn('Yazılım Mühendisi', 'Gıda Mühendisi')).toBe(false);
+    expect(queryAppearsIn('Makine Mühendisi', 'Gıda Mühendisi')).toBe(false);
+    expect(queryAppearsIn('Gıda Satış Temsilcisi', 'Gıda Mühendisi')).toBe(false);
+  });
 });
 
 describe('phraseAppearsIn', () => {

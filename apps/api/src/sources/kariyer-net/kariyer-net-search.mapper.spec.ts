@@ -16,7 +16,7 @@ describe('mapKariyerNetSearch', () => {
     const mapped = mapKariyerNetSearch(query, KARIYER_NET_CAPABILITIES);
 
     expect(mapped).toEqual({
-      keywords: ['frontend', 'React'],
+      keywords: ['frontend'],
       locations: ['Istanbul'],
       workTypes: [],
       experienceLevels: [],

@@ -81,6 +81,20 @@ describe('shouldTriggerSavedSearchDiscovery', () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      shouldTriggerSavedSearchDiscovery(
+        search({
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          subdivisionNames: ['İzmir'],
+        }),
+        search({
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          subdivisionNames: ['İzmir', 'İstanbul'],
+        }),
+      ),
+    ).toBe(true);
   });
 
   it('triggers when technologies, work types, experience, or sources change', () => {

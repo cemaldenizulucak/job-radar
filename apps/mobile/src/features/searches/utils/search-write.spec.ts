@@ -50,6 +50,8 @@ function writeInput(
     countryName: null,
     subdivisionCode: null,
     subdivisionName: null,
+    subdivisionCodes: [],
+    subdivisionNames: [],
     workTypes: [],
     experienceLevels: [],
     sources: ['linkedin', 'kariyer_net'],
@@ -101,11 +103,10 @@ describe('formValuesToWriteInput', () => {
       formValuesToWriteInput({
         name: 'Frontend',
         keywords: 'Frontend Developer',
-        technologies: '',
         countryCode: 'TR',
         countryName: 'Türkiye',
-        subdivisionCode: '35',
-        subdivisionName: 'İzmir',
+        subdivisionCodes: ['35'],
+        subdivisionNames: ['İzmir'],
         experienceLevels: '',
         workTypes: [],
         sources: ['linkedin', 'kariyer_net'],
@@ -116,27 +117,28 @@ describe('formValuesToWriteInput', () => {
       countryName: 'Türkiye',
       subdivisionCode: '35',
       subdivisionName: 'İzmir',
+      subdivisionCodes: ['35'],
+      subdivisionNames: ['İzmir'],
       locations: ['İzmir', 'İzmir, Türkiye'],
       workTypes: [],
     });
   });
 
-  it('never sends a work model filter', () => {
+  it('persists selected work types without sending them to source adapters', () => {
     expect(
       formValuesToWriteInput({
         name: 'Frontend',
         keywords: 'Frontend Developer',
-        technologies: '',
         countryCode: '',
         countryName: '',
-        subdivisionCode: '',
-        subdivisionName: '',
+        subdivisionCodes: [],
+        subdivisionNames: [],
         experienceLevels: '',
-        workTypes: ['remote'],
+        workTypes: ['remote', 'hybrid'],
         sources: ['linkedin', 'kariyer_net'],
         isActive: true,
       }).workTypes,
-    ).toEqual([]);
+    ).toEqual(['remote', 'hybrid']);
   });
 
   it('treats Tümü as no location filter', () => {
@@ -144,11 +146,10 @@ describe('formValuesToWriteInput', () => {
       formValuesToWriteInput({
         name: 'bilgisayar',
         keywords: 'bilgisayar',
-        technologies: '',
         countryCode: 'ALL',
         countryName: 'Tümü',
-        subdivisionCode: '',
-        subdivisionName: 'Tümü',
+        subdivisionCodes: [],
+        subdivisionNames: [],
         experienceLevels: '',
         workTypes: [],
         sources: ['linkedin', 'kariyer_net'],
@@ -159,8 +160,28 @@ describe('formValuesToWriteInput', () => {
       countryName: null,
       subdivisionCode: null,
       subdivisionName: null,
+      subdivisionCodes: [],
+      subdivisionNames: [],
       locations: [],
+      technologies: [],
     });
+  });
+
+  it('writes an empty technologies array even when the form has no tech field', () => {
+    expect(
+      formValuesToWriteInput({
+        name: 'gıda',
+        keywords: 'Gıda Mühendisi',
+        countryCode: 'TR',
+        countryName: 'Türkiye',
+        subdivisionCodes: [],
+        subdivisionNames: [],
+        experienceLevels: '',
+        workTypes: [],
+        sources: ['linkedin', 'kariyer_net'],
+        isActive: true,
+      }).technologies,
+    ).toEqual([]);
   });
 });
 
@@ -184,6 +205,15 @@ describe('shouldRefreshAfterSearchWrite', () => {
           countryName: 'Türkiye',
           locations: ['Türkiye'],
         }),
+      ),
+    ).toBe(true);
+  });
+
+  it('refreshes when work types change on an active search', () => {
+    expect(
+      shouldRefreshAfterSearchWrite(
+        search(),
+        writeInput({ workTypes: ['remote', 'hybrid'] }),
       ),
     ).toBe(true);
   });

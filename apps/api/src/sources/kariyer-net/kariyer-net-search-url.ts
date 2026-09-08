@@ -1,9 +1,24 @@
 import type { KariyerNetSearchInput } from './kariyer-net.types.js';
 import { KARIYER_NET_DEFAULT_BASE_URL } from './kariyer-net-web.config.js';
 
+const COUNTRY_LOCATION_SLUGS = new Set([
+  'almanya',
+  'deutschland',
+  'germany',
+  'holland',
+  'nederland',
+  'netherlands',
+  'turkey',
+  'turkiye',
+  'united-kingdom',
+  'united-states',
+  'usa',
+]);
+
 /**
  * Builds a public Kariyer.net search-results URL.
  * Keyword → `kw`. A single city-like location → path `/is-ilanlari/{slug}`.
+ * Country names are not city slugs and would pull unrelated listings.
  * Work type and experience are not encoded.
  */
 export function buildKariyerNetSearchUrl(
@@ -46,11 +61,12 @@ export function toLocationSlug(value: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
-  if (slug.length === 0 || slug.includes('-')) {
-    return slug.split('-')[0] ?? '';
+  const cityToken = slug.includes('-') ? (slug.split('-')[0] ?? '') : slug;
+  if (!cityToken || COUNTRY_LOCATION_SLUGS.has(cityToken) || COUNTRY_LOCATION_SLUGS.has(slug)) {
+    return '';
   }
 
-  return slug;
+  return cityToken;
 }
 
 function originFromBase(baseUrl: string): string {

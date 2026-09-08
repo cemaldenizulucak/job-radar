@@ -1,4 +1,5 @@
 import {
+  adapterLocationsForFetch,
   deriveSavedSearchLocations,
   formatLocationLabel,
   hasExplicitSearchLocationFilter,
@@ -74,6 +75,7 @@ describe('resolveEffectiveSearchLocation', () => {
       label: null,
       source: 'none',
       city: null,
+      cities: [],
       country: null,
     });
   });
@@ -197,17 +199,91 @@ describe('jobLocationMatchResult', () => {
 
   it('matches the selected city', () => {
     expect(jobLocationMatchResult('Konak / İzmir', izmir)).toBe('pass');
+    expect(jobLocationMatchResult('İzmir', izmir)).toBe('pass');
+    expect(jobLocationMatchResult('İzmir, Türkiye', izmir)).toBe('pass');
   });
 
-  it('allows a country-only job when city metadata is missing', () => {
-    expect(jobLocationMatchResult('Türkiye', izmir)).toBe('pass');
-  });
-
-  it('does not treat a different city in the same country as a match', () => {
+  it('rejects a different city in the same country', () => {
+    expect(jobLocationMatchResult('Kahramanmaraş', izmir)).toBe('fail');
+    expect(jobLocationMatchResult('İstanbul(Asya)', izmir)).toBe('fail');
     expect(jobLocationMatchResult('İstanbul, Türkiye', izmir)).toBe('fail');
   });
 
-  it('does not reject a job with unknown location text', () => {
-    expect(jobLocationMatchResult(null, izmir)).toBe('unknown');
+  it('does not treat a country-only listing as the selected city', () => {
+    expect(jobLocationMatchResult('Türkiye', izmir)).toBe('fail');
+  });
+
+  it('rejects a job with empty location when a city filter is set', () => {
+    expect(jobLocationMatchResult(null, izmir)).toBe('fail');
+    expect(jobLocationMatchResult('  ', izmir)).toBe('fail');
+  });
+
+  it('accepts a Turkey-workable remote job for the selected city', () => {
+    expect(
+      jobLocationMatchResult('İstanbul, Türkiye', izmir, {
+        workModel: 'remote',
+        countryCityAliases: ['İstanbul', 'Ankara'],
+      }),
+    ).toBe('pass');
+    expect(
+      jobLocationMatchResult('Istanbul, Turkey', izmir, { workModel: 'remote' }),
+    ).toBe('pass');
+    expect(
+      jobLocationMatchResult('Remote', izmir, { workModel: 'remote' }),
+    ).toBe('pass');
+  });
+
+  it('does not treat another city hybrid listing as remote', () => {
+    expect(
+      jobLocationMatchResult('İstanbul, Türkiye', izmir, {
+        workModel: 'hybrid',
+        countryCityAliases: ['İstanbul', 'Ankara'],
+      }),
+    ).toBe('fail');
+  });
+
+  it('does not assume empty or foreign remote listings match İzmir', () => {
+    expect(
+      jobLocationMatchResult(null, izmir, { workModel: 'remote' }),
+    ).toBe('fail');
+    expect(
+      jobLocationMatchResult('Berlin, Germany', izmir, { workModel: 'remote' }),
+    ).toBe('fail');
+  });
+});
+
+describe('multi-city saved search location', () => {
+  it('accepts İzmir or İstanbul and rejects Ankara', () => {
+    const resolved = resolveSavedSearchLocation({
+      locations: [],
+      countryName: 'Türkiye',
+      subdivisionNames: ['İzmir', 'İstanbul'],
+    });
+
+    expect(jobLocationMatchResult('İzmir', resolved)).toBe('pass');
+    expect(jobLocationMatchResult('İstanbul(Asya)', resolved)).toBe('pass');
+    expect(jobLocationMatchResult('Ankara', resolved)).toBe('fail');
+  });
+
+  it('skips the city filter when subdivision names are empty and keeps country', () => {
+    const resolved = resolveSavedSearchLocation({
+      locations: [],
+      countryName: 'Türkiye',
+      subdivisionNames: [],
+    });
+
+    expect(resolved.cities).toEqual([]);
+    expect(jobLocationMatchResult('İzmir, Türkiye', resolved)).toBe('pass');
+    expect(jobLocationMatchResult('Berlin', resolved)).toBe('fail');
+  });
+
+  it('sends the country, not the first city, to job-source adapters', () => {
+    expect(
+      adapterLocationsForFetch({
+        locations: ['İzmir', 'İzmir, Türkiye', 'İstanbul', 'İstanbul, Türkiye'],
+        countryName: 'Türkiye',
+        subdivisionNames: ['İzmir', 'İstanbul'],
+      }),
+    ).toEqual(['Türkiye']);
   });
 });

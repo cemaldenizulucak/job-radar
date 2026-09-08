@@ -4,8 +4,10 @@ import {
   catalogToSelectOptions,
   closeLocationPicker,
   filterSelectOptions,
+  isMultiSelectAll,
   locationPickerView,
   selectedLocationLabel,
+  toggleMultiSelectValue,
 } from './location-picker';
 
 const countries = [
@@ -62,5 +64,15 @@ describe('location picker', () => {
         placeholder: 'Ülke seç',
       }),
     ).toBe('Ülke seç');
+  });
+
+  it('toggles cities without treating Tümü as a stored value', () => {
+    expect(toggleMultiSelectValue([], '')).toEqual([]);
+    expect(toggleMultiSelectValue([], '35')).toEqual(['35']);
+    expect(toggleMultiSelectValue(['35'], '34')).toEqual(['35', '34']);
+    expect(toggleMultiSelectValue(['35', '34'], '35')).toEqual(['34']);
+    expect(toggleMultiSelectValue(['35', '34'], '')).toEqual([]);
+    expect(isMultiSelectAll([])).toBe(true);
+    expect(isMultiSelectAll(['35'])).toBe(false);
   });
 });

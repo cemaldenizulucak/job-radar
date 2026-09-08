@@ -66,6 +66,18 @@ export function countJobsBySource(
   return items.filter((item) => item.sourceId === sourceId).length;
 }
 
+export function countJobsBySourceForSearch(
+  items: readonly JobListItem[],
+  savedSearchId: string | 'all',
+): { total: number; linkedin: number; kariyerNet: number } {
+  const scoped = filterJobs(items, 'all', savedSearchId);
+  return {
+    total: countJobsBySource(scoped, 'all'),
+    linkedin: countJobsBySource(scoped, 'linkedin'),
+    kariyerNet: countJobsBySource(scoped, 'kariyer_net'),
+  };
+}
+
 export function buildSourceTabs(items: readonly JobListItem[]): ChipTabItem[] {
   return [
     { id: 'all', label: jobsCopy.all, count: countJobsBySource(items, 'all') },

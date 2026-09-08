@@ -501,4 +501,146 @@ describe('JobsService listForUser', () => {
       ),
     );
   });
+
+  it('returns only job_search_matches for the selected savedSearchId', async () => {
+    const izmirJob = { ...jobRow, id: 'job-izmir', location: 'İzmir' };
+    const otherJob = { ...jobRow, id: 'job-kahramanmaras', location: 'Kahramanmaraş' };
+    const jobsQuery = chainableQuery({ data: [izmirJob], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [
+                  { id: 'search-izmir', last_discovered_at: '2026-09-04T11:30:00.000Z' },
+                  { id: 'search-other', last_discovered_at: '2026-09-04T08:00:00.000Z' },
+                ],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-izmir',
+                  saved_search_id: 'search-izmir',
+                  matched_at: '2026-09-04T11:30:00.000Z',
+                },
+                {
+                  job_id: 'job-kahramanmaras',
+                  saved_search_id: 'search-other',
+                  matched_at: '2026-09-04T08:00:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, {
+            eq: () => result,
+            in: () => result,
+          });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-1',
+      savedSearchId: 'search-izmir',
+      matchedOnly: true,
+    });
+
+    expect(jobsQuery.in).toHaveBeenCalledWith('id', ['job-izmir']);
+    expect(result.items.map((item) => item.id)).toEqual(['job-izmir']);
+    expect(result.items).toHaveLength(1);
+    expect(result.totalCount).toBe(1);
+    expect(result.savedSearchCounts).toEqual(
+      expect.arrayContaining([
+        { id: 'search-izmir', count: 1 },
+        { id: 'search-other', count: 1 },
+      ]),
+    );
+    expect(result.lastDiscoveryAt).toBe('2026-09-04T11:30:00.000Z');
+  });
+
+  it('does not return another user matches for a savedSearchId filter', async () => {
+    const jobsQuery = chainableQuery({ data: [], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-a' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-b',
+                  saved_search_id: 'search-b',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-a',
+      savedSearchId: 'search-b',
+      matchedOnly: true,
+    });
+
+    expect(result.items).toEqual([]);
+    expect(from).not.toHaveBeenCalledWith('jobs');
+  });
 });

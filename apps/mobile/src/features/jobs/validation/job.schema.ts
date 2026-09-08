@@ -42,6 +42,11 @@ export const duplicateJobLinkSchema = z.object({
 export const jobListResponseSchema = z.object({
   items: z.array(jobListItemSchema),
   nextCursor: z.string().nullable(),
+  lastDiscoveryAt: z.string().nullable().optional(),
+  totalCount: z.number().int().nonnegative().optional(),
+  savedSearchCounts: z
+    .array(z.object({ id: z.string(), count: z.number().int().nonnegative() }))
+    .optional(),
 });
 
 export const jobDetailSchema = jobListItemSchema.extend({

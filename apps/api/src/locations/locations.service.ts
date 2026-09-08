@@ -59,6 +59,39 @@ export class LocationsService {
     return cached ? cached.map((item) => item.name) : null;
   }
 
+  getCountryName(countryCode: string | null | undefined): string | null {
+    const code = countryCode?.trim().toUpperCase() ?? '';
+    if (!code) {
+      return null;
+    }
+
+    return FALLBACK_COUNTRIES.find((item) => item.code === code)?.name ?? null;
+  }
+
+  getSubdivisionName(
+    countryCode: string | null | undefined,
+    subdivisionCode: string | null | undefined,
+  ): string | null {
+    const country = countryCode?.trim().toUpperCase() ?? '';
+    const rawCode = subdivisionCode?.trim() ?? '';
+    if (!country || !rawCode) {
+      return null;
+    }
+
+    const code = country === 'TR' ? rawCode.padStart(2, '0') : rawCode.toUpperCase();
+    const rows =
+      country === 'TR'
+        ? TURKEY_PROVINCES
+        : (this.cache.getSubdivisions(country) ?? []);
+
+    return (
+      rows.find(
+        (item) =>
+          item.code === code || item.code.toUpperCase() === rawCode.toUpperCase(),
+      )?.name ?? null
+    );
+  }
+
   async primeSubdivisionCaches(
     countryCodes: readonly string[],
   ): Promise<void> {

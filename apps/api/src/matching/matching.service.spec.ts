@@ -176,13 +176,13 @@ describe('MatchingService generic text matching', () => {
     ).toBe(true);
   });
 
-  it('matches a single letter when it appears in searchable text', () => {
+  it('does not treat a single generic letter as a substring match', () => {
     expect(
       matcher.jobMatchesSearch(
         job({ title: 'Satış', description: null, technologies: [] }),
         search({ keywords: ['a'] }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('uses OR semantics across multiple keywords', () => {
@@ -256,6 +256,81 @@ describe('MatchingService generic text matching', () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it('rejects Kahramanmaraş and İstanbul for an İzmir search', () => {
+    const izmirSearch = search({
+      keywords: ['Gıda Mühendisi, kalite güvence'],
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+    });
+
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Gıda Mühendisi',
+          location: 'Kahramanmaraş',
+          description: 'kalite güvence',
+        }),
+        izmirSearch,
+      ),
+    ).toBe(false);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-ist',
+          title: 'Gıda Mühendisi',
+          location: 'İstanbul(Asya)',
+          description: 'kalite güvence',
+        }),
+        izmirSearch,
+      ),
+    ).toBe(false);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-izmir',
+          title: 'Gıda Mühendisi',
+          location: 'İzmir',
+          description: null,
+        }),
+        izmirSearch,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-izmir-tr',
+          title: 'Kalite Güvence Uzmanı',
+          location: 'İzmir, Türkiye',
+          description: null,
+        }),
+        izmirSearch,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not let a keyword match bypass a city location filter', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'Gıda Mühendisi',
+        location: 'Kahramanmaraş',
+        description: 'kalite güvence',
+      }),
+      search({
+        keywords: ['Gıda Mühendisi', 'kalite güvence'],
+        countryCode: 'TR',
+        countryName: 'Türkiye',
+        subdivisionName: 'İzmir',
+      }),
+    );
+
+    expect(decision.keyword).toBe('pass');
+    expect(decision.location).toBe('fail');
+    expect(decision.matched).toBe(false);
+    expect(decision.reasons).toContain('location mismatch');
   });
 
   it('accepts every city in a country-only structured search when aliases are cached', () => {
@@ -434,7 +509,7 @@ describe('MatchingService generic text matching', () => {
     ).toBe(true);
   });
 
-  it('does not reject a job with unknown location text', () => {
+  it('rejects a job with empty location when a city filter is set', () => {
     expect(
       matcher.jobMatchesSearch(
         job({
@@ -445,7 +520,7 @@ describe('MatchingService generic text matching', () => {
         }),
         search({ keywords: ['gıda'], locations: ['İzmir'] }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('matches Frontend Developer with every other filter empty', () => {
@@ -475,7 +550,7 @@ describe('MatchingService generic text matching', () => {
     }
   });
 
-  it('never rejects on work model even when the search stored a work type', () => {
+  it('rejects an onsite job when the search only allows remote', () => {
     expect(
       matcher.jobMatchesSearch(
         job({
@@ -486,7 +561,7 @@ describe('MatchingService generic text matching', () => {
         }),
         search({ keywords: ['Frontend Developer'], workTypes: ['remote'] }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('does not reject on technologies or experience when those filters are empty', () => {
@@ -579,5 +654,263 @@ describe('MatchingService generic text matching', () => {
     expect(decision.roleFamily).toBe('none');
     expect(decision.matched).toBe(true);
     expect(decision.keyword).toBe('pass');
+  });
+
+  it('matches a LinkedIn Gıda Mühendisi listing for the same keyword search', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          sourceId: 'linkedin',
+          title: 'Gıda Mühendisi',
+          location: 'İzmir',
+          description: 'Kalite güvence',
+        }),
+        search({ keywords: ['Gıda Mühendisi'] }),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches ascii and short typo variants of Gıda Mühendisi', () => {
+    const listing = job({
+      sourceId: 'linkedin',
+      title: 'Gıda Mühendisi',
+      description: null,
+    });
+
+    expect(
+      matcher.jobMatchesSearch(listing, search({ keywords: ['Gida Muhendisi'] })),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(listing, search({ keywords: ['Gıda Muhendis'] })),
+    ).toBe(true);
+  });
+
+  it('does not match Yazılım Mühendisi for a Gıda Mühendisi search', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({ title: 'Yazılım Mühendisi', description: null }),
+        search({ keywords: ['Gıda Mühendisi'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('accepts İzmir or İstanbul and rejects Ankara for a multi-city search', () => {
+    const saved = search({
+      keywords: ['gıda mühendisi'],
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCodes: ['35', '34'],
+      subdivisionNames: ['İzmir', 'İstanbul'],
+    });
+
+    expect(
+      matcher.jobMatchesSearch(
+        job({ title: 'Gıda Mühendisi', location: 'İzmir', description: null }),
+        saved,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-ist',
+          title: 'Gıda Mühendisi',
+          location: 'İstanbul(Asya)',
+          description: null,
+        }),
+        saved,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-ank',
+          title: 'Gıda Mühendisi',
+          location: 'Ankara',
+          description: null,
+        }),
+        saved,
+      ),
+    ).toBe(false);
+  });
+
+  it('matches without a technology field', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Gıda Mühendisi',
+          description: null,
+          technologies: ['SAP'],
+        }),
+        search({ keywords: ['Gıda Mühendisi'], technologies: [] }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not let technologies reject or become required keyword terms', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Gıda Mühendisi',
+          description: null,
+          technologies: [],
+        }),
+        search({
+          keywords: ['Gıda Mühendisi'],
+          technologies: ['react'],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps matches scoped to each saved search id for isolation', () => {
+    const listing = job({ title: 'Gıda Mühendisi', description: null });
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['Gıda Mühendisi'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['Yazılım Mühendisi'],
+    });
+
+    expect(matcher.matchJobsToSearches([listing], [userA, userB])).toEqual([
+      { jobId: 'job-1', savedSearchId: 'search-a' },
+    ]);
+  });
+
+  it('matches Angular in the description when the title only says frontend', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'Frontend Developer',
+        description: 'Angular developer experience with TypeScript.',
+        technologies: [],
+      }),
+      search({ keywords: ['Angular Developer'] }),
+    );
+
+    expect(decision.keyword).toBe('pass');
+    expect(decision.descriptionMatch).toBe('pass');
+    expect(decision.matched).toBe(true);
+    expect(decision.reasons).toEqual([]);
+  });
+
+  it('does not treat a missing description as a technology mismatch', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'Frontend Developer',
+        description: null,
+        technologies: [],
+      }),
+      search({
+        keywords: ['Frontend Developer'],
+        technologies: ['Angular'],
+      }),
+    );
+
+    expect(decision.technology).toBe('unknown');
+    expect(decision.reasons).not.toContain('keyword mismatch');
+    expect(decision.matched).toBe(true);
+  });
+
+  it('rejects an unrelated physician listing for a software search', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Aile Hekimliği Uzmanı Kat Hekimi',
+          description: 'Aile sağlığı merkezi poliklinik hizmeti',
+          technologies: [],
+        }),
+        search({
+          keywords: [
+            'Frontend Developer',
+            'React Developer',
+            'Angular Developer',
+            'Software Developer',
+            'QA / Test Uzmanı',
+          ],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('treats React and Angular keywords as alternatives, not a joint requirement', () => {
+    const saved = search({
+      keywords: ['React Developer', 'Angular Developer'],
+    });
+
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'React Developer',
+          description: 'SPA with React only.',
+          technologies: ['React'],
+        }),
+        saved,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-angular',
+          title: 'Angular Developer',
+          description: 'SPA with Angular only.',
+          technologies: ['Angular'],
+        }),
+        saved,
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts a Turkey-workable remote job for an İzmir city filter', () => {
+    const locations = {
+      getCachedSubdivisionNames: (code: string) =>
+        code === 'TR' ? ['İstanbul', 'İzmir', 'Ankara'] : null,
+    };
+    const withAliases = new MatchingService(locations as never);
+    const saved = search({
+      keywords: ['Frontend Developer'],
+      countryCode: 'TR',
+      countryName: 'Türkiye',
+      subdivisionCode: '35',
+      subdivisionName: 'İzmir',
+    });
+
+    expect(
+      withAliases.jobMatchesSearch(
+        job({
+          title: 'Frontend Developer',
+          location: 'Istanbul, Turkey',
+          workModel: 'remote',
+        }),
+        saved,
+      ),
+    ).toBe(true);
+    expect(
+      withAliases.jobMatchesSearch(
+        job({
+          id: 'job-hybrid',
+          title: 'Frontend Developer',
+          location: 'İstanbul, Türkiye',
+          workModel: 'hybrid',
+        }),
+        saved,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not assume an unknown work model matches a remote filter', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'Frontend Developer',
+        workModel: 'unknown',
+      }),
+      search({ keywords: ['Frontend Developer'], workTypes: ['remote'] }),
+    );
+
+    expect(decision.workModel).toBe('unknown');
+    expect(decision.matched).toBe(false);
+    expect(decision.reasons).toContain('work model unknown');
   });
 });

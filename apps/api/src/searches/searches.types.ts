@@ -16,11 +16,14 @@ export type SavedSearch = {
   countryName: string | null;
   subdivisionCode: string | null;
   subdivisionName: string | null;
+  subdivisionCodes?: readonly string[];
+  subdivisionNames?: readonly string[];
   workTypes: readonly WorkModel[];
   experienceLevels: readonly string[];
   sourceIds: readonly SourceId[];
   createdAt: string;
   updatedAt: string;
+  lastDiscoveredAt?: string | null;
 };
 
 export type SavedSearchWriteInput = {
@@ -33,6 +36,8 @@ export type SavedSearchWriteInput = {
   countryName: string | null;
   subdivisionCode: string | null;
   subdivisionName: string | null;
+  subdivisionCodes: readonly string[];
+  subdivisionNames: readonly string[];
   workTypes: readonly WorkModel[];
   experienceLevels: readonly string[];
   sources: readonly SourceId[];
@@ -50,6 +55,8 @@ export type SavedSearchResponse = {
   countryName: string | null;
   subdivisionCode: string | null;
   subdivisionName: string | null;
+  subdivisionCodes: readonly string[];
+  subdivisionNames: readonly string[];
   workTypes: readonly WorkModel[];
   experienceLevels: readonly string[];
   sources: readonly SourceId[];
@@ -58,6 +65,7 @@ export type SavedSearchResponse = {
   discovery?: ImmediateDiscoveryResult;
   createdAt: string;
   updatedAt: string;
+  lastDiscoveredAt: string | null;
 };
 
 export type SavedSearchWriteResponse = {

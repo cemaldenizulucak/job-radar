@@ -18,6 +18,7 @@ export type ResolvedSearchLocation = {
   label: string | null;
   source: LocationSource;
   city: string | null;
+  cities: readonly string[];
   country: string | null;
 };
 
@@ -90,8 +91,12 @@ export function hasExplicitSearchLocationFilter(
   search: StructuredSearchLocation,
 ): boolean {
   return (
+    sanitizeCountryCode(search.countryCode) !== null ||
+    sanitizeLocationToken(search.subdivisionCode) !== null ||
     sanitizeLocationToken(search.countryName) !== null ||
     sanitizeLocationToken(search.subdivisionName) !== null ||
+    coalesceSubdivisionCodes(search).length > 0 ||
+    coalesceSubdivisionNames(search).length > 0 ||
     sanitizeLocationList(search.locations).length > 0
   );
 }
@@ -129,22 +134,56 @@ export type StructuredSearchLocation = {
   countryName?: string | null;
   subdivisionCode?: string | null;
   subdivisionName?: string | null;
+  subdivisionCodes?: readonly string[] | null;
+  subdivisionNames?: readonly string[] | null;
 };
+
+export function coalesceSubdivisionNames(
+  search: StructuredSearchLocation,
+): string[] {
+  const fromArray = sanitizeLocationList(search.subdivisionNames);
+  if (fromArray.length > 0) {
+    return fromArray;
+  }
+
+  const single = sanitizeLocationToken(search.subdivisionName);
+  return single ? [single] : [];
+}
+
+export function coalesceSubdivisionCodes(
+  search: StructuredSearchLocation,
+): string[] {
+  const fromArray = sanitizeLocationList(search.subdivisionCodes);
+  if (fromArray.length > 0) {
+    return fromArray;
+  }
+
+  const single = sanitizeLocationToken(search.subdivisionCode);
+  return single ? [single] : [];
+}
 
 export function deriveSavedSearchLocations(input: {
   countryName?: string | null;
   subdivisionName?: string | null;
+  subdivisionNames?: readonly string[] | null;
   locations?: readonly string[];
 }): string[] {
   const country = sanitizeLocationToken(input.countryName);
-  const subdivision = sanitizeLocationToken(input.subdivisionName);
+  const cities = coalesceSubdivisionNames({
+    locations: [],
+    subdivisionName: input.subdivisionName,
+    subdivisionNames: input.subdivisionNames,
+  });
 
-  if (subdivision && country) {
-    return uniqueLocations([subdivision, `${subdivision}, ${country}`]);
+  if (cities.length > 0 && country) {
+    return uniqueLocations([
+      ...cities,
+      ...cities.map((city) => `${city}, ${country}`),
+    ]);
   }
 
-  if (subdivision) {
-    return [subdivision];
+  if (cities.length > 0) {
+    return [...cities];
   }
 
   if (country) {
@@ -154,31 +193,57 @@ export function deriveSavedSearchLocations(input: {
   return sanitizeLocationList(input.locations);
 }
 
+/** Broad adapter location so LinkedIn/Kariyer are not limited to the first city. */
+export function adapterLocationsForFetch(
+  search: StructuredSearchLocation,
+): string[] {
+  const country = sanitizeLocationToken(search.countryName);
+  if (country) {
+    return [country];
+  }
+
+  const cities = coalesceSubdivisionNames(search);
+  if (cities.length === 1) {
+    return [cities[0] ?? ''].filter((value) => value.length > 0);
+  }
+
+  if (cities.length > 1) {
+    return [];
+  }
+
+  const legacy = sanitizeLocationList(search.locations);
+  return legacy.length > 0 ? [legacy[0] ?? ''] : [];
+}
+
 export function resolveSavedSearchLocation(
   search: StructuredSearchLocation,
   subdivisionAliases: readonly string[] = [],
 ): ResolvedSearchLocation {
   const country = sanitizeLocationToken(search.countryName);
-  const city = sanitizeLocationToken(search.subdivisionName);
+  const cities = coalesceSubdivisionNames(search);
+  const city = cities[0] ?? null;
   const legacy = sanitizeLocationList(search.locations);
 
-  if (!country && !city && legacy.length === 0) {
-    return {
-      locations: [],
-      label: null,
-      source: 'none',
-      city: null,
-      country: null,
-    };
+  if (!country && cities.length === 0 && legacy.length === 0) {
+    return emptyResolvedLocation();
   }
 
-  if (city && country) {
-    const label = formatLocationLabel(city, country);
+  if (cities.length > 0) {
+    const locations = uniqueLocations([
+      ...cities,
+      ...cities.map((name) => (country ? `${name}, ${country}` : name)),
+    ]);
+    const label =
+      cities.length === 1
+        ? formatLocationLabel(city, country) ?? city
+        : cities.join(', ');
+
     return {
-      locations: uniqueLocations([city, label]),
+      locations,
       label,
       source: 'search',
       city,
+      cities,
       country,
     };
   }
@@ -189,17 +254,8 @@ export function resolveSavedSearchLocation(
       label: country,
       source: 'search',
       city: null,
+      cities: [],
       country,
-    };
-  }
-
-  if (city) {
-    return {
-      locations: [city],
-      label: city,
-      source: 'search',
-      city,
-      country: null,
     };
   }
 
@@ -226,6 +282,7 @@ export function resolveEffectiveSearchLocation(
       label: locations.join(', '),
       source: 'search',
       city: parsed.city,
+      cities: parsed.city ? [parsed.city] : [],
       country: parsed.country ?? country,
     };
   }
@@ -237,6 +294,7 @@ export function resolveEffectiveSearchLocation(
       label,
       source: 'profile_city',
       city,
+      cities: [city],
       country,
     };
   }
@@ -247,6 +305,7 @@ export function resolveEffectiveSearchLocation(
       label: country,
       source: 'profile_country',
       city: null,
+      cities: [],
       country,
     };
   }
@@ -257,52 +316,53 @@ export function resolveEffectiveSearchLocation(
       label: city,
       source: 'profile_city',
       city,
+      cities: [city],
       country: null,
     };
   }
 
-  return {
-    locations: [],
-    label: null,
-    source: 'none',
-    city: null,
-    country: null,
-  };
+  return emptyResolvedLocation();
 }
 
 export function jobLocationMatchResult(
   jobLocation: string | null | undefined,
   resolved: ResolvedSearchLocation,
+  options?: {
+    workModel?: string | null;
+    countryCityAliases?: readonly string[];
+  },
 ): 'pass' | 'fail' | 'skipped' | 'unknown' {
-  if (
-    resolved.source === 'none' ||
-    !hasExplicitSearchLocationFilter({
-      locations: resolved.locations,
-      countryName: resolved.country,
-      subdivisionName: resolved.city,
-    })
-  ) {
+  if (resolved.source === 'none' || resolved.locations.length === 0) {
     return 'skipped';
   }
 
-  if (!trimLocation(jobLocation)) {
-    return 'unknown';
-  }
-
   const jobText = jobLocation ?? '';
+  const cities =
+    resolved.cities.length > 0
+      ? resolved.cities
+      : resolved.city
+        ? [resolved.city]
+        : [];
 
-  if (resolved.city) {
-    if (locationTextIncludes(jobText, resolved.city)) {
+  if (cities.length > 0) {
+    if (!trimLocation(jobLocation) && options?.workModel !== 'remote') {
+      return 'fail';
+    }
+
+    if (cities.some((city) => locationTextIncludes(jobText, city))) {
       return 'pass';
     }
 
     if (
-      resolved.country &&
-      isCountryOnlyJobLocation(jobText, resolved.country)
+      isCountryWorkableRemote(jobText, options?.workModel, resolved, options?.countryCityAliases)
     ) {
       return 'pass';
     }
 
+    return 'fail';
+  }
+
+  if (!trimLocation(jobLocation)) {
     return 'fail';
   }
 
@@ -328,7 +388,108 @@ export function jobLocationMatchResult(
 export function locationTextIncludes(haystack: string, needle: string): boolean {
   const hay = normalizeForSearch(haystack);
   const need = normalizeForSearch(needle);
-  return Boolean(need) && hay.includes(need);
+  if (!need || !hay) {
+    return false;
+  }
+
+  if (hay === need) {
+    return true;
+  }
+
+  const hayTokens = hay.split(' ').filter((token) => token.length > 0);
+  const needTokens = need.split(' ').filter((token) => token.length > 0);
+  if (needTokens.length === 0) {
+    return false;
+  }
+
+  if (needTokens.length === 1) {
+    return hayTokens.includes(needTokens[0] ?? '');
+  }
+
+  return ` ${hay} `.includes(` ${need} `);
+}
+
+const REMOTE_LOCATION_LABELS = new Set([
+  'remote',
+  'uzaktan',
+  'anywhere',
+  'worldwide',
+  'work from home',
+  'home office',
+  'remote turkey',
+  'remote turkiye',
+  'turkiye remote',
+  'turkey remote',
+]);
+
+const COUNTRY_NAME_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  turkey: ['turkey', 'turkiye', 'tr'],
+  turkiye: ['turkey', 'turkiye', 'tr'],
+};
+
+function isRemoteLocationLabel(value: string): boolean {
+  const normalized = normalizeForSearch(value);
+  if (!normalized) {
+    return false;
+  }
+
+  if (REMOTE_LOCATION_LABELS.has(normalized)) {
+    return true;
+  }
+
+  return (
+    locationTextIncludes(value, 'remote') || locationTextIncludes(value, 'uzaktan')
+  );
+}
+
+function countryNamesToMatch(country: string | null): string[] {
+  const trimmed = trimLocation(country);
+  if (!trimmed) {
+    return [];
+  }
+
+  const aliases = COUNTRY_NAME_ALIASES[normalizeForSearch(trimmed)] ?? [trimmed];
+  return [...new Set([trimmed, ...aliases])];
+}
+
+function isCountryWorkableRemote(
+  jobLocation: string,
+  workModel: string | null | undefined,
+  resolved: ResolvedSearchLocation,
+  countryCityAliases: readonly string[] = [],
+): boolean {
+  if (workModel !== 'remote') {
+    return false;
+  }
+
+  if (isRemoteLocationLabel(jobLocation)) {
+    return true;
+  }
+
+  if (!trimLocation(jobLocation)) {
+    return false;
+  }
+
+  if (
+    countryNamesToMatch(resolved.country).some((name) =>
+      locationTextIncludes(jobLocation, name),
+    )
+  ) {
+    return true;
+  }
+
+  return countryCityAliases.some((alias) => locationTextIncludes(jobLocation, alias));
+}
+
+function emptyResolvedLocation(): ResolvedSearchLocation {
+  return {
+    locations: [],
+    label: null,
+    source: 'none',
+    city: null,
+    cities: [],
+    country: null,
+  };
 }
 
 function resolveLegacySearchLocations(
@@ -388,16 +549,3 @@ function parseCityCountry(label: string | null): {
   };
 }
 
-function isCountryOnlyJobLocation(jobLocation: string, country: string): boolean {
-  if (!locationTextIncludes(jobLocation, country)) {
-    return false;
-  }
-
-  const remainder = normalizeForSearch(jobLocation)
-    .split(normalizeForSearch(country))
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return remainder.length === 0;
-}

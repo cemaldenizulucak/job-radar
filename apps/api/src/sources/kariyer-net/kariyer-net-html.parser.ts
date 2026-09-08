@@ -28,7 +28,7 @@ const SKIP_TITLE_PATTERN =
   /^(incele|detay|başvur|basvur|daha fazla|view|apply|details?)$/i;
 
 const CHALLENGE_PATTERN =
-  /güvenlik doğrulaması|guvenlik dogrulamasi|captcha|cf-challenge|just a moment|access denied|bot detection|reference no/i;
+  /güvenlik doğrulaması|guvenlik dogrulamasi|captcha|cf-challenge|just a moment|access denied|bot detection/i;
 const EMPTY_RESULTS_PATTERN =
   /ilan bulunamad[ıi]|sonuç bulunamad[ıi]|sonuc bulunamadi|no jobs? found/i;
 
@@ -45,10 +45,6 @@ export function parseKariyerNetSearchHtml(
     return { kind: 'mismatch', reason: 'Kariyer.net returned an empty document.' };
   }
 
-  if (looksLikeChallenge(html)) {
-    return { kind: 'blocked', reason: 'challenge' };
-  }
-
   const fromJsonLd = extractJobsFromJsonLd(html, baseUrl);
   const fromCards = extractJobsFromCards(html, baseUrl);
   const fromAnchors = extractJobsFromAnchors(html, baseUrl);
@@ -56,6 +52,10 @@ export function parseKariyerNetSearchHtml(
 
   if (jobs.length > 0) {
     return { kind: 'jobs', jobs };
+  }
+
+  if (looksLikeChallenge(html)) {
+    return { kind: 'blocked', reason: 'challenge' };
   }
 
   if (

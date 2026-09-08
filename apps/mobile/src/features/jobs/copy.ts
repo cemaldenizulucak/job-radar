@@ -84,7 +84,12 @@ export function jobsEmptyMessage(input: {
   itemCount: number;
   visibleCount: number;
   resultsView: 'matched' | 'all';
+  isDiscovering?: boolean;
 }): string | null {
+  if (input.isDiscovering) {
+    return null;
+  }
+
   if (input.visibleCount > 0) {
     return null;
   }

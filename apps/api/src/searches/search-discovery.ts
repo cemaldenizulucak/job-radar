@@ -11,6 +11,8 @@ export function discoveryRelevantFieldsChanged(
     !sameNormalizedList(previous.locations, next.locations) ||
     !sameOptional(previous.countryCode, next.countryCode) ||
     !sameOptional(previous.subdivisionCode, next.subdivisionCode) ||
+    !sameNormalizedList(previous.subdivisionCodes ?? [], next.subdivisionCodes ?? []) ||
+    !sameNormalizedList(previous.subdivisionNames ?? [], next.subdivisionNames ?? []) ||
     !sameNormalizedList(previous.workTypes, next.workTypes) ||
     !sameNormalizedList(previous.experienceLevels, next.experienceLevels) ||
     !sameNormalizedList(previous.sourceIds, next.sourceIds)

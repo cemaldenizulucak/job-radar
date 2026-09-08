@@ -71,3 +71,36 @@ export function selectedLocationLabel(input: {
     input.placeholder
   );
 }
+
+export function toggleMultiSelectValue(
+  selected: readonly string[],
+  value: string,
+): string[] {
+  if (value === LOCATION_ALL_VALUE) {
+    return [];
+  }
+
+  if (selected.includes(value)) {
+    return selected.filter((item) => item !== value);
+  }
+
+  return [...selected, value];
+}
+
+export function isMultiSelectAll(selected: readonly string[]): boolean {
+  return selected.length === 0;
+}
+
+export function labelsForSelectedValues(
+  selected: readonly string[],
+  options: readonly LocationSelectOption[],
+  fallbackLabels: readonly string[] = [],
+): string[] {
+  return selected.map((value, index) => {
+    return (
+      options.find((option) => option.value === value)?.label ??
+      fallbackLabels[index] ??
+      value
+    );
+  });
+}

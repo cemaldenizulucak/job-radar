@@ -1,13 +1,25 @@
 import { formatLocationLabel } from '@/lib/search-location';
 
 import type { SavedSearch } from '../types/search.types';
+import { coalesceSubdivisionNames } from '../validation/search.schema';
 
 export function searchLocationDisplay(search: SavedSearch): {
   label: string | null;
   fromProfile: boolean;
 } {
+  const cities = coalesceSubdivisionNames(search);
+  if (cities.length > 1) {
+    const cityLabel = cities.join(', ');
+    return {
+      label: search.countryName
+        ? `${cityLabel}, ${search.countryName}`
+        : cityLabel,
+      fromProfile: false,
+    };
+  }
+
   const structured = formatLocationLabel(
-    search.subdivisionName,
+    cities[0] ?? search.subdivisionName,
     search.countryName,
   );
   if (structured) {

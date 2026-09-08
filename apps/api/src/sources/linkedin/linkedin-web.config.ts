@@ -2,7 +2,7 @@ export const LINKEDIN_DEFAULT_BASE_URL = 'https://www.linkedin.com';
 export const LINKEDIN_DEFAULT_TIMEOUT_MS = 10_000;
 export const LINKEDIN_DEFAULT_DELAY_MS = 1_000;
 export const LINKEDIN_MAX_RETRIES = 1;
-export const LINKEDIN_DEFAULT_MAX_PAGES = 3;
+export const LINKEDIN_DEFAULT_MAX_PAGES = 5;
 export const LINKEDIN_PAGE_SIZE = 25;
 export const LINKEDIN_USER_AGENT =
   'JobRadar/1.0 (personal private job digest; low-volume)';

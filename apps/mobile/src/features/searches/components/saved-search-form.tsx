@@ -12,15 +12,19 @@ import { useTheme } from '@/hooks/use-theme';
 import { searchesCopy } from '../copy';
 import type { SavedSearch, SavedSearchWriteInput } from '../types/search.types';
 import {
+  coalesceSubdivisionCodes,
+  coalesceSubdivisionNames,
   formValuesToWriteInput,
   joinTags,
   previewTags,
   savedSearchFormSchema,
+  WORK_TYPES,
   type SavedSearchFormValues,
 } from '../validation/search.schema';
 import { SearchLocationFields } from './search-location-fields';
 import { SearchTextField } from './search-text-field';
 import { SourceSelector } from './source-selector';
+import { WorkTypeSelector } from './work-type-selector';
 
 type SavedSearchFormProps = {
   initialSearch?: SavedSearch;
@@ -35,11 +39,10 @@ function toDefaultValues(search?: SavedSearch): SavedSearchFormValues {
     return {
       name: '',
       keywords: '',
-      technologies: '',
       countryCode: '',
       countryName: '',
-      subdivisionCode: '',
-      subdivisionName: '',
+      subdivisionCodes: [],
+      subdivisionNames: [],
       experienceLevels: '',
       workTypes: [],
       sources: ['linkedin', 'kariyer_net'],
@@ -50,13 +53,14 @@ function toDefaultValues(search?: SavedSearch): SavedSearchFormValues {
   return {
     name: search.name,
     keywords: joinTags(search.keywords),
-    technologies: joinTags(search.technologies),
     countryCode: search.countryCode ?? '',
     countryName: search.countryName ?? '',
-    subdivisionCode: search.subdivisionCode ?? '',
-    subdivisionName: search.subdivisionName ?? '',
+    subdivisionCodes: coalesceSubdivisionCodes(search),
+    subdivisionNames: coalesceSubdivisionNames(search),
     experienceLevels: joinTags(search.experienceLevels),
-    workTypes: [],
+    workTypes: search.workTypes.filter((type): type is (typeof WORK_TYPES)[number] =>
+      (WORK_TYPES as readonly string[]).includes(type),
+    ),
     sources: [...search.sources],
     isActive: search.isActive,
   };
@@ -107,10 +111,14 @@ export function SavedSearchForm({
     await onSubmit(input);
   };
 
-  const countryCode = useWatch({ control, name: 'countryCode' });
-  const countryName = useWatch({ control, name: 'countryName' });
-  const subdivisionCode = useWatch({ control, name: 'subdivisionCode' });
-  const subdivisionName = useWatch({ control, name: 'subdivisionName' });
+  const countryCode = useWatch({ control, name: 'countryCode' }) ?? '';
+  const countryName = useWatch({ control, name: 'countryName' }) ?? '';
+  const subdivisionCodes = useWatch({ control, name: 'subdivisionCodes' }) ?? [];
+  const subdivisionNames = useWatch({ control, name: 'subdivisionNames' }) ?? [];
+  const selectedSubdivisions = subdivisionCodes.map((code, index) => ({
+    code,
+    name: subdivisionNames[index] ?? code,
+  }));
 
   return (
     <View style={styles.form}>
@@ -153,38 +161,18 @@ export function SavedSearchForm({
         <SearchLocationFields
           countryCode={countryCode}
           countryName={countryName}
-          subdivisionCode={subdivisionCode}
-          subdivisionName={subdivisionName}
+          selectedSubdivisions={selectedSubdivisions}
           disabled={isSubmitting}
           onCountryChange={(code, name) => {
             setValue('countryCode', code);
             setValue('countryName', name);
-            setValue('subdivisionCode', '');
-            setValue('subdivisionName', '');
+            setValue('subdivisionCodes', []);
+            setValue('subdivisionNames', []);
           }}
-          onSubdivisionChange={(code, name) => {
-            setValue('subdivisionCode', code);
-            setValue('subdivisionName', name);
+          onSubdivisionsChange={(items) => {
+            setValue('subdivisionCodes', items.map((item) => item.code));
+            setValue('subdivisionNames', items.map((item) => item.name));
           }}
-        />
-        <Controller
-          control={control}
-          name="technologies"
-          render={({ field: { onChange, onBlur, value } }) => (
-            <View style={styles.fieldBlock}>
-              <SearchTextField
-                label={searchesCopy.tags}
-                placeholder={searchesCopy.tagsPlaceholder}
-                hint={searchesCopy.tagsHint}
-                value={value}
-                onBlur={onBlur}
-                onChangeText={onChange}
-                error={errors.technologies?.message}
-                editable={!isSubmitting}
-              />
-              <TagPreview value={value} />
-            </View>
-          )}
         />
         <Controller
           control={control}
@@ -203,6 +191,17 @@ export function SavedSearchForm({
               />
               <TagPreview value={value} />
             </View>
+          )}
+        />
+        <Controller
+          control={control}
+          name="workTypes"
+          render={({ field: { onChange, value } }) => (
+            <WorkTypeSelector
+              selected={value}
+              onChange={onChange}
+              disabled={isSubmitting}
+            />
           )}
         />
         <Controller

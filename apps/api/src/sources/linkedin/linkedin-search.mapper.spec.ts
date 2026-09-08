@@ -16,7 +16,7 @@ describe('mapLinkedInSearch', () => {
     const mapped = mapLinkedInSearch(query, LINKEDIN_CAPABILITIES);
 
     expect(mapped).toEqual({
-      keywords: ['frontend', 'React'],
+      keywords: ['frontend'],
       locations: ['Istanbul'],
       workTypes: ['hybrid', 'remote'],
       experienceLevels: [],

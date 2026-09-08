@@ -4,7 +4,7 @@ import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { SourceId } from '../common/domain.types.js';
-import { resolveSavedSearchLocation, hasExplicitSearchLocationFilter } from '../common/search-location.js';
+import { hasExplicitSearchLocationFilter, adapterLocationsForFetch, coalesceSubdivisionNames } from '../common/search-location.js';
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
 import { LocationsService } from '../locations/locations.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
@@ -12,6 +12,7 @@ import { JobsService } from '../jobs/jobs.service.js';
 import type { NormalizedJob } from '../jobs/jobs.types.js';
 import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { MatchingService } from '../matching/matching.service.js';
+import { queryMatchKind } from '../matching/match-text.js';
 import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { selectVisibleNewMatches } from '../notifications/discovery-notification.js';
@@ -101,7 +102,7 @@ export class DiscoveryService {
       const summary = await this.runForSavedSearch(savedSearch);
       this.immediateRuns.set(
         savedSearch.id,
-        toImmediateDiscoveryResult(summary),
+        toImmediateDiscoveryResult(summary, new Date().toISOString()),
       );
     } catch (error) {
       this.logger.error({
@@ -133,7 +134,6 @@ export class DiscoveryService {
       catalogJobs,
       searches,
     );
-    const catalogCreated = await this.jobsService.saveMatches(catalogMatches);
 
     const fetched = await this.fetchNormalizedJobs(searches);
     let jobsInserted = 0;
@@ -161,10 +161,18 @@ export class DiscoveryService {
       persisted,
       searches,
     );
-    const liveCreated = await this.jobsService.saveMatches(liveMatches);
-    const createdMatches = [...catalogCreated, ...liveCreated];
+    const allMatches = uniqueMatches([...catalogMatches, ...liveMatches]);
+    const createdMatches = await this.jobsService.syncMatchesForSearches(
+      searches.map((search) => search.id),
+      allMatches,
+    );
+    const discoveredAt = new Date().toISOString();
+    await this.searchesService.markDiscoveredAt(
+      searches.map((search) => search.id),
+      discoveredAt,
+    );
     const jobsForNotification = mergeNotificationJobs(
-      catalogJobsForNotification(catalogJobs, catalogCreated),
+      catalogJobsForNotification(catalogJobs, catalogMatches),
       persistedForNotification,
     );
     const visible = selectVisibleNewMatches(
@@ -197,6 +205,7 @@ export class DiscoveryService {
       allJobs: matchableJobs,
       fetchStats: fetched.perSearch,
       createdMatches,
+      lastDiscoveryAt: discoveredAt,
     });
     this.logDiscoveryCounts({
       usersProcessed,
@@ -231,6 +240,7 @@ export class DiscoveryService {
       stopReason: fetched.stopReason,
       sourceAttempts: fetched.sourceAttempts,
       sourceFailures: fetched.sourceFailures,
+      sourcePartials: fetched.sourcePartials,
       catalogJobsChecked: catalogJobs.length,
       rawProviderJobs: fetched.rawProviderJobs,
       normalizedJobs: fetched.uniqueJobs.length,
@@ -294,6 +304,7 @@ export class DiscoveryService {
     stopReason: string | null;
     sourceAttempts: number;
     sourceFailures: number;
+    sourcePartials: number;
     perSearch: readonly SearchSourceFetchStat[];
   }> {
     const uniqueJobs = new Map<string, NormalizedJob>();
@@ -304,6 +315,7 @@ export class DiscoveryService {
     let stopReason: string | null = null;
     let sourceAttempts = 0;
     let sourceFailures = 0;
+    let sourcePartials = 0;
     const perSearch: SearchSourceFetchStat[] = [];
     const catalogSourceIds = this.sourceRegistry
       .list()
@@ -329,13 +341,15 @@ export class DiscoveryService {
         if (fetched.outcome === 'failed') {
           sourceFailures += 1;
         }
+        if (fetched.outcome === 'partial') {
+          sourcePartials += 1;
+        }
+        if (fetched.stopReason) {
+          stopReason = preferStopReason(stopReason, fetched.stopReason);
+        }
         if (fetched.kariyerNet) {
           kariyerNetPagesFetched += fetched.kariyerNet.pagesFetched;
           kariyerNetJobsCollected += fetched.kariyerNet.jobsCollected;
-          stopReason = preferKariyerStopReason(
-            stopReason,
-            fetched.kariyerNet.stopReason,
-          );
         }
       }
     }
@@ -349,6 +363,7 @@ export class DiscoveryService {
       stopReason,
       sourceAttempts,
       sourceFailures,
+      sourcePartials,
       perSearch,
     };
   }
@@ -360,7 +375,8 @@ export class DiscoveryService {
   ): Promise<{
     accepted: number;
     raw: number;
-    outcome: 'skipped' | 'ok' | 'failed';
+    outcome: 'skipped' | 'ok' | 'partial' | 'failed';
+    stopReason: string | null;
     kariyerNet?: {
       pagesFetched: number;
       jobsCollected: number;
@@ -375,7 +391,7 @@ export class DiscoveryService {
         source: sourceId,
         savedSearchId: search.id,
       });
-      return { accepted: 0, raw: 0, outcome: 'skipped' };
+      return { accepted: 0, raw: 0, outcome: 'skipped', stopReason: null };
     }
 
     const startedAt = Date.now();
@@ -420,16 +436,19 @@ export class DiscoveryService {
         stopReason: result.stopReason ?? null,
       });
 
+      const stopReason = result.stopReason ?? null;
+
       return {
         accepted,
         raw: result.jobs.length,
-        outcome: 'ok',
+        outcome: isPartialStopReason(stopReason) ? 'partial' : 'ok',
+        stopReason,
         kariyerNet:
           sourceId === 'kariyer_net'
             ? {
                 pagesFetched: result.pagesFetched ?? 0,
                 jobsCollected: result.jobsCollected ?? result.jobs.length,
-                stopReason: result.stopReason ?? null,
+                stopReason,
               }
             : undefined,
       };
@@ -443,7 +462,7 @@ export class DiscoveryService {
         normalized: 0,
         errorCategory: sourceErrorCategory(error),
       });
-      return { accepted: 0, raw: 0, outcome: 'failed' };
+      return { accepted: 0, raw: 0, outcome: 'failed', stopReason: null };
     }
   }
 
@@ -453,6 +472,7 @@ export class DiscoveryService {
     allJobs: readonly MatchableJob[];
     fetchStats: readonly SearchSourceFetchStat[];
     createdMatches: readonly JobSearchMatch[];
+    lastDiscoveryAt: string;
   }): void {
     if (process.env.NODE_ENV === 'test') {
       return;
@@ -466,27 +486,52 @@ export class DiscoveryService {
       );
     }
 
-    const providerFetchedBySearch = new Map<string, number>();
+    const fetchedBySearchSource = new Map<string, number>();
     for (const stat of input.fetchStats) {
-      providerFetchedBySearch.set(
-        stat.savedSearchId,
-        (providerFetchedBySearch.get(stat.savedSearchId) ?? 0) +
+      fetchedBySearchSource.set(
+        `${stat.savedSearchId}:${stat.source}`,
+        (fetchedBySearchSource.get(`${stat.savedSearchId}:${stat.source}`) ?? 0) +
           stat.fetchedJobCount,
       );
     }
 
     for (const search of input.searches) {
-      let keywordMatches = 0;
-      let locationMatches = 0;
+      let keywordMatched = 0;
+      let locationMatched = 0;
+      let locationRejected = 0;
+      let linkedinMatched = 0;
+      let kariyerMatched = 0;
+      let fuzzyMatched = 0;
       const rejectionReasonCounts: Record<string, number> = {};
+      const queryTerms = search.keywords
+        .flatMap((term) => term.split(','))
+        .map((term) => term.trim())
+        .filter((term) => term.length > 0);
 
       for (const job of input.allJobs) {
         const decision = this.matchingService.evaluateMatch(job, search);
         if (decision.keyword === 'pass') {
-          keywordMatches += 1;
+          keywordMatched += 1;
+          const haystacks = [job.title, job.description ?? '', job.companyName];
+          if (
+            queryTerms.some((term) =>
+              haystacks.some((text) => queryMatchKind(text, term) === 'fuzzy'),
+            )
+          ) {
+            fuzzyMatched += 1;
+          }
         }
-        if (decision.location !== 'fail') {
-          locationMatches += 1;
+        if (decision.location === 'pass') {
+          locationMatched += 1;
+        }
+        if (decision.location === 'fail') {
+          locationRejected += 1;
+        }
+        if (decision.matched && job.sourceId === 'linkedin') {
+          linkedinMatched += 1;
+        }
+        if (decision.matched && job.sourceId === 'kariyer_net') {
+          kariyerMatched += 1;
         }
         if (decision.matched) {
           continue;
@@ -501,11 +546,21 @@ export class DiscoveryService {
         message: 'Saved search match debug',
         savedSearchId: search.id,
         userId: search.userId,
-        catalogJobsChecked: input.catalogJobs.length,
-        providerJobsFetched: providerFetchedBySearch.get(search.id) ?? 0,
-        keywordMatches,
-        locationMatches,
+        queryTerms,
+        selectedSubdivisions: coalesceSubdivisionNames(search),
+        linkedinFetched:
+          fetchedBySearchSource.get(`${search.id}:linkedin`) ?? 0,
+        kariyerFetched:
+          fetchedBySearchSource.get(`${search.id}:kariyer_net`) ?? 0,
+        linkedinMatched,
+        kariyerMatched,
+        fuzzyMatched,
+        locationRejected,
         matchesCreated: createdBySearch.get(search.id) ?? 0,
+        catalogJobsChecked: input.catalogJobs.length,
+        keywordMatched,
+        locationMatched,
+        lastDiscoveryAt: input.lastDiscoveryAt,
         rejectionReasonCounts,
         locationFilter: hasExplicitSearchLocationFilter(search)
           ? 'explicit'
@@ -590,12 +645,25 @@ export class DiscoveryService {
   }
 }
 
-function preferKariyerStopReason(
+const PARTIAL_STOP_REASONS = new Set([
+  'pagination_loop',
+  'blocked_after_success',
+]);
+
+function isPartialStopReason(reason: string | null | undefined): boolean {
+  return Boolean(reason && PARTIAL_STOP_REASONS.has(reason));
+}
+
+function preferStopReason(
   current: string | null,
   next: string | null,
 ): string | null {
   if (next === 'blocked_after_success' || current === 'blocked_after_success') {
     return 'blocked_after_success';
+  }
+
+  if (next === 'pagination_loop' || current === 'pagination_loop') {
+    return 'pagination_loop';
   }
 
   return next ?? current;
@@ -605,17 +673,33 @@ function toSourceQuery(
   search: SavedSearch,
   maxAgeDays: number,
 ): SourceSearchQuery {
-  const resolved = resolveSavedSearchLocation(search);
-
   return {
-    keywords: search.keywords,
-    technologies: search.technologies,
-    locations: [...resolved.locations],
+    keywords: [...search.keywords],
+    technologies: [],
+    locations: adapterLocationsForFetch(search),
     workModels: [],
     experienceLevels: search.experienceLevels,
     savedSearchId: search.id,
     maxAgeDays,
   };
+}
+
+function uniqueMatches(
+  matches: readonly JobSearchMatch[],
+): JobSearchMatch[] {
+  const seen = new Set<string>();
+  const unique: JobSearchMatch[] = [];
+
+  for (const match of matches) {
+    const key = `${match.jobId}:${match.savedSearchId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(match);
+  }
+
+  return unique;
 }
 
 function mergeNotificationJobs(

@@ -1,6 +1,12 @@
 import { normalizeForSearch, normalizeText } from '../common/normalize-text.js';
+import {
+  tokenizeNormalized,
+  tokensCoverQuery,
+} from './fuzzy-text.js';
 import { ROLE_ALIAS_PAIRS } from './role-aliases.js';
 import type { MatchableJob } from './matching.types.js';
+
+export type QueryMatchKind = 'phrase' | 'tokens' | 'fuzzy' | 'alias' | null;
 
 export function jobSearchableText(job: MatchableJob): string {
   return [
@@ -55,17 +61,42 @@ export function phraseAppearsIn(haystack: string, needle: string): boolean {
 }
 
 export function queryAppearsIn(haystack: string, query: string): boolean {
+  return queryMatchKind(haystack, query) !== null;
+}
+
+export function queryMatchKind(haystack: string, query: string): QueryMatchKind {
   const hay = normalizeForSearch(haystack);
   const needle = normalizeForSearch(query);
   if (!needle) {
-    return false;
+    return null;
   }
 
   if (hay.includes(needle)) {
-    return true;
+    const needleTokens = tokenizeNormalized(needle);
+    if (needleTokens.length > 1 || needle.length >= 4) {
+      return 'phrase';
+    }
+
+    if (tokenizeNormalized(hay).includes(needle)) {
+      return 'phrase';
+    }
   }
 
-  return phraseAppearsIn(haystack, query);
+  const hayTokens = tokenizeNormalized(hay);
+  const needleTokens = tokenizeNormalized(needle);
+  const tokenKind = tokensCoverQuery(hayTokens, needleTokens);
+  if (tokenKind === 'fuzzy') {
+    return 'fuzzy';
+  }
+  if (tokenKind === 'exact' || tokenKind === 'stem') {
+    return 'tokens';
+  }
+
+  if (needleTokens.length > 1 || needle.length >= 4) {
+    return phraseAppearsIn(haystack, query) ? 'alias' : null;
+  }
+
+  return null;
 }
 
 /** Word-boundary match on normalized text so "java" does not hit "javascript". */

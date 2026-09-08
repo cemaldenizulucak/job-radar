@@ -16,8 +16,14 @@ function toJobError(error: unknown): string {
 export function useJobs(
   userId: string | undefined,
   matchedOnly = true,
+  savedSearchId: string | 'all' = 'all',
 ) {
   const [items, setItems] = useState<JobListItem[]>([]);
+  const [lastDiscoveryAt, setLastDiscoveryAt] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [savedSearchCounts, setSavedSearchCounts] = useState<
+    readonly { id: string; count: number }[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const seenUserIdRef = useRef(userId);
@@ -34,6 +40,9 @@ export function useJobs(
   const refetch = useCallback(async (options?: { silent?: boolean }) => {
     if (!userId) {
       setItems([]);
+      setLastDiscoveryAt(null);
+      setTotalCount(0);
+      setSavedSearchCounts([]);
       setError(jobsCopy.signedInRequired);
       setIsLoading(false);
       return;
@@ -45,14 +54,17 @@ export function useJobs(
     setError(null);
 
     try {
-      const jobs = await listJobs({ matchedOnly });
-      setItems(jobs);
+      const feed = await listJobs({ matchedOnly, savedSearchId });
+      setItems(feed.items);
+      setLastDiscoveryAt(feed.lastDiscoveryAt);
+      setTotalCount(feed.totalCount);
+      setSavedSearchCounts(feed.savedSearchCounts);
     } catch (caught) {
       setError(toFeedError(caught));
     } finally {
       setIsLoading(false);
     }
-  }, [matchedOnly, userId]);
+  }, [matchedOnly, savedSearchId, userId]);
 
   useEffect(() => {
     void refetch();
@@ -60,6 +72,9 @@ export function useJobs(
 
   return {
     items,
+    lastDiscoveryAt,
+    totalCount,
+    savedSearchCounts,
     isLoading,
     error,
     refetch,

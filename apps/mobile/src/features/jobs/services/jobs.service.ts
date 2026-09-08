@@ -56,16 +56,40 @@ function mapJobDetail(parsed: ReturnType<typeof jobDetailSchema.parse>): JobDeta
 }
 
 export async function listJobs(
-  options: { matchedOnly?: boolean } = {},
-): Promise<JobListItem[]> {
+  options: {
+    matchedOnly?: boolean;
+    savedSearchId?: string | 'all';
+  } = {},
+): Promise<{
+  items: JobListItem[];
+  lastDiscoveryAt: string | null;
+  totalCount: number;
+  savedSearchCounts: readonly { id: string; count: number }[];
+}> {
   const matchedOnly = options.matchedOnly ?? true;
+  const savedSearchId =
+    options.savedSearchId && options.savedSearchId !== 'all'
+      ? options.savedSearchId
+      : undefined;
   try {
+    const params = new URLSearchParams({
+      limit: '200',
+      matchedOnly: matchedOnly ? 'true' : 'false',
+    });
+    if (savedSearchId) {
+      params.set('savedSearchId', savedSearchId);
+    }
+
     const payload = jobListResponseSchema.parse(
-      await apiGet(
-        `/v1/jobs?limit=200&matchedOnly=${matchedOnly ? 'true' : 'false'}`,
-      ),
+      await apiGet(`/v1/jobs?${params.toString()}`),
     );
-    return payload.items.map(mapJobListItem);
+    const items = payload.items.map(mapJobListItem);
+    return {
+      items,
+      lastDiscoveryAt: payload.lastDiscoveryAt ?? null,
+      totalCount: payload.totalCount ?? items.length,
+      savedSearchCounts: payload.savedSearchCounts ?? [],
+    };
   } catch (error) {
     throw toServiceError(error);
   }

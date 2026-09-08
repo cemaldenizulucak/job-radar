@@ -13,26 +13,28 @@ import type {
 
 import { searchesCopy } from '../copy';
 import { catalogToSelectOptions } from '../utils/location-picker';
+import {
+  SearchMultiSelectField,
+  type SearchMultiSelectItem,
+} from './search-multi-select-field';
 import { SearchSelectField } from './search-select-field';
 
 type SearchLocationFieldsProps = {
   countryCode: string;
   countryName: string;
-  subdivisionCode: string;
-  subdivisionName: string;
+  selectedSubdivisions: readonly SearchMultiSelectItem[];
   disabled?: boolean;
   onCountryChange: (code: string, name: string) => void;
-  onSubdivisionChange: (code: string, name: string) => void;
+  onSubdivisionsChange: (items: SearchMultiSelectItem[]) => void;
 };
 
 export function SearchLocationFields({
   countryCode,
   countryName,
-  subdivisionCode,
-  subdivisionName,
+  selectedSubdivisions,
   disabled = false,
   onCountryChange,
-  onSubdivisionChange,
+  onSubdivisionsChange,
 }: SearchLocationFieldsProps) {
   const [countries, setCountries] = useState<LocationCountry[]>([]);
   const [countriesLoading, setCountriesLoading] = useState(false);
@@ -105,7 +107,7 @@ export function SearchLocationFields({
         }}
         onChange={(code, name) => {
           onCountryChange(code, code ? name : '');
-          onSubdivisionChange('', '');
+          onSubdivisionsChange([]);
           if (code) {
             void loadSubdivisions(code);
           } else {
@@ -114,12 +116,11 @@ export function SearchLocationFields({
           }
         }}
       />
-      <SearchSelectField
+      <SearchMultiSelectField
         label={searchesCopy.subdivision}
         placeholder={searchesCopy.subdivisionPlaceholder}
         hint={searchesCopy.subdivisionHint}
-        value={subdivisionCode}
-        selectedLabel={subdivisionName}
+        selected={selectedSubdivisions}
         options={subdivisionOptions}
         loading={subdivisionsLoading}
         error={subdivisionsError}
@@ -130,9 +131,7 @@ export function SearchLocationFields({
         onRetry={() => {
           void loadSubdivisions(countryCode);
         }}
-        onChange={(code, name) => {
-          onSubdivisionChange(code, code ? name : '');
-        }}
+        onChange={onSubdivisionsChange}
       />
     </View>
   );
