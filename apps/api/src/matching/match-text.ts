@@ -1,7 +1,7 @@
 import { normalizeForSearch, normalizeText } from '../common/normalize-text.js';
 import {
   tokenizeNormalized,
-  tokensCoverQuery,
+  tokensCoverQueryInWindow,
 } from './fuzzy-text.js';
 import { ROLE_ALIAS_PAIRS } from './role-aliases.js';
 import type { MatchableJob } from './matching.types.js';
@@ -9,13 +9,7 @@ import type { MatchableJob } from './matching.types.js';
 export type QueryMatchKind = 'phrase' | 'tokens' | 'fuzzy' | 'alias' | null;
 
 export function jobSearchableText(job: MatchableJob): string {
-  return [
-    job.title,
-    job.companyName,
-    job.description ?? '',
-    job.location ?? '',
-    ...job.technologies,
-  ].join(' ');
+  return [job.title, job.description ?? '', ...job.technologies].join(' ');
 }
 
 export function expandNormalizedPhrases(value: string): string[] {
@@ -84,7 +78,7 @@ export function queryMatchKind(haystack: string, query: string): QueryMatchKind 
 
   const hayTokens = tokenizeNormalized(hay);
   const needleTokens = tokenizeNormalized(needle);
-  const tokenKind = tokensCoverQuery(hayTokens, needleTokens);
+  const tokenKind = tokensCoverQueryInWindow(hayTokens, needleTokens);
   if (tokenKind === 'fuzzy') {
     return 'fuzzy';
   }

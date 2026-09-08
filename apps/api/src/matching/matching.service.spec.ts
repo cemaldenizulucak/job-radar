@@ -468,8 +468,8 @@ describe('MatchingService generic text matching', () => {
   it('never uses score to exclude a textual match', () => {
     const decision = matcher.evaluateMatch(
       job({
-        title: 'Üretim',
-        companyName: 'Gıda AŞ',
+        title: 'Gıda Üretim Uzmanı',
+        companyName: 'Unrelated Holdings',
         description: null,
         technologies: [],
       }),
@@ -912,5 +912,124 @@ describe('MatchingService generic text matching', () => {
     expect(decision.workModel).toBe('unknown');
     expect(decision.matched).toBe(false);
     expect(decision.reasons).toContain('work model unknown');
+  });
+
+  it('does not match Makine Mühendisi because the company name contains GIDA', () => {
+    const saved = search({
+      name: 'Gıda mühendisi Kalite güvence',
+      keywords: ['Gıda mühendisi Kalite güvence'],
+    });
+    const listing = job({
+      title: 'Makine Mühendisi',
+      companyName:
+        'HEK-YOL İNŞAAT TAAHHÜT ÜRETİM MADENCİLİK PETROL OTOMOTİV NAKLİYAT TURİZM GIDA SAN VE TİC AŞ',
+      description: 'Gıda tesisimizde bakım ve kalite güvence ekibiyle koordinasyon.',
+      technologies: [],
+    });
+
+    const decision = matcher.evaluateMatch(listing, saved);
+    expect(decision.matched).toBe(false);
+    expect(decision.keyword).toBe('fail');
+  });
+
+  it('does not match Elektrik Mühendisi at the same food-named company', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Elektrik Mühendisi',
+          companyName:
+            'HEK-YOL İNŞAAT TAAHHÜT ÜRETİM MADENCİLİK PETROL OTOMOTİV NAKLİYAT TURİZM GIDA SAN VE TİC AŞ',
+          description: null,
+          technologies: [],
+        }),
+        search({ keywords: ['Gıda mühendisi', 'Kalite güvence'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('matches Gıda Mühendisi when the company name has no gıda token', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Gıda Mühendisi',
+          companyName: 'Anadolu Üretim AŞ',
+          description: null,
+          technologies: [],
+        }),
+        search({ keywords: ['Gıda mühendisi Kalite güvence'] }),
+      ),
+    ).toBe(true);
+  });
+
+  it('matches Kalite Güvence Uzmanı when duties require food engineering', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Kalite Güvence Uzmanı',
+          companyName: 'Anadolu Üretim AŞ',
+          description:
+            'Gıda mühendisliği mezunu aranır. HACCP ve proses kalite güvence görevleri.',
+          technologies: [],
+        }),
+        search({ keywords: ['Gıda mühendisi Kalite güvence'] }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat a software QA listing as food quality assurance via the company name', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Software QA Engineer',
+          companyName:
+            'HEK-YOL İNŞAAT TAAHHÜT ÜRETİM MADENCİLİK PETROL OTOMOTİV NAKLİYAT TURİZM GIDA SAN VE TİC AŞ',
+          description: 'Gıda sektöründe faaliyet gösteren firmamızda test otomasyonu.',
+          technologies: ['Playwright'],
+        }),
+        search({ keywords: ['Gıda mühendisi', 'Kalite güvence'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not use the saved search display name as a keyword', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Gıda Mühendisi',
+          description: null,
+          technologies: [],
+        }),
+        search({
+          name: 'Gıda mühendisi Kalite güvence',
+          keywords: ['Angular Developer'],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps React and Angular as alternative role matches', () => {
+    const saved = search({ keywords: ['React Developer', 'Angular Developer'] });
+
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'React Developer',
+          description: 'SPA with React only.',
+          technologies: ['React'],
+        }),
+        saved,
+      ),
+    ).toBe(true);
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          id: 'job-angular-desc',
+          title: 'Frontend Developer',
+          description: 'Angular developer experience with TypeScript.',
+          technologies: [],
+        }),
+        saved,
+      ),
+    ).toBe(true);
   });
 });

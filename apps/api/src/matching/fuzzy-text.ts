@@ -106,6 +106,42 @@ export function tokensCoverQuery(
   return usedStem ? 'stem' : 'exact';
 }
 
+export function tokensCoverQueryInWindow(
+  hayTokens: readonly string[],
+  needleTokens: readonly string[],
+  maxGap = 2,
+): TokenMatchKind | null {
+  if (needleTokens.length <= 1) {
+    return tokensCoverQuery(hayTokens, needleTokens);
+  }
+
+  const windowSize = needleTokens.length + maxGap;
+  let best: TokenMatchKind | null = null;
+
+  for (let start = 0; start < hayTokens.length; start += 1) {
+    const window = hayTokens.slice(start, start + windowSize);
+    if (window.length < needleTokens.length) {
+      break;
+    }
+
+    const kind = tokensCoverQuery(window, needleTokens);
+    if (kind === 'exact') {
+      return 'exact';
+    }
+
+    if (kind === 'stem') {
+      best = 'stem';
+      continue;
+    }
+
+    if (kind === 'fuzzy' && best !== 'stem') {
+      best = 'fuzzy';
+    }
+  }
+
+  return best;
+}
+
 function sharesMeaningfulStem(left: string, right: string): boolean {
   const shorter = left.length <= right.length ? left : right;
   const longer = left.length <= right.length ? right : left;

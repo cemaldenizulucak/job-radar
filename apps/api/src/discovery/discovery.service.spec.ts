@@ -1447,6 +1447,57 @@ describe('DiscoveryService', () => {
     );
   });
 
+  it('drops a previously stored match that only held because of the company name', async () => {
+    const jobs = new FakeJobsService();
+    const machine = {
+      sourceId: 'kariyer_net' as const,
+      sourceJobId: 'hekyol-makine',
+      canonicalUrl: 'https://example.com/makine',
+      title: 'Makine Mühendisi',
+      companyName:
+        'HEK-YOL İNŞAAT TAAHHÜT ÜRETİM MADENCİLİK PETROL OTOMOTİV NAKLİYAT TURİZM GIDA SAN VE TİC AŞ',
+      titleNormalized: 'makine muhendisi',
+      companyNormalized: 'hek yol gida',
+      location: 'İzmir',
+      workModel: 'onsite' as const,
+      experienceLevel: 'mid',
+      technologies: [] as string[],
+      description: 'Gıda tesisinde bakım. Kalite güvence ekibiyle koordinasyon.',
+      publishedAt: null,
+      isActive: true,
+    };
+    await jobs.upsertNormalized(machine);
+    jobs.matches.push({
+      jobId: sourceListingIdentity('kariyer_net', 'hekyol-makine'),
+      savedSearchId: 'search-gida',
+    });
+
+    const emptyAdapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'kariyer_net', jobs: [] }),
+    };
+    const target = search({
+      id: 'search-gida',
+      name: 'Gıda mühendisi Kalite güvence',
+      keywords: ['Gıda mühendisi Kalite güvence'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [emptyAdapter], jobs);
+
+    await discovery.runForSavedSearch(target);
+
+    expect(jobs.listings.size).toBe(1);
+    expect(jobs.matches).toEqual([]);
+  });
+
   it('updates lastDiscoveryAt after targeted discovery completes', async () => {
     const target = search({ id: 'search-new', sourceIds: ['linkedin'] });
     const { discovery, searches } = createDiscovery(

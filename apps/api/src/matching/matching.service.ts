@@ -12,6 +12,8 @@ import { LocationsService } from '../locations/locations.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { logMatchDecision } from './matching-dev-log.js';
 import { jobSearchableText, queryAppearsIn } from './match-text.js';
+import { titleBlocksDescriptionKeywordMatch } from './profession-conflict.js';
+import { splitProfessionPhrases } from './search-phrases.js';
 import {
   searchLooksLikeSoftware,
   titleLooksUnrelatedToSoftware,
@@ -26,9 +28,9 @@ import type {
 /**
  * Profession-agnostic matching.
  *
- * Keywords are OR'd against title, description, and structured skills.
- * Empty optional filters never reject. Work model and location stay separate.
- * Score is for sorting only and never excludes a textual match.
+ * Keywords are OR'd across comma-separated and profession-sized phrases.
+ * Tokens of one profession phrase stay together in a single field.
+ * Company name and location are never keyword evidence.
  */
 export const MATCH_SCORE = {
   exactTitle: 100,
@@ -158,12 +160,21 @@ export class MatchingService {
       return 'fail';
     }
 
-    return terms.some(
-      (term) =>
-        queryAppearsIn(job.title, term) ||
-        queryAppearsIn(job.description ?? '', term) ||
-        queryAppearsIn(jobSearchableText(job), term),
-    )
+    if (terms.some((term) => queryAppearsIn(job.title, term))) {
+      return 'pass';
+    }
+
+    const skills = job.technologies.join(' ');
+    if (skills && terms.some((term) => queryAppearsIn(skills, term))) {
+      return 'pass';
+    }
+
+    if (titleBlocksDescriptionKeywordMatch(job.title, terms)) {
+      return 'fail';
+    }
+
+    return job.description &&
+      terms.some((term) => queryAppearsIn(job.description ?? '', term))
       ? 'pass'
       : 'fail';
   }
@@ -252,7 +263,8 @@ function collectSearchTerms(search: SavedSearch): string[] {
   return search.keywords
     .flatMap((term) => term.split(','))
     .map((term) => term.trim())
-    .filter((term) => term.length > 0);
+    .filter((term) => term.length > 0)
+    .flatMap((term) => splitProfessionPhrases(term));
 }
 
 function hydrateSearchLocation(

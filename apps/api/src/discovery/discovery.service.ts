@@ -512,7 +512,7 @@ export class DiscoveryService {
         const decision = this.matchingService.evaluateMatch(job, search);
         if (decision.keyword === 'pass') {
           keywordMatched += 1;
-          const haystacks = [job.title, job.description ?? '', job.companyName];
+          const haystacks = [job.title, job.description ?? '', ...job.technologies];
           if (
             queryTerms.some((term) =>
               haystacks.some((text) => queryMatchKind(text, term) === 'fuzzy'),
