@@ -168,6 +168,15 @@ class FakeJobsService extends JobsService {
       })),
     );
   }
+
+  override listMatchesForSearches(
+    searchIds: readonly string[],
+  ): Promise<JobSearchMatch[]> {
+    const allowed = new Set(searchIds);
+    return Promise.resolve(
+      this.matches.filter((match) => allowed.has(match.savedSearchId)),
+    );
+  }
 }
 
 class FakeDuplicateGroupsService extends DuplicateGroupsService {
@@ -1575,5 +1584,67 @@ describe('DiscoveryService', () => {
         savedSearchId: 'search-gida',
       },
     ]);
+  });
+
+  it('previews stale match removal without deleting listings, then applies', async () => {
+    const jobs = new FakeJobsService();
+    const listing = {
+      sourceId: 'linkedin' as const,
+      sourceJobId: '4461124795',
+      title: 'E-Learning Content Developer',
+      companyName: 'Maritime Trainer',
+      titleNormalized: 'e-learning content developer',
+      companyNormalized: 'maritime trainer',
+      location: 'Remote',
+      workModel: 'remote' as const,
+      experienceLevel: null,
+      technologies: [],
+      description:
+        'Develop Storyline, Rise and SCORM courses. Experience with UI/UX, responsive design and JavaScript integration.',
+      canonicalUrl: 'https://www.linkedin.com/jobs/view/4461124795',
+      publishedAt: null,
+      isActive: true,
+    };
+    const upserted = await jobs.upsertNormalized(listing);
+    jobs.matches.push({
+      jobId: upserted.id,
+      savedSearchId: 'search-frontend',
+    });
+    const emptyAdapter: JobSourceAdapter = {
+      sourceId: 'linkedin',
+      displayName: 'LinkedIn',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'linkedin', jobs: [] }),
+    };
+    const { discovery } = createDiscovery(
+      [
+        search({
+          id: 'search-frontend',
+          name: 'Frontend',
+          keywords: ['Frontend'],
+        }),
+      ],
+      [emptyAdapter],
+      jobs,
+    );
+
+    const preview = await discovery.rematchStoredMatches();
+    expect(preview.dryRun).toBe(true);
+    expect(preview.deleteCount).toBe(1);
+    expect(preview.insertCount).toBe(0);
+    expect(jobs.matches).toHaveLength(1);
+    expect(jobs.listings.size).toBe(1);
+
+    const applied = await discovery.rematchStoredMatches({ dryRun: false });
+    expect(applied.dryRun).toBe(false);
+    expect(applied.deleteCount).toBe(1);
+    expect(jobs.matches).toEqual([]);
+    expect(jobs.listings.size).toBe(1);
   });
 });

@@ -1,7 +1,7 @@
 import { normalizeForSearch } from '../common/normalize-text.js';
 import { tokenizeNormalized } from './fuzzy-text.js';
 
-const PHRASE_END_TOKENS = new Set([
+export const PHRASE_END_TOKENS = new Set([
   'muhendis',
   'muhendisi',
   'muhendisligi',
@@ -14,6 +14,35 @@ const PHRASE_END_TOKENS = new Set([
   'sorumlu',
   'sorumlusu',
 ]);
+
+export type KeywordPhrase = {
+  term: string;
+  phrase: string;
+};
+
+/**
+ * Keywords only. Search name and `technologies` are not collected here.
+ */
+export function collectKeywordPhrases(
+  keywords: readonly string[],
+): KeywordPhrase[] {
+  const phrases: KeywordPhrase[] = [];
+
+  for (const keyword of keywords) {
+    for (const part of keyword.split(',')) {
+      const term = part.trim();
+      if (term.length === 0) {
+        continue;
+      }
+
+      for (const phrase of splitProfessionPhrases(term)) {
+        phrases.push({ term, phrase });
+      }
+    }
+  }
+
+  return phrases;
+}
 
 /**
  * Splits a keyword blob into profession-sized phrases.

@@ -22,6 +22,18 @@ export type MatchFieldResult = 'pass' | 'fail' | 'unknown' | 'skipped';
 
 export type KeywordMatchKind = 'direct' | 'alias' | 'related';
 
+export type MatchEvidenceField = 'title' | 'description' | 'technologies';
+
+export type MatchKind = 'direct' | 'skill';
+
+export type MatchEvidence = {
+  term: string;
+  matchedText: string;
+  field: MatchEvidenceField;
+  snippet: string | null;
+  kind: 'title' | 'skill';
+};
+
 export type MatchDecision = {
   title: string;
   sourceId: SourceId;
@@ -32,6 +44,8 @@ export type MatchDecision = {
   reasons: readonly string[];
   keyword: MatchFieldResult;
   keywordKind: KeywordMatchKind | null;
+  matchKind: MatchKind | null;
+  evidence: readonly MatchEvidence[];
   roleFamily: JobRoleFamily;
   roleMatch: KeywordMatchKind | null;
   titleMatch: MatchFieldResult;

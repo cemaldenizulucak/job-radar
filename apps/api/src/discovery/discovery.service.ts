@@ -38,7 +38,10 @@ import {
   toImmediateDiscoveryResult,
   type DiscoveryRunSummary,
   type ImmediateDiscoveryResult,
+  type MatchReevaluationPair,
+  type MatchReevaluationReport,
 } from './discovery.types.js';
+import { diffJobSearchMatches } from './match-reevaluation.js';
 import { normalizeSourceJob } from './job-normalizer.js';
 
 type SearchSourceFetchStat = {
@@ -95,6 +98,71 @@ export class DiscoveryService {
     this.immediateRuns.set(savedSearch.id, PENDING_DISCOVERY_RESULT);
     void this.runEnqueuedSearch(savedSearch);
     return PENDING_DISCOVERY_RESULT;
+  }
+
+  /**
+   * Re-evaluates stored job_search_matches with current matching rules.
+   * Does not fetch job sources. Does not delete listings or applications.
+   * Defaults to dry-run so live data is only changed after an explicit apply.
+   */
+  async rematchStoredMatches(
+    options: { dryRun?: boolean } = {},
+  ): Promise<MatchReevaluationReport> {
+    const dryRun = options.dryRun !== false;
+    return this.runGate.runExclusive(async () => {
+      const searches = await this.searchesService.getActiveSearches();
+      const catalogJobs = await this.loadCatalogJobs();
+      const searchIds = searches.map((search) => search.id);
+      const existing = await this.jobsService.listMatchesForSearches(searchIds);
+      const desired = this.matchingService.matchJobsToSearches(
+        catalogJobs,
+        searches,
+      );
+      const diff = diffJobSearchMatches(existing, desired);
+
+      if (!dryRun) {
+        await this.jobsService.syncMatchesForSearches(searchIds, desired);
+      }
+
+      const titles = new Map(catalogJobs.map((job) => [job.id, job.title]));
+      const names = new Map(searches.map((search) => [search.id, search.name]));
+      const annotate = (match: JobSearchMatch): MatchReevaluationPair => ({
+        jobId: match.jobId,
+        savedSearchId: match.savedSearchId,
+        title: titles.get(match.jobId),
+        searchName: names.get(match.savedSearchId),
+      });
+
+      this.logger.log({
+        message: dryRun
+          ? 'Match re-evaluation preview'
+          : 'Match re-evaluation applied',
+        dryRun,
+        searchesEvaluated: searches.length,
+        jobsEvaluated: catalogJobs.length,
+        existingMatches: existing.length,
+        desiredMatches: desired.length,
+        keepCount: diff.keep.length,
+        insertCount: diff.insert.length,
+        deleteCount: diff.remove.length,
+      });
+
+      return {
+        dryRun,
+        searchesEvaluated: searches.length,
+        jobsEvaluated: catalogJobs.length,
+        existingMatches: existing.length,
+        desiredMatches: desired.length,
+        keepCount: diff.keep.length,
+        insertCount: diff.insert.length,
+        deleteCount: diff.remove.length,
+        listingsUnchanged: true,
+        applicationsUnchanged: true,
+        sampleKept: diff.keep.slice(0, 10).map(annotate),
+        sampleInserts: diff.insert.slice(0, 10).map(annotate),
+        sampleDeletes: diff.remove.slice(0, 10).map(annotate),
+      };
+    });
   }
 
   private async runEnqueuedSearch(savedSearch: SavedSearch): Promise<void> {

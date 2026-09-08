@@ -1,5 +1,6 @@
 import { normalizeForSearch } from '../common/normalize-text.js';
 import { tokenizeNormalized } from './fuzzy-text.js';
+import { isRoleSearchTerm } from './search-term-kind.js';
 
 /**
  * Discipline prefixes that do not substitute for one another when they
@@ -72,6 +73,25 @@ export function titleBlocksDescriptionKeywordMatch(
   }
 
   return titleLooksLikeSoftware(title) && searchLooksLikePhysicalDiscipline(terms);
+}
+
+/**
+ * Exclusive titles (Makine, Gıda, …) still block role/physical description
+ * matches. Explicit skill tokens such as UI or JavaScript stay eligible.
+ */
+export function shouldBlockDescriptionKeyword(
+  title: string,
+  term: string,
+): boolean {
+  if (!titleBlocksDescriptionKeywordMatch(title, [term])) {
+    return false;
+  }
+
+  if (!isRoleSearchTerm(term) && !searchLooksLikePhysicalDiscipline([term])) {
+    return false;
+  }
+
+  return true;
 }
 
 function searchLooksLikePhysicalDiscipline(terms: readonly string[]): boolean {

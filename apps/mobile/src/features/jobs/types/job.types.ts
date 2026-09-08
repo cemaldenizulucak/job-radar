@@ -35,9 +35,20 @@ export type DuplicateJobLink = {
   canonicalUrl: string;
 };
 
+export type MatchedSearchEvidence = {
+  term: string;
+  matchedText: string;
+  field: 'title' | 'description' | 'technologies';
+  snippet: string | null;
+  kind: 'title' | 'skill';
+};
+
 export type MatchedSearch = {
   id: string;
   name: string;
+  matchKind: 'direct' | 'skill' | null;
+  terms: readonly string[];
+  evidence: readonly MatchedSearchEvidence[];
 };
 
 export type JobDetail = JobListItem & {

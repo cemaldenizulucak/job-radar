@@ -58,6 +58,19 @@ export const jobDetailSchema = jobListItemSchema.extend({
       z.object({
         id: z.string(),
         name: z.string(),
+        matchKind: z.enum(['direct', 'skill']).nullable().optional(),
+        terms: z.array(z.string()).optional(),
+        evidence: z
+          .array(
+            z.object({
+              term: z.string(),
+              matchedText: z.string(),
+              field: z.enum(['title', 'description', 'technologies']),
+              snippet: z.string().nullable(),
+              kind: z.enum(['title', 'skill']),
+            }),
+          )
+          .optional(),
       }),
     )
     .optional(),

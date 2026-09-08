@@ -80,4 +80,12 @@ describe('phraseAppearsIn', () => {
       normalizedPhraseAppears('Angular 17, RxJS, TypeScript', 'angular'),
     ).toBe(true);
   });
+
+  it('matches UI as a token in UI/UX but not inside other words', () => {
+    expect(queryAppearsIn('Experience with UI/UX and Storyline', 'UI')).toBe(
+      true,
+    );
+    expect(queryAppearsIn('Build guides for the product.', 'UI')).toBe(false);
+    expect(queryAppearsIn('quick circuit', 'UI')).toBe(false);
+  });
 });

@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -17,6 +18,12 @@ import {
 import type { DuplicateCandidate } from '../duplicates/duplicates.types.js';
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
 import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
+import { MatchingService } from '../matching/matching.service.js';
+import {
+  mapSavedSearchRow,
+  SAVED_SEARCH_SELECT,
+} from '../searches/searches.mapper.js';
+import type { SavedSearch } from '../searches/searches.types.js';
 import { decideListingWrite } from './job-identity.js';
 import { applyJobNewness, resolveJobNewWindowHours } from './job-newness.js';
 import { clampJobFeedLimit, JOB_FEED_MAX_LIMIT } from './job-feed-visibility.js';
@@ -33,6 +40,7 @@ import type {
   JobListQuery,
   JobListResult,
   JobTabs,
+  MatchedSearchSummary,
   NormalizedJob,
 } from './jobs.types.js';
 
@@ -55,6 +63,7 @@ export class JobsService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly config: ConfigService,
+    @Optional() private readonly matchingService: MatchingService | null = null,
   ) {}
 
   async listForUser(query: JobListQuery): Promise<JobListResult> {
@@ -231,16 +240,20 @@ export class JobsService {
     );
     const searchNames = await this.loadSearchNames(matchedSearchIds);
     const tracking = await this.loadUserTracking(_userId, jobId);
+    const matchable = mapMatchableJobRow(row);
+    const savedSearches = await this.loadSavedSearchesByIds(matchedSearchIds);
 
     return {
       ...item,
       description: mapped.description,
       experienceLevel: mapped.experienceLevel,
       technologies: mapped.technologies,
-      matchedSearches: matchedSearchIds.map((id) => ({
-        id,
-        name: searchNames.get(id) ?? id,
-      })),
+      matchedSearches: this.explainMatchedSearches(
+        matchable,
+        matchedSearchIds,
+        searchNames,
+        savedSearches,
+      ),
       duplicateJobs,
       isFavorite: tracking.isFavorite,
       applicationStatus: tracking.applicationStatus,
@@ -506,6 +519,76 @@ export class JobsService {
     }
 
     return names;
+  }
+
+  private async loadSavedSearchesByIds(
+    searchIds: readonly string[],
+  ): Promise<Map<string, SavedSearch>> {
+    const searches = new Map<string, SavedSearch>();
+    const uniqueIds = uniqueStrings(searchIds);
+    if (uniqueIds.length === 0) {
+      return searches;
+    }
+
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('saved_searches')
+      .select(SAVED_SEARCH_SELECT)
+      .in('id', uniqueIds);
+
+    if (error) {
+      this.logger.warn({
+        message: 'Saved searches unavailable; match evidence omitted',
+      });
+      return searches;
+    }
+
+    if (!Array.isArray(data)) {
+      return searches;
+    }
+
+    for (const row of data) {
+      const search = mapSavedSearchRow(row);
+      if (search) {
+        searches.set(search.id, search);
+      }
+    }
+
+    return searches;
+  }
+
+  private explainMatchedSearches(
+    job: MatchableJob | null,
+    matchedSearchIds: readonly string[],
+    searchNames: ReadonlyMap<string, string>,
+    savedSearches: ReadonlyMap<string, SavedSearch>,
+  ): MatchedSearchSummary[] {
+    return matchedSearchIds.map((id) => {
+      const saved = savedSearches.get(id);
+      const name = saved?.name ?? searchNames.get(id) ?? id;
+      if (!this.matchingService || !job || !saved) {
+        return emptyMatchedSearch(id, name);
+      }
+
+      const decision = this.matchingService.evaluateMatch(job, saved);
+      if (!decision.matched) {
+        return emptyMatchedSearch(id, name);
+      }
+
+      return {
+        id,
+        name,
+        matchKind: decision.matchKind,
+        terms: uniqueEvidenceTerms(decision.evidence),
+        evidence: decision.evidence.map((item) => ({
+          term: item.term,
+          matchedText: item.matchedText,
+          field: item.field,
+          snippet: item.snippet,
+          kind: item.kind,
+        })),
+      };
+    });
   }
 
   private async loadUserTracking(
@@ -929,6 +1012,28 @@ export class JobsService {
     return this.saveMatches(desired);
   }
 
+  async listMatchesForSearches(
+    searchIds: readonly string[],
+  ): Promise<JobSearchMatch[]> {
+    const allowed = new Set(searchIds.filter((id) => id.trim().length > 0));
+    if (allowed.size === 0) {
+      return [];
+    }
+
+    const matches: JobSearchMatch[] = [];
+    for (const searchId of allowed) {
+      const rows = await this.loadMatches(searchId);
+      for (const row of rows) {
+        matches.push({
+          jobId: row.jobId,
+          savedSearchId: row.savedSearchId,
+        });
+      }
+    }
+
+    return matches;
+  }
+
   async markInactiveNotSeenSince(cutoffIso: string): Promise<number> {
     const now = new Date().toISOString();
     const { data, error } = await this.supabase
@@ -1232,6 +1337,22 @@ type JobMatchRow = {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function uniqueEvidenceTerms(
+  evidence: readonly { term: string }[],
+): string[] {
+  return uniqueStrings(evidence.map((item) => item.term));
+}
+
+function emptyMatchedSearch(id: string, name: string): MatchedSearchSummary {
+  return {
+    id,
+    name,
+    matchKind: null,
+    terms: [],
+    evidence: [],
+  };
 }
 
 function resolveScopedJobIds(

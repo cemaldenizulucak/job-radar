@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { jobsEmptyMessage } from './copy';
+import { jobsEmptyMessage, matchKindLabel } from './copy';
 
 describe('jobsEmptyMessage', () => {
   it('uses the matched empty copy when the matched feed has no jobs', () => {
@@ -30,5 +30,13 @@ describe('jobsEmptyMessage', () => {
         isDiscovering: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe('matchKindLabel', () => {
+  it('maps backend match kinds to Turkish labels', () => {
+    expect(matchKindLabel('direct')).toBe('Doğrudan eşleşme');
+    expect(matchKindLabel('skill')).toBe('Beceri eşleşmesi');
+    expect(matchKindLabel(null)).toBeNull();
   });
 });

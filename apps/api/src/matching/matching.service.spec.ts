@@ -1033,3 +1033,164 @@ describe('MatchingService generic text matching', () => {
     ).toBe(true);
   });
 });
+
+const eLearningDescription =
+  'Design and develop e-learning content using Articulate Storyline, Rise and SCORM. Experience with UI/UX, responsive design and JavaScript integration is a plus.';
+
+describe('MatchingService role vs skill evidence', () => {
+  const eLearning = () =>
+    job({
+      title: 'E-Learning Content Developer',
+      companyName: 'Maritime Trainer',
+      description: eLearningDescription,
+      technologies: [],
+    });
+
+  it('matches UI or JavaScript on e-learning content as a skill match with evidence', () => {
+    const listing = eLearning();
+    const ui = matcher.evaluateMatch(listing, search({ keywords: ['UI'] }));
+    expect(ui.matched).toBe(true);
+    expect(ui.matchKind).toBe('skill');
+    expect(ui.evidence.some((item) => item.term === 'UI')).toBe(true);
+    expect(ui.evidence.every((item) => item.field === 'description')).toBe(true);
+    expect(ui.evidence[0]?.snippet?.includes('UI/UX')).toBe(true);
+
+    const js = matcher.evaluateMatch(
+      listing,
+      search({ keywords: ['JavaScript'] }),
+    );
+    expect(js.matched).toBe(true);
+    expect(js.matchKind).toBe('skill');
+    expect(js.evidence[0]?.term).toBe('JavaScript');
+    expect(js.evidence[0]?.snippet?.toLowerCase().includes('javascript')).toBe(
+      true,
+    );
+  });
+
+  it('does not infer a frontend match from UI/JS content when the keyword is only Frontend', () => {
+    expect(
+      matcher.jobMatchesSearch(eLearning(), search({ keywords: ['Frontend'] })),
+    ).toBe(false);
+  });
+
+  it('matches a Frontend Developer title as a direct role match', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'Frontend Developer',
+        description: null,
+        technologies: [],
+      }),
+      search({ keywords: ['Frontend Developer'] }),
+    );
+
+    expect(decision.matched).toBe(true);
+    expect(decision.matchKind).toBe('direct');
+    expect(decision.evidence[0]?.field).toBe('title');
+    expect(decision.evidence[0]?.kind).toBe('title');
+  });
+
+  it('shows UI as the real reason when the search is named Frontend and keywords are UI', () => {
+    const decision = matcher.evaluateMatch(
+      eLearning(),
+      search({ name: 'Frontend', keywords: ['UI'] }),
+    );
+
+    expect(decision.matched).toBe(true);
+    expect(decision.evidence.map((item) => item.term)).toEqual(['UI']);
+    expect(decision.evidence.some((item) => item.term === 'Frontend')).toBe(
+      false,
+    );
+  });
+
+  it('does not match UI as a fragment inside another word', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Instructional Designer',
+          description: 'Build guides for the product.',
+          technologies: [],
+        }),
+        search({ keywords: ['UI'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not invent description evidence when the listing has no description', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'E-Learning Content Developer',
+        description: null,
+        technologies: [],
+      }),
+      search({ keywords: ['UI'] }),
+    );
+
+    expect(decision.matched).toBe(false);
+    expect(decision.evidence).toEqual([]);
+  });
+
+  it('keeps location and work model filters after skill matching', () => {
+    const listing = eLearning();
+    expect(
+      matcher.jobMatchesSearch(
+        { ...listing, location: 'Berlin, Germany', workModel: 'onsite' },
+        search({
+          keywords: ['UI'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          workTypes: ['remote'],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      matcher.jobMatchesSearch(
+        { ...listing, location: 'İzmir, Türkiye', workModel: 'remote' },
+        search({
+          keywords: ['JavaScript'],
+          workTypes: ['remote'],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat JavaScript in the title as a frontend role', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'JavaScript Developer',
+          description: null,
+          technologies: [],
+        }),
+        search({ keywords: ['Frontend'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not turn a generic developer title into a frontend match', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Developer',
+          description: 'Uses Storyline and Rise.',
+          technologies: [],
+        }),
+        search({ keywords: ['Frontend'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('still matches a JavaScript skill on a non-frontend engineering title', () => {
+    const decision = matcher.evaluateMatch(
+      job({
+        title: 'Makine Mühendisi',
+        description: 'Dashboard için JavaScript ile raporlama otomasyonu.',
+        technologies: [],
+      }),
+      search({ keywords: ['JavaScript'] }),
+    );
+
+    expect(decision.matched).toBe(true);
+    expect(decision.matchKind).toBe('skill');
+    expect(decision.evidence[0]?.field).toBe('description');
+  });
+});

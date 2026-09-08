@@ -68,7 +68,26 @@ export const jobsCopy = {
   applicationOffer: 'Teklif',
   applicationRejected: 'Reddedildi',
   matchedSearchLabel: 'Eşleşen arama',
+  matchKindLabel: 'Eşleşme türü',
+  matchKindDirect: 'Doğrudan eşleşme',
+  matchKindSkill: 'Beceri eşleşmesi',
+  matchedTermsLabel: 'Eşleşen terimler',
+  matchEvidenceLabel: 'Kanıt',
 } as const;
+
+export function matchKindLabel(
+  kind: 'direct' | 'skill' | null | undefined,
+): string | null {
+  if (kind === 'direct') {
+    return jobsCopy.matchKindDirect;
+  }
+
+  if (kind === 'skill') {
+    return jobsCopy.matchKindSkill;
+  }
+
+  return null;
+}
 
 export function jobsUiError(error: unknown, fallback: string): string {
   if (typeof __DEV__ !== 'undefined' && __DEV__) {

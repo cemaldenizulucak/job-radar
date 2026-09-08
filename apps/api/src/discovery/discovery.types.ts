@@ -105,3 +105,26 @@ export const FAILED_DISCOVERY_RESULT: ImmediateDiscoveryResult = {
   matchesCreated: 0,
   lastDiscoveryAt: null,
 };
+
+export type MatchReevaluationPair = {
+  jobId: string;
+  savedSearchId: string;
+  title?: string;
+  searchName?: string;
+};
+
+export type MatchReevaluationReport = {
+  dryRun: boolean;
+  searchesEvaluated: number;
+  jobsEvaluated: number;
+  existingMatches: number;
+  desiredMatches: number;
+  keepCount: number;
+  insertCount: number;
+  deleteCount: number;
+  listingsUnchanged: true;
+  applicationsUnchanged: true;
+  sampleKept: readonly MatchReevaluationPair[];
+  sampleInserts: readonly MatchReevaluationPair[];
+  sampleDeletes: readonly MatchReevaluationPair[];
+};

@@ -10,18 +10,21 @@ import {
 } from '../common/search-location.js';
 import { LocationsService } from '../locations/locations.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
+import { collectKeywordEvidence, overallMatchKind } from './match-evidence.js';
 import { logMatchDecision } from './matching-dev-log.js';
 import { jobSearchableText, queryAppearsIn } from './match-text.js';
-import { titleBlocksDescriptionKeywordMatch } from './profession-conflict.js';
-import { splitProfessionPhrases } from './search-phrases.js';
+import { collectKeywordPhrases } from './search-phrases.js';
+import { isRoleSearchTerm } from './search-term-kind.js';
 import {
   searchLooksLikeSoftware,
   titleLooksUnrelatedToSoftware,
 } from './unrelated-profession.js';
 import type {
   JobSearchMatch,
+  KeywordMatchKind,
   MatchableJob,
   MatchDecision,
+  MatchEvidence,
   MatchFieldResult,
 } from './matching.types.js';
 
@@ -74,9 +77,13 @@ export class MatchingService {
 
   evaluateMatch(job: MatchableJob, search: SavedSearch): MatchDecision {
     const terms = collectSearchTerms(search);
-    const keyword = this.keywordResult(job, terms);
+    const { result: keyword, evidence } = this.keywordResult(job, search, terms);
     const titleMatch = fieldContainsAny(job.title, terms);
-    const descriptionMatch = fieldContainsAny(job.description ?? '', terms);
+    const descriptionMatch = job.description
+      ? fieldContainsAny(job.description, terms)
+      : terms.length === 0
+        ? 'skipped'
+        : 'fail';
     const location = this.locationResult(job, search);
     const technology = this.optionalTagResult(job, search);
     const experience = this.experienceResult(job, search);
@@ -91,6 +98,7 @@ export class MatchingService {
     });
     const matched = reasons.length === 0;
     const score = matched ? scoreTextMatch(job, terms) : 0;
+    const keywordKind = keywordKindFromEvidence(evidence, keyword);
     const decision: MatchDecision = {
       title: job.title,
       sourceId: job.sourceId,
@@ -100,23 +108,11 @@ export class MatchingService {
       threshold: MATCH_SCORE_THRESHOLD,
       reasons,
       keyword,
-      keywordKind:
-        titleMatch === 'pass'
-          ? 'direct'
-          : descriptionMatch === 'pass'
-            ? 'related'
-            : keyword === 'pass'
-              ? 'alias'
-              : null,
+      keywordKind,
+      matchKind: matched ? overallMatchKind(evidence) : null,
+      evidence: matched ? evidence : [],
       roleFamily: 'none',
-      roleMatch:
-        titleMatch === 'pass'
-          ? 'direct'
-          : descriptionMatch === 'pass'
-            ? 'related'
-            : keyword === 'pass'
-              ? 'alias'
-              : null,
+      roleMatch: keywordKind,
       titleMatch,
       descriptionMatch,
       location,
@@ -124,7 +120,10 @@ export class MatchingService {
       experience,
       workModel,
       searchTerms: [
-        ...search.keywords.map((raw) => ({ raw, kind: 'role' as const })),
+        ...search.keywords.map((raw) => ({
+          raw,
+          kind: isRoleSearchTerm(raw) ? ('role' as const) : ('technology' as const),
+        })),
         ...search.technologies.map((raw) => ({
           raw,
           kind: 'technology' as const,
@@ -147,36 +146,25 @@ export class MatchingService {
 
   private keywordResult(
     job: MatchableJob,
+    search: SavedSearch,
     terms: readonly string[],
-  ): MatchFieldResult {
+  ): { result: MatchFieldResult; evidence: MatchEvidence[] } {
     if (terms.length === 0) {
-      return 'skipped';
+      return { result: 'skipped', evidence: [] };
     }
 
     if (
       searchLooksLikeSoftware(terms) &&
       titleLooksUnrelatedToSoftware(job.title)
     ) {
-      return 'fail';
+      return { result: 'fail', evidence: [] };
     }
 
-    if (terms.some((term) => queryAppearsIn(job.title, term))) {
-      return 'pass';
-    }
-
-    const skills = job.technologies.join(' ');
-    if (skills && terms.some((term) => queryAppearsIn(skills, term))) {
-      return 'pass';
-    }
-
-    if (titleBlocksDescriptionKeywordMatch(job.title, terms)) {
-      return 'fail';
-    }
-
-    return job.description &&
-      terms.some((term) => queryAppearsIn(job.description ?? '', term))
-      ? 'pass'
-      : 'fail';
+    const evidence = collectKeywordEvidence(job, search);
+    return {
+      result: evidence.length > 0 ? 'pass' : 'fail',
+      evidence,
+    };
   }
 
   private optionalTagResult(
@@ -260,11 +248,26 @@ export class MatchingService {
 }
 
 function collectSearchTerms(search: SavedSearch): string[] {
-  return search.keywords
-    .flatMap((term) => term.split(','))
-    .map((term) => term.trim())
-    .filter((term) => term.length > 0)
-    .flatMap((term) => splitProfessionPhrases(term));
+  return collectKeywordPhrases(search.keywords).map((item) => item.phrase);
+}
+
+function keywordKindFromEvidence(
+  evidence: readonly MatchEvidence[],
+  keyword: MatchFieldResult,
+): KeywordMatchKind | null {
+  if (keyword !== 'pass') {
+    return null;
+  }
+
+  if (evidence.some((item) => item.field === 'title')) {
+    return 'direct';
+  }
+
+  if (evidence.some((item) => item.field === 'description')) {
+    return 'related';
+  }
+
+  return 'alias';
 }
 
 function hydrateSearchLocation(

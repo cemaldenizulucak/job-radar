@@ -65,8 +65,9 @@ export function queryMatchKind(haystack: string, query: string): QueryMatchKind 
     return null;
   }
 
+  const needleTokens = tokenizeNormalized(needle);
+
   if (hay.includes(needle)) {
-    const needleTokens = tokenizeNormalized(needle);
     if (needleTokens.length > 1 || needle.length >= 4) {
       return 'phrase';
     }
@@ -76,8 +77,14 @@ export function queryMatchKind(haystack: string, query: string): QueryMatchKind 
     }
   }
 
+  if (needle.length <= 3 && needleTokens.length === 1) {
+    const compoundTokens = tokenizeNormalized(normalizeText(haystack));
+    if (compoundTokens.includes(needle)) {
+      return 'phrase';
+    }
+  }
+
   const hayTokens = tokenizeNormalized(hay);
-  const needleTokens = tokenizeNormalized(needle);
   const tokenKind = tokensCoverQueryInWindow(hayTokens, needleTokens);
   if (tokenKind === 'fuzzy') {
     return 'fuzzy';

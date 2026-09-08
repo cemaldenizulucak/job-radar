@@ -24,8 +24,8 @@ import { useTheme } from '@/hooks/use-theme';
 import { ApplicationStatusPicker } from '../components/application-status-picker';
 import { DuplicateJobRow } from '../components/duplicate-job-row';
 import { JobDetailHeader } from '../components/job-detail-header';
-import { jobsCopy, jobsUiError } from '../copy';
-import type { JobApplicationStatus, JobDetail } from '../types/job.types';
+import { jobsCopy, jobsUiError, matchKindLabel } from '../copy';
+import type { JobApplicationStatus, JobDetail, MatchedSearch } from '../types/job.types';
 import { formatTurkishJobDateFromIso } from '../utils/job-dates';
 import {
   formatLocation,
@@ -56,10 +56,16 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
     const raw =
       job.matchedSearches.length > 0
         ? job.matchedSearches
-        : job.matchedSearchIds.map((id) => ({ id, name: id }));
+        : job.matchedSearchIds.map((id) => ({
+          id,
+          name: id,
+          matchKind: null,
+          terms: [],
+          evidence: [],
+        }));
 
     return raw.map((search) => ({
-      id: search.id,
+      ...search,
       name: names.get(search.id) ?? search.name,
     }));
   }, [job.matchedSearchIds, job.matchedSearches, searches]);
@@ -218,14 +224,9 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
 
       {matchedSearches.length > 0 ? (
         <SectionCard title={jobsCopy.matchedSearches}>
-          <View style={styles.chipRow}>
+          <View style={styles.list}>
             {matchedSearches.map((search) => (
-              <AppBadge
-                key={search.id}
-                label={search.name}
-                backgroundColor={theme.accentMuted}
-                textColor={theme.accent}
-              />
+              <MatchedSearchBlock key={search.id} search={search} />
             ))}
           </View>
         </SectionCard>
@@ -280,6 +281,36 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
   );
 }
 
+function MatchedSearchBlock({ search }: { search: MatchedSearch }) {
+  const kind = matchKindLabel(search.matchKind);
+  const terms = search.terms.length > 0 ? search.terms.join(', ') : null;
+  const snippets = search.evidence
+    .map((item) => item.snippet ?? item.matchedText)
+    .filter((value) => value.trim().length > 0);
+
+  return (
+    <View style={styles.matchBlock}>
+      <DetailRow label={jobsCopy.matchedSearchLabel} value={search.name} />
+      {kind ? <DetailRow label={jobsCopy.matchKindLabel} value={kind} /> : null}
+      {terms ? (
+        <DetailRow label={jobsCopy.matchedTermsLabel} value={terms} />
+      ) : null}
+      {snippets.length > 0 ? (
+        <View style={styles.detailRow}>
+          <ThemedText type="meta" themeColor="textSecondary">
+            {jobsCopy.matchEvidenceLabel}
+          </ThemedText>
+          {snippets.map((snippet) => (
+            <ThemedText key={snippet} themeColor="textSecondary">
+              {snippet}
+            </ThemedText>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.detailRow}>
@@ -314,5 +345,8 @@ const styles = StyleSheet.create({
   },
   detailRow: {
     gap: Spacing.half,
+  },
+  matchBlock: {
+    gap: Spacing.one,
   },
 });

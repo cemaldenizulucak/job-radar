@@ -65,7 +65,7 @@ export type JobDetail = JobListItem & {
   description: string | null;
   experienceLevel: string | null;
   technologies: readonly string[];
-  matchedSearches: readonly { id: string; name: string }[];
+  matchedSearches: readonly MatchedSearchSummary[];
   duplicateJobs: readonly {
     id: string;
     sourceId: SourceId;
@@ -76,6 +76,26 @@ export type JobDetail = JobListItem & {
   isFavorite: boolean;
   applicationStatus: ApplicationStatus | null;
   applicationId: string | null;
+};
+
+export type MatchEvidenceField = 'title' | 'description' | 'technologies';
+
+export type MatchKind = 'direct' | 'skill';
+
+export type MatchEvidenceSummary = {
+  term: string;
+  matchedText: string;
+  field: MatchEvidenceField;
+  snippet: string | null;
+  kind: 'title' | 'skill';
+};
+
+export type MatchedSearchSummary = {
+  id: string;
+  name: string;
+  matchKind: MatchKind | null;
+  terms: readonly string[];
+  evidence: readonly MatchEvidenceSummary[];
 };
 
 export type JobTabs = {

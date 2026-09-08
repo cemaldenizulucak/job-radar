@@ -46,6 +46,7 @@ Protected (JWT required). The user is taken from the token; client `userId` is i
 Temporary development helpers (not used by mobile). Disabled unless `ENABLE_DEV_ENDPOINTS=true`. When disabled they return **404** and must stay off in production.
 
 - `POST /v1/discovery/run`
+- `POST /v1/discovery/rematch-matches`
 - `POST /v1/scheduler/run`
 - `POST /v1/notifications/test`
 
@@ -131,7 +132,7 @@ Types will live in `packages/types`. Fields below are logical.
 | `experienceLevel` | nullable |
 | `salary` | `{ min, max, currency, raw }` nullable parts |
 | `technologies` | string[] |
-| `matchedSearches` | `{ id, name }[]` |
+| `matchedSearches` | `{ id, name, matchKind, terms, evidence[] }[]`. `matchKind` is `direct` or `skill`. Evidence is computed at read time from the listing text; it is not stored. Search `name` is display-only and is not a keyword. |
 | `duplicateJobs` | `{ id, sourceId, title, companyName, canonicalUrl }[]` — siblings only, not self |
 | `relevance` | null in MVP; later score, strengths, missing, explanation, recommendation |
 
@@ -368,6 +369,14 @@ Returns a `DiscoveryRunSummary`, including Kariyer.net rolling-collection fields
 - `stopReason` (`max_age` | `no_results` | `max_pages` | `blocked_after_success` | `null`)
 
 `blocked_after_success` means a later page was blocked after at least one successful page; accumulated jobs were kept.
+
+#### `POST /v1/discovery/rematch-matches`
+
+Re-evaluates stored `job_search_matches` with the current matcher. Does **not** fetch LinkedIn or Kariyer.net. Does **not** delete job listings or application rows.
+
+Body: `{ "dryRun": true }` (default) returns a preview report. `{ "dryRun": false }` applies inserts/deletes of match rows only.
+
+Unavailable (404) unless `ENABLE_DEV_ENDPOINTS=true`.
 
 #### `POST /v1/scheduler/run`
 
