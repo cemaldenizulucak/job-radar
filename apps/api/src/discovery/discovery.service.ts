@@ -20,9 +20,10 @@ import type { PersistedJobForNotification } from '../notifications/notifications
 import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { SearchesService } from '../searches/searches.service.js';
-import type { SourceSearchQuery, SourceJobRaw } from '../sources/job-source.adapter.js';
+import type { JobSourceAdapter, SourceSearchQuery, SourceJobRaw } from '../sources/job-source.adapter.js';
 import { sourceErrorCategory } from '../sources/source-errors.js';
 import { SourceRegistry } from '../sources/source-registry.js';
+import { KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS } from '../sources/kariyer-net/kariyer-net-web.config.js';
 import {
   DEFAULT_JOB_INACTIVE_AFTER_DAYS,
   DEFAULT_JOB_SOURCE_MAX_AGE_DAYS,
@@ -30,6 +31,9 @@ import {
   isWithinSourceMaxAge,
   readPositiveIntEnv,
 } from './discovery-window.js';
+import { selectDetailCandidates } from './detail-candidates.js';
+import { recordProvenance } from './source-job-provenance.js';
+import type { SourceQueryProvenance } from './source-job-provenance.js';
 import { DiscoveryRunGate } from './discovery-run-gate.js';
 import { DiscoveryScanCursorStore } from './discovery-scan-cursor.js';
 import {
@@ -287,6 +291,13 @@ export class DiscoveryService {
       });
     }
 
+    if (fetched.detailAttempts.length > 0) {
+      await this.jobsService.recordDetailFetchAttempts(
+        fetched.detailAttempts,
+        new Date().toISOString(),
+      );
+    }
+
     const matchableJobs = mergeJobLists(catalogJobs, persisted);
     const liveMatches = this.matchingService.matchJobsToSearches(
       persisted,
@@ -462,6 +473,11 @@ export class DiscoveryService {
     detailsFetched: number;
     detailsFailed: number;
     providerModes: Record<string, string>;
+    detailAttempts: readonly {
+      sourceId: SourceId;
+      sourceJobId: string;
+      attempts: number;
+    }[];
   }> {
     const uniqueJobs = new Map<string, NormalizedJob>();
     let jobsFetched = 0;
@@ -477,6 +493,11 @@ export class DiscoveryService {
     let queriesDeferred = 0;
     let detailsFetched = 0;
     let detailsFailed = 0;
+    const detailAttempts: {
+      sourceId: SourceId;
+      sourceJobId: string;
+      attempts: number;
+    }[] = [];
     const providerModes: Record<string, string> = {};
     const scanKinds = new Set<ScanKind>();
     const perSearch: SearchSourceFetchStat[] = [];
@@ -519,6 +540,7 @@ export class DiscoveryService {
         queriesDeferred += fetched.queriesDeferred;
         detailsFetched += fetched.detailsFetched;
         detailsFailed += fetched.detailsFailed;
+        detailAttempts.push(...fetched.detailAttempts);
         if (fetched.providerMode) {
           providerModes[sourceId] = fetched.providerMode;
         }
@@ -562,6 +584,7 @@ export class DiscoveryService {
       detailsFetched,
       detailsFailed,
       providerModes,
+      detailAttempts,
     };
   }
 
@@ -586,6 +609,11 @@ export class DiscoveryService {
       jobsCollected: number;
       stopReason: string | null;
     };
+    detailAttempts: readonly {
+      sourceId: SourceId;
+      sourceJobId: string;
+      attempts: number;
+    }[];
   }> {
     const adapter = this.sourceRegistry.get(sourceId);
 
@@ -608,6 +636,7 @@ export class DiscoveryService {
         detailsFetched: 0,
         detailsFailed: 0,
         providerMode: adapter?.providerMode ?? null,
+        detailAttempts: [],
       };
     }
 
@@ -625,6 +654,7 @@ export class DiscoveryService {
     const startedAt = Date.now();
     const deadline = startedAt + this.timeBudgetMs();
     const collected = new Map<string, SourceJobRaw>();
+    const provenances = new Map<string, SourceQueryProvenance[]>();
     let raw = 0;
     let accepted = 0;
     let queriesCompleted = 0;
@@ -652,10 +682,14 @@ export class DiscoveryService {
           stopReason = preferStopReason(stopReason, result.stopReason);
         }
         for (const job of result.jobs) {
-          collected.set(
-            sourceListingIdentity(result.sourceId, job.sourceJobId),
-            job,
-          );
+          const identity = sourceListingIdentity(result.sourceId, job.sourceJobId);
+          collected.set(identity, preferCollectedJob(collected.get(identity), job));
+          recordProvenance(provenances, identity, {
+            keyword: unit.keyword,
+            origin: unit.origin,
+            location: unit.location,
+            page: Number.isFinite(job.listPage) ? (job.listPage as number) : 1,
+          });
         }
         queriesCompleted += 1;
       } catch (error) {
@@ -686,25 +720,19 @@ export class DiscoveryService {
       }),
     });
 
-    let detailsFetched = 0;
-    let detailsFailed = 0;
-    let jobsForNormalize = [...collected.values()];
-    if (adapter.enrichMissingDescriptions && jobsForNormalize.length > 0) {
-      try {
-        const enriched = await adapter.enrichMissingDescriptions(jobsForNormalize);
-        jobsForNormalize = [...enriched.jobs];
-        detailsFetched = enriched.detailsFetched;
-        detailsFailed = enriched.detailsFailed;
-      } catch (error) {
-        this.logger.warn({
-          message: 'Description enrichment failed; keeping list-card jobs',
-          runId: options.runId,
-          source: sourceId,
-          savedSearchId: search.id,
-          error: error instanceof Error ? error.message : 'unknown',
-        });
-      }
-    }
+    const enriched = await this.enrichCollectedDescriptions({
+      search,
+      sourceId,
+      adapter,
+      collected,
+      provenances,
+      deadline,
+      runId: options.runId,
+    });
+    const jobsForNormalize = enriched.jobs;
+    const detailsFetched = enriched.detailsFetched;
+    const detailsFailed = enriched.detailsFailed;
+    const detailAttempts = enriched.detailAttempts;
 
     const now = new Date();
     for (const rawJob of jobsForNormalize) {
@@ -770,6 +798,7 @@ export class DiscoveryService {
       detailsFetched,
       detailsFailed,
       providerMode,
+      detailAttempts,
       kariyerNet:
         sourceId === 'kariyer_net'
           ? {
@@ -779,6 +808,133 @@ export class DiscoveryService {
             }
           : undefined,
     };
+  }
+
+  private async enrichCollectedDescriptions(input: {
+    search: SavedSearch;
+    sourceId: SourceId;
+    adapter: JobSourceAdapter;
+    collected: Map<string, SourceJobRaw>;
+    provenances: ReadonlyMap<string, readonly SourceQueryProvenance[]>;
+    deadline: number;
+    runId: string;
+  }): Promise<{
+    jobs: SourceJobRaw[];
+    detailsFetched: number;
+    detailsFailed: number;
+    detailAttempts: readonly {
+      sourceId: SourceId;
+      sourceJobId: string;
+      attempts: number;
+    }[];
+  }> {
+    const jobs = [...input.collected.values()];
+    const emptyAttempts: {
+      sourceId: SourceId;
+      sourceJobId: string;
+      attempts: number;
+    }[] = [];
+    if (!input.adapter.enrichMissingDescriptions || jobs.length === 0) {
+      return { jobs, detailsFetched: 0, detailsFailed: 0, detailAttempts: emptyAttempts };
+    }
+
+    if (Date.now() >= input.deadline) {
+      return { jobs, detailsFetched: 0, detailsFailed: 0, detailAttempts: emptyAttempts };
+    }
+
+    const catalog = await this.jobsService.listDetailFetchStates(
+      jobs.map((job) => ({
+        sourceId: input.sourceId,
+        sourceJobId: job.sourceJobId,
+      })),
+    );
+    const withCatalogText = jobs.map((job) => {
+      const identity = sourceListingIdentity(input.sourceId, job.sourceJobId);
+      const stored = catalog.get(identity)?.description?.trim();
+      if (stored && !job.description?.trim()) {
+        return { ...job, description: stored };
+      }
+      return job;
+    });
+
+    const selected = selectDetailCandidates({
+      sourceId: input.sourceId,
+      search: input.search,
+      jobs: withCatalogText,
+      provenances: input.provenances,
+      catalog,
+      evaluateMatch: (job, search) => this.matchingService.evaluateMatch(job, search),
+      maxDetails: this.maxDetailRequests(input.sourceId),
+    });
+
+    if (selected.length === 0) {
+      return { jobs: withCatalogText, detailsFetched: 0, detailsFailed: 0, detailAttempts: [] };
+    }
+
+    let detailsFetched = 0;
+    let detailsFailed = 0;
+    let enrichedSelected = selected.map((item) => item.job);
+    try {
+      const result = await input.adapter.enrichMissingDescriptions(enrichedSelected);
+      enrichedSelected = [...result.jobs];
+      detailsFetched = result.detailsFetched;
+      detailsFailed = result.detailsFailed;
+    } catch (error) {
+      detailsFailed = selected.length;
+      this.logger.warn({
+        message: 'Description enrichment failed; keeping list-card jobs',
+        runId: input.runId,
+        source: input.sourceId,
+        savedSearchId: input.search.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+
+    const byId = new Map(
+      enrichedSelected.map((job) => [job.sourceJobId, job]),
+    );
+    const merged = withCatalogText.map((job) => {
+      const detail = byId.get(job.sourceJobId);
+      if (!detail?.description?.trim()) {
+        return job;
+      }
+      return { ...job, description: detail.description };
+    });
+
+    this.logger.log({
+      message: 'Description detail candidates selected',
+      runId: input.runId,
+      source: input.sourceId,
+      savedSearchId: input.search.id,
+      candidates: selected.length,
+      detailsFetched,
+      detailsFailed,
+    });
+
+    return {
+      jobs: merged,
+      detailsFetched,
+      detailsFailed,
+      detailAttempts: selected.map((item) => ({
+        sourceId: input.sourceId,
+        sourceJobId: item.job.sourceJobId,
+        attempts: (catalog.get(item.identity)?.detailFetchAttempts ?? 0) + 1,
+      })),
+    };
+  }
+
+  private maxDetailRequests(sourceId: SourceId): number {
+    if (sourceId === 'kariyer_net') {
+      return Math.min(
+        25,
+        readPositiveIntEnv(
+          this.config.get<string>('KARIYER_NET_MAX_DETAIL_REQUESTS'),
+          KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS,
+        ),
+      );
+    }
+
+    return KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS;
   }
 
   private maxQueriesPerSearchSource(): number {
@@ -1107,6 +1263,27 @@ function mergeJobLists(
     byId.set(job.id, job);
   }
   return [...byId.values()];
+}
+
+function preferCollectedJob(
+  existing: SourceJobRaw | undefined,
+  incoming: SourceJobRaw,
+): SourceJobRaw {
+  if (!existing) {
+    return incoming;
+  }
+
+  if (incoming.description?.trim() && !existing.description?.trim()) {
+    return {
+      ...incoming,
+      listPage: existing.listPage ?? incoming.listPage,
+    };
+  }
+
+  return {
+    ...existing,
+    listPage: existing.listPage ?? incoming.listPage,
+  };
 }
 
 function toMatchableJob(id: string, job: NormalizedJob): MatchableJob {

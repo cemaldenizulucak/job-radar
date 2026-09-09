@@ -89,7 +89,10 @@ export class KariyerNetSourceAdapter implements JobSourceAdapter {
         continue;
       }
 
-      const sourceJob = toSourceJobRaw(normalized);
+      const sourceJob = toSourceJobRaw(
+        normalized,
+        typeof raw.listPage === 'number' ? raw.listPage : undefined,
+      );
       if (
         this.provider.mode === 'live' &&
         isKariyerNetFixtureIdentity({
@@ -204,7 +207,10 @@ function readProviderJobs(result: KariyerNetProviderResult): readonly unknown[] 
   return result.jobs;
 }
 
-function toSourceJobRaw(job: KariyerNetNormalizedJob): SourceJobRaw {
+function toSourceJobRaw(
+  job: KariyerNetNormalizedJob,
+  listPage?: number,
+): SourceJobRaw {
   return {
     sourceJobId: job.sourceJobId,
     canonicalUrl: job.canonicalUrl,
@@ -216,6 +222,7 @@ function toSourceJobRaw(job: KariyerNetNormalizedJob): SourceJobRaw {
     publishedAt: job.publishedAt ?? undefined,
     experienceLevel: job.experienceLevel ?? undefined,
     technologies: job.technologies,
+    listPage,
     rawMetadata:
       job.employmentType === null
         ? undefined

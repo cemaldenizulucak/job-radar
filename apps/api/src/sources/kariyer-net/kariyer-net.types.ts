@@ -40,6 +40,7 @@ export type KariyerNetRawJob = {
   technologies?: unknown;
   publishedAt?: unknown;
   experienceLevel?: unknown;
+  listPage?: unknown;
 };
 
 export type KariyerNetPaginationStopReason =

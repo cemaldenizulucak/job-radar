@@ -34,6 +34,12 @@ export type NormalizedJob = {
   isActive: boolean;
 };
 
+export type JobDetailFetchState = {
+  description: string | null;
+  detailFetchAttempts: number;
+  detailFetchAttemptedAt: string | null;
+};
+
 export type JobListQuery = {
   userId: string;
   sourceId?: SourceId | 'all';

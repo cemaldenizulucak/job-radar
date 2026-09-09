@@ -24,7 +24,7 @@ import {
   SAVED_SEARCH_SELECT,
 } from '../searches/searches.mapper.js';
 import type { SavedSearch } from '../searches/searches.types.js';
-import { decideListingWrite } from './job-identity.js';
+import { decideListingWrite, sourceListingIdentity } from './job-identity.js';
 import { mergeNormalizedJobUpdate } from './listing-merge.js';
 import { attachFavoriteState } from './attach-favorite-state.js';
 import { applyJobNewness, resolveJobNewWindowHours } from './job-newness.js';
@@ -38,6 +38,7 @@ import {
 } from './jobs.mapper.js';
 import type {
   JobDetail,
+  JobDetailFetchState,
   JobListItem,
   JobListQuery,
   JobListResult,
@@ -945,6 +946,96 @@ export class JobsService {
     return { id, inserted: true };
   }
 
+  async listDetailFetchStates(
+    keys: readonly { sourceId: SourceId; sourceJobId: string }[],
+  ): Promise<Map<string, JobDetailFetchState>> {
+    const states = new Map<string, JobDetailFetchState>();
+    const unique = uniqueSourceKeys(keys);
+    const chunkSize = 50;
+
+    for (let offset = 0; offset < unique.length; offset += chunkSize) {
+      const chunk = unique.slice(offset, offset + chunkSize);
+      const { data, error } = await this.supabase
+        .getClient()
+        .from('jobs')
+        .select(
+          'source, source_job_id, description, detail_fetch_attempts, detail_fetch_attempted_at',
+        )
+        .in(
+          'source_job_id',
+          chunk.map((item) => item.sourceJobId),
+        );
+
+      if (error) {
+        this.logSupabaseError(error);
+        throw new InternalServerErrorException(
+          'Failed to load listing detail-fetch state.',
+        );
+      }
+
+      const wanted = new Set(
+        chunk.map((item) => sourceListingIdentity(item.sourceId, item.sourceJobId)),
+      );
+
+      for (const row of Array.isArray(data) ? data : []) {
+        if (!isRecord(row)) {
+          continue;
+        }
+
+        const sourceId = readSourceIdValue(row.source);
+        const sourceJobId = readStringValue(row.source_job_id);
+        if (!sourceId || !sourceJobId) {
+          continue;
+        }
+
+        const identity = sourceListingIdentity(sourceId, sourceJobId);
+        if (!wanted.has(identity)) {
+          continue;
+        }
+
+        states.set(identity, {
+          description:
+            typeof row.description === 'string' ? row.description : null,
+          detailFetchAttempts: readNonNegativeInt(row.detail_fetch_attempts),
+          detailFetchAttemptedAt:
+            typeof row.detail_fetch_attempted_at === 'string'
+              ? row.detail_fetch_attempted_at
+              : null,
+        });
+      }
+    }
+
+    return states;
+  }
+
+  async recordDetailFetchAttempts(
+    items: readonly {
+      sourceId: SourceId;
+      sourceJobId: string;
+      attempts: number;
+    }[],
+    attemptedAt: string,
+  ): Promise<void> {
+    for (const item of items) {
+      const { error } = await this.supabase
+        .getClient()
+        .from('jobs')
+        .update({
+          detail_fetch_attempts: item.attempts,
+          detail_fetch_attempted_at: attemptedAt,
+        })
+        .eq('source', item.sourceId)
+        .eq('source_job_id', item.sourceJobId);
+
+      if (error) {
+        this.logSupabaseError(error);
+        throw new InternalServerErrorException(
+          'Failed to record listing detail-fetch attempt.',
+        );
+      }
+    }
+  }
+
   async listDuplicateCandidates(): Promise<DuplicateCandidate[]> {
     const { data, error } = await this.supabase
       .getClient()
@@ -1411,6 +1502,46 @@ type JobMatchRow = {
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function uniqueSourceKeys(
+  keys: readonly { sourceId: SourceId; sourceJobId: string }[],
+): { sourceId: SourceId; sourceJobId: string }[] {
+  const seen = new Set<string>();
+  const unique: { sourceId: SourceId; sourceJobId: string }[] = [];
+  for (const key of keys) {
+    const identity = sourceListingIdentity(key.sourceId, key.sourceJobId);
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    unique.push(key);
+  }
+  return unique;
+}
+
+function readSourceIdValue(value: unknown): SourceId | null {
+  if (value !== 'linkedin' && value !== 'kariyer_net') {
+    return null;
+  }
+  return value;
+}
+
+function readStringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function readNonNegativeInt(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return 0;
 }
 
 function uniqueEvidenceTerms(

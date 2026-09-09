@@ -146,7 +146,10 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
       for (const job of pageJobs) {
         const identity = kariyerJobIdentity(job);
         if (identity && !jobsById.has(identity)) {
-          jobsById.set(identity, job);
+          jobsById.set(identity, {
+            ...job,
+            listPage: page,
+          });
         }
       }
 

@@ -6,7 +6,7 @@ import { SupabaseService } from '../infrastructure/supabase/supabase.service.js'
 import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { mergeNormalizedJobUpdate } from '../jobs/listing-merge.js';
 import { JobsService } from '../jobs/jobs.service.js';
-import type { NormalizedJob } from '../jobs/jobs.types.js';
+import type { JobDetailFetchState, NormalizedJob } from '../jobs/jobs.types.js';
 import { MatchingService } from '../matching/matching.service.js';
 import type { JobSearchMatch } from '../matching/matching.types.js';
 import { SearchesService } from '../searches/searches.service.js';
@@ -81,6 +81,10 @@ class FakeSearchesService extends SearchesService {
 class FakeJobsService extends JobsService {
   readonly listings = new Map<string, { id: string; job: NormalizedJob }>();
   readonly matches: JobSearchMatch[] = [];
+  readonly detailFetch = new Map<
+    string,
+    { attempts: number; at: string | null }
+  >();
 
   constructor() {
     super(
@@ -103,6 +107,46 @@ class FakeJobsService extends JobsService {
     const id = key;
     this.listings.set(key, { id, job });
     return Promise.resolve({ id, inserted: true });
+  }
+
+  override listDetailFetchStates(
+    keys: readonly { sourceId: NormalizedJob['sourceId']; sourceJobId: string }[],
+  ): Promise<Map<string, JobDetailFetchState>> {
+    const states = new Map<string, JobDetailFetchState>();
+    for (const key of keys) {
+      const identity = sourceListingIdentity(key.sourceId, key.sourceJobId);
+      const listing = this.listings.get(identity);
+      const fetch = this.detailFetch.get(identity);
+      if (!listing && !fetch) {
+        continue;
+      }
+
+      states.set(identity, {
+        description: listing?.job.description ?? null,
+        detailFetchAttempts: fetch?.attempts ?? 0,
+        detailFetchAttemptedAt: fetch?.at ?? null,
+      });
+    }
+
+    return Promise.resolve(states);
+  }
+
+  override recordDetailFetchAttempts(
+    items: readonly {
+      sourceId: NormalizedJob['sourceId'];
+      sourceJobId: string;
+      attempts: number;
+    }[],
+    attemptedAt: string,
+  ): Promise<void> {
+    for (const item of items) {
+      const identity = sourceListingIdentity(item.sourceId, item.sourceJobId);
+      this.detailFetch.set(identity, {
+        attempts: item.attempts,
+        at: attemptedAt,
+      });
+    }
+    return Promise.resolve();
   }
 
   override listDuplicateCandidates() {
@@ -2044,6 +2088,325 @@ describe('DiscoveryService', () => {
         url: 'https://example.com/jobs/1',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it('fetches detail for a profession-variant list card before a title match, then matches in the same run', async () => {
+    const detailUrls: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        if (query.keywords[0] === 'Gıda Mühendisliği') {
+          return {
+            sourceId: 'kariyer_net',
+            jobs: [
+              {
+                sourceJobId: 'quality-1',
+                canonicalUrl: 'https://www.kariyer.net/is-ilani/quality-1',
+                title: 'Kalite Mühendisi',
+                companyName: 'Example Food Co',
+                location: 'Manisa',
+                listPage: 1,
+              },
+            ],
+          };
+        }
+
+        return {
+          sourceId: 'kariyer_net',
+          jobs: [
+            {
+              sourceJobId: 'direct-1',
+              canonicalUrl: 'https://www.kariyer.net/is-ilani/direct-1',
+              title: 'Gıda Mühendisi',
+              companyName: 'Example Food Co',
+              location: 'Manisa',
+              listPage: 1,
+            },
+          ],
+        };
+      },
+      enrichMissingDescriptions: async (jobs) => {
+        for (const item of jobs) {
+          detailUrls.push(item.sourceJobId);
+        }
+        return {
+          jobs: jobs.map((item) =>
+            item.sourceJobId === 'quality-1'
+              ? {
+                  ...item,
+                  description:
+                    'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+                }
+              : item,
+          ),
+          detailsFetched: jobs.filter((item) => item.sourceJobId === 'quality-1')
+            .length,
+          detailsFailed: 0,
+        };
+      },
+    };
+    const target = search({
+      id: 'search-gida',
+      keywords: ['Gıda Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { KARIYER_NET_MAX_DETAIL_REQUESTS: '1' },
+    );
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(detailUrls).toEqual(['quality-1']);
+    expect(jobs.listings.get('kariyer_net:quality-1')?.job.description).toContain(
+      'Gıda Mühendisliği',
+    );
+    expect(
+      jobs.matches.some(
+        (match) =>
+          match.jobId === 'kariyer_net:quality-1' &&
+          match.savedSearchId === 'search-gida',
+      ),
+    ).toBe(true);
+    expect(result.matchesCreated).toBeGreaterThan(0);
+    const stored = jobs.listings.get('kariyer_net:quality-1')?.job;
+    const matcher = new MatchingService();
+    const matched = matcher.evaluateMatch(
+      {
+        id: 'kariyer_net:quality-1',
+        sourceId: 'kariyer_net',
+        title: stored?.title ?? '',
+        companyName: stored?.companyName ?? '',
+        description: stored?.description ?? null,
+        location: stored?.location ?? null,
+        workModel: stored?.workModel ?? null,
+        experienceLevel: stored?.experienceLevel ?? null,
+        technologies: stored?.technologies ?? [],
+      },
+      target,
+    );
+    expect(matched.matched).toBe(true);
+    expect(matched.evidence[0]?.field).toBe('description');
+    expect(matched.evidence[0]?.basis).toBe('education_field');
+    expect(matched.evidence[0]?.matchedText).toBe('Gıda Mühendisliği');
+  });
+
+  it('does not spend a second detail request on the same listing from two queries', async () => {
+    const detailIds: string[] = [];
+    const listing = {
+      sourceJobId: 'shared-1',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/shared-1',
+      title: 'Kalite Mühendisi',
+      companyName: 'Example Food Co',
+      location: 'Manisa',
+    };
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'kariyer_net', jobs: [listing] }),
+      enrichMissingDescriptions: async (jobs) => {
+        detailIds.push(...jobs.map((item) => item.sourceJobId));
+        return { jobs: [...jobs], detailsFetched: jobs.length, detailsFailed: 0 };
+      },
+    };
+    const target = search({
+      id: 'search-dup',
+      keywords: ['Gıda Mühendisi', 'Kalite güvence'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter]);
+
+    await discovery.runForSavedSearch(target);
+
+    expect(detailIds.filter((id) => id === 'shared-1')).toHaveLength(1);
+  });
+
+  it('keeps fetching other details when one detail request fails', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => ({
+        sourceId: 'kariyer_net',
+        jobs: [
+          {
+            sourceJobId:
+              query.keywords[0] === 'Gıda Mühendisliği' ? 'fail-1' : 'ok-1',
+            canonicalUrl: `https://www.kariyer.net/is-ilani/${query.keywords[0] === 'Gıda Mühendisliği' ? 'fail-1' : 'ok-1'}`,
+            title: 'Kalite Mühendisi',
+            companyName: 'Example Food Co',
+            location: query.locations[0] ?? 'Manisa',
+          },
+        ],
+      }),
+      enrichMissingDescriptions: async (jobs) => {
+        let detailsFetched = 0;
+        let detailsFailed = 0;
+        const enriched = jobs.map((item) => {
+          if (item.sourceJobId === 'fail-1') {
+            detailsFailed += 1;
+            return item;
+          }
+
+          detailsFetched += 1;
+          return {
+            ...item,
+            description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+          };
+        });
+        return { jobs: enriched, detailsFetched, detailsFailed };
+      },
+    };
+    const target = search({
+      id: 'search-fail',
+      keywords: ['Gıda Mühendisi'],
+      countryName: 'Türkiye',
+      subdivisionNames: ['İzmir', 'Manisa'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { KARIYER_NET_MAX_DETAIL_REQUESTS: '2' },
+    );
+
+    await discovery.runForSavedSearch(target);
+
+    expect(jobs.listings.size).toBeGreaterThan(0);
+    expect(
+      [...jobs.listings.values()].some((row) =>
+        row.job.description?.includes('Gıda Mühendisliği'),
+      ),
+    ).toBe(true);
+  });
+
+  it('does not keep selecting the same empty listing after a recorded attempt', async () => {
+    const detailIds: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({
+        sourceId: 'kariyer_net',
+        jobs: [
+          {
+            sourceJobId: 'first-empty',
+            canonicalUrl: 'https://www.kariyer.net/is-ilani/first-empty',
+            title: 'Kalite Mühendisi',
+            companyName: 'Example Food Co',
+            location: 'Manisa',
+          },
+          {
+            sourceJobId: 'second-empty',
+            canonicalUrl: 'https://www.kariyer.net/is-ilani/second-empty',
+            title: 'Kalite Mühendisi',
+            companyName: 'Example Food Co',
+            location: 'İzmir',
+          },
+        ],
+      }),
+      enrichMissingDescriptions: async (jobs) => {
+        detailIds.push(...jobs.map((item) => item.sourceJobId));
+        return { jobs: [...jobs], detailsFetched: 0, detailsFailed: jobs.length };
+      },
+    };
+    const target = search({
+      id: 'search-continue',
+      keywords: ['Gıda Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const jobs = new FakeJobsService();
+    const first = createDiscovery(
+      [target],
+      [adapter],
+      jobs,
+      undefined,
+      undefined,
+      undefined,
+      { KARIYER_NET_MAX_DETAIL_REQUESTS: '1' },
+    );
+    await first.discovery.runForSavedSearch(target);
+    expect(detailIds).toHaveLength(1);
+    const firstChoice = detailIds[0];
+
+    const restarted = createDiscovery(
+      [target],
+      [adapter],
+      jobs,
+      undefined,
+      undefined,
+      undefined,
+      { KARIYER_NET_MAX_DETAIL_REQUESTS: '1' },
+    );
+    await restarted.discovery.runForSavedSearch(target);
+    expect(detailIds).toHaveLength(2);
+    expect(detailIds[1]).not.toBe(firstChoice);
+  });
+
+  it('does not fetch diagnose-listing URLs when a catalog row is already loaded', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const target = search({ id: 'search-ro', sourceIds: ['kariyer_net'] });
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'kariyer_net',
+      sourceJobId: 'kn-ro',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/kalite-ro',
+      title: 'Kalite Mühendisi',
+      companyName: 'Example Food Co',
+      titleNormalized: 'kalite muhendisi',
+      companyNormalized: 'example food co',
+      description: null,
+      location: 'Manisa',
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+      publishedAt: null,
+      isActive: true,
+    });
+    const { discovery } = createDiscovery([target], undefined, jobs);
+    const result = await discovery.diagnoseListing({
+      savedSearchId: 'search-ro',
+      url: 'https://www.kariyer.net/is-ilani/kalite-ro',
+    });
+    expect(result?.outcome).toBe('detail_missing');
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });

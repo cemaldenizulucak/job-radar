@@ -31,6 +31,7 @@ export type SourceJobRaw = {
   experienceLevel?: string;
   technologies?: readonly string[];
   availability?: SourceJobAvailability;
+  listPage?: number;
   rawMetadata?: Readonly<Record<string, string>>;
 };
 
