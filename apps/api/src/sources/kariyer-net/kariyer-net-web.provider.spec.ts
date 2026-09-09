@@ -25,6 +25,7 @@ function config(): KariyerNetWebConfig {
     maxRetries: 1,
     maxJobsPerSearch: 25,
     maxPages: 2,
+    maxDetailRequests: 4,
     userAgent: 'JobRadar-Test/1.0',
     debugHtml: false,
   };
@@ -251,5 +252,103 @@ describe('KariyerNetWebProvider', () => {
     expect(result.pagesFetched).toBe(1);
     expect(result.jobsCollected).toBe(4);
     expect(result.stopReason).toBe('blocked_after_success');
+  });
+
+  it('keeps fetching after a page that includes an old listing', async () => {
+    const urls: string[] = [];
+    const provider = new KariyerNetWebProvider(
+      { ...config(), maxPages: 2 },
+      httpClient(async (request) => {
+        urls.push(request.url);
+        if (request.url.includes('cp=2')) {
+          return {
+            status: 200,
+            contentType: 'text/html',
+            body: listingHtmlWithJobs(1).replace(
+              'Frontend Developer 1',
+              'Later Page Developer',
+            ).replace('4291000001', '4291000099'),
+          };
+        }
+
+        return {
+          status: 200,
+          contentType: 'text/html',
+          body: listingHtmlWithJobs(1).replace(
+            '</a>',
+            '<span data-test="ad-date-item-date-other">90 gün</span></a>',
+          ),
+        };
+      }),
+    );
+
+    const result = await provider.search(emptyInput);
+
+    expect(urls).toHaveLength(2);
+    expect(result.jobs.map((job) => job.externalJobId)).toEqual([
+      '4291000001',
+      '4291000099',
+    ]);
+    expect(result.stopReason).toBe('max_pages');
+  });
+
+  it('stops when page 2 repeats page 1 identities', async () => {
+    const provider = new KariyerNetWebProvider(
+      { ...config(), maxPages: 3 },
+      httpClient(async () => ({
+        status: 200,
+        contentType: 'text/html',
+        body: listingHtmlWithJobs(2),
+      })),
+    );
+
+    const result = await provider.search(emptyInput);
+
+    expect(result.pagesFetched).toBe(2);
+    expect(result.stopReason).toBe('pagination_loop');
+    expect(result.jobs).toHaveLength(2);
+  });
+
+  it('fills a missing description from a detail page and keeps list jobs if detail fails', async () => {
+    const provider = new KariyerNetWebProvider(
+      { ...config(), maxPages: 1, maxDetailRequests: 2 },
+      httpClient(async (request) => {
+        if (request.url.includes('/is-ilani/')) {
+          if (request.url.includes('4291000002')) {
+            return { status: 500, contentType: 'text/html', body: 'nope' };
+          }
+
+          return {
+            status: 200,
+            contentType: 'text/html',
+            body: `<script type="application/ld+json">${JSON.stringify({
+              '@type': 'JobPosting',
+              title: 'Frontend Developer 1',
+              url: 'https://www.kariyer.net/is-ilani/ornek-teknoloji-frontend-developer-4291000001',
+              description: 'React and TypeScript role',
+              hiringOrganization: { name: 'Ornek Teknoloji' },
+            })}</script>`,
+          };
+        }
+
+        return {
+          status: 200,
+          contentType: 'text/html',
+          body: listingHtmlWithJobs(2),
+        };
+      }),
+    );
+
+    const searched = await provider.search(emptyInput);
+    const enriched = await provider.enrichMissingDescriptions(searched.jobs);
+
+    expect(enriched.detailsFetched).toBe(1);
+    expect(enriched.detailsFailed).toBe(1);
+    expect(
+      enriched.jobs.find((job) => job.externalJobId === '4291000001')?.description,
+    ).toBe('React and TypeScript role');
+    expect(
+      enriched.jobs.find((job) => job.externalJobId === '4291000002')?.title,
+    ).toBe('Frontend Developer 2');
   });
 });

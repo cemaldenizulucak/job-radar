@@ -2,15 +2,16 @@ import { NotFoundException } from '@nestjs/common';
 
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
 import { JobsService } from '../jobs/jobs.service.js';
+import type { JobDetail, JobListItem } from '../jobs/jobs.types.js';
 import { FavoritesService } from './favorites.service.js';
 
-const jobListItem = {
+const jobListItem: JobListItem = {
   id: 'job-1',
-  sourceId: 'linkedin' as const,
+  sourceId: 'linkedin',
   title: 'Frontend Developer',
   companyName: 'ABC Technology',
   location: 'Istanbul',
-  workModel: 'hybrid' as const,
+  workModel: 'hybrid',
   publishedAt: null,
   firstDiscoveredAt: new Date('2026-09-01T12:00:00.000Z'),
   canonicalUrl: 'https://example.com',
@@ -20,6 +21,18 @@ const jobListItem = {
   isNew: false,
   isSeen: false,
   isFavorite: true,
+};
+
+const jobDetail: JobDetail = {
+  ...jobListItem,
+  description: null,
+  experienceLevel: null,
+  technologies: [],
+  matchedSearches: [],
+  duplicateJobs: [],
+  isFavorite: false,
+  applicationStatus: null,
+  applicationId: null,
 };
 
 describe('FavoritesService', () => {
@@ -35,17 +48,7 @@ describe('FavoritesService', () => {
     }));
     const select = vi.fn(() => ({ maybeSingle }));
     const upsert = vi.fn(() => ({ select }));
-    const getByIdForUserOrThrow = vi.fn(async () => ({
-      ...jobListItem,
-      description: null,
-      experienceLevel: null,
-      technologies: [],
-      matchedSearches: [],
-      duplicateJobs: [],
-      isFavorite: false,
-      applicationStatus: null,
-      applicationId: null,
-    }));
+    const getByIdForUserOrThrow = vi.fn(async () => jobDetail);
     const service = new FavoritesService(
       {
         getClient: () => ({ from: () => ({ upsert }) }),
@@ -65,8 +68,9 @@ describe('FavoritesService', () => {
     );
     expect(result.jobId).toBe('job-1');
     expect(result.userId).toBe('user-1');
-    expect(result.job?.title).toBe('Frontend Developer');
-    expect(result.job?.applicationStatus).toBeUndefined();
+    expect(result.job).toEqual(jobListItem);
+    expect(result.job?.isFavorite).toBe(true);
+    expect(result.job && 'applicationStatus' in result.job).toBe(false);
   });
 
   it('returns 404 for an unknown job instead of creating a favorite', async () => {
@@ -119,6 +123,7 @@ describe('FavoritesService', () => {
     expect(items).toHaveLength(1);
     expect(items[0]?.userId).toBe('user-1');
     expect(items[0]?.jobId).toBe('job-1');
+    expect(items[0]?.job).toEqual(jobListItem);
   });
 
   it('removes only the authenticated user favorite row', async () => {

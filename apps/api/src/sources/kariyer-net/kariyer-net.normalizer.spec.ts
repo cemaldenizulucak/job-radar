@@ -102,20 +102,17 @@ describe('normalizeKariyerNetJob', () => {
     expect(job?.technologies).toEqual([]);
   });
 
-  it('converts relative Kariyer.net dates to ISO and keeps the job', () => {
+  it('does not treat an update label as publishedAt and still keeps the job', () => {
     const job = normalizeKariyerNetJob({
       externalJobId: '4291111111',
       canonicalUrl: 'https://www.kariyer.net/is-ilani/ornek-4291111111',
       title: 'Frontend Developer',
       companyName: 'ABC Technology',
-      publishedAt: 'update 1 gün',
+      publishedAt: '14 gün önce güncellendi',
     });
 
     expect(job).not.toBeNull();
-    expect(job?.publishedAt).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
-    );
-    expect(job?.publishedAt).not.toBe('update 1 gün');
+    expect(job?.publishedAt).toBeNull();
   });
 
   it('leaves publishedAt null when the date is not parseable and still keeps the job', () => {

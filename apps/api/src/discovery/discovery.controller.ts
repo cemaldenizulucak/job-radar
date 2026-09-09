@@ -5,6 +5,7 @@ import { DevEndpointsGuard } from '../common/dev-endpoints.guard.js';
 import { DiscoveryService } from './discovery.service.js';
 import type {
   DiscoveryRunSummary,
+  ListingDiagnosis,
   MatchReevaluationReport,
 } from './discovery.types.js';
 
@@ -36,5 +37,27 @@ export class DiscoveryController {
     return this.discoveryService.rematchStoredMatches({
       dryRun: body?.dryRun !== false,
     });
+  }
+
+  /**
+   * Explains why one listing is missing from a saved search.
+   * Catalog lookup only: does not fetch the URL or follow redirects.
+   * User URLs are allowlisted to Kariyer.net / LinkedIn public hosts.
+   * Same access gate as other discovery helpers: @Public() skips JWT,
+   * DevEndpointsGuard returns 404 unless ENABLE_DEV_ENDPOINTS=true.
+   */
+  @Public()
+  @UseGuards(DevEndpointsGuard)
+  @Post('diagnose-listing')
+  diagnoseListing(
+    @Body()
+    body: {
+      savedSearchId: string;
+      sourceId?: 'linkedin' | 'kariyer_net';
+      sourceJobId?: string;
+      url?: string;
+    },
+  ): Promise<ListingDiagnosis | null> {
+    return this.discoveryService.diagnoseListing(body);
   }
 }

@@ -17,6 +17,7 @@ export type DiscoveryRunSummary = {
   searchesProcessed: number;
   jobsFetched: number;
   jobsInserted: number;
+  jobsUpdated: number;
   matchesCreated: number;
   duplicateGroupsCreated: number;
   notificationsCreated: number;
@@ -30,6 +31,14 @@ export type DiscoveryRunSummary = {
   rawProviderJobs: number;
   normalizedJobs: number;
   notifiedJobCount: number;
+  runId: string;
+  scanKind: 'first' | 'periodic' | 'user' | 'mixed';
+  queriesAttempted: number;
+  queriesCompleted: number;
+  queriesDeferred: number;
+  detailsFetched: number;
+  detailsFailed: number;
+  providerModes: Readonly<Record<string, string>>;
 };
 
 export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
@@ -37,6 +46,7 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   searchesProcessed: 0,
   jobsFetched: 0,
   jobsInserted: 0,
+  jobsUpdated: 0,
   matchesCreated: 0,
   duplicateGroupsCreated: 0,
   notificationsCreated: 0,
@@ -50,6 +60,14 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   rawProviderJobs: 0,
   normalizedJobs: 0,
   notifiedJobCount: 0,
+  runId: '',
+  scanKind: 'periodic',
+  queriesAttempted: 0,
+  queriesCompleted: 0,
+  queriesDeferred: 0,
+  detailsFetched: 0,
+  detailsFailed: 0,
+  providerModes: {},
 };
 
 export const PENDING_DISCOVERY_RESULT: ImmediateDiscoveryResult = {
@@ -92,7 +110,7 @@ export function immediateDiscoveryStatus(
     return 'failed';
   }
 
-  if (summary.sourceFailures > 0 || summary.sourcePartials > 0) {
+  if (summary.sourceFailures > 0 || summary.sourcePartials > 0 || summary.queriesDeferred > 0) {
     return 'partial';
   }
 
@@ -104,6 +122,24 @@ export const FAILED_DISCOVERY_RESULT: ImmediateDiscoveryResult = {
   jobsFetched: 0,
   matchesCreated: 0,
   lastDiscoveryAt: null,
+};
+
+export type ListingDiagnosisOutcome =
+  | 'not_discovered'
+  | 'detail_missing'
+  | 'filtered'
+  | 'matched_hidden'
+  | 'matched';
+
+export type ListingDiagnosis = {
+  outcome: ListingDiagnosisOutcome;
+  reason: string;
+  inCatalog: boolean;
+  matched: boolean;
+  visibleInFeed: boolean;
+  keyword: string | null;
+  location: string | null;
+  hasDescription: boolean;
 };
 
 export type MatchReevaluationPair = {

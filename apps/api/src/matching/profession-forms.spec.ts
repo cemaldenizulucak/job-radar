@@ -72,6 +72,17 @@ describe('profession field equivalence', () => {
       'Kalite güvence',
       'denetçi',
     ]);
+    expect(
+      expandKeywordsForSourceQuery(['Gıda Mühendisi, Kalite güvence']),
+    ).toEqual(['Gıda Mühendisi', 'Gıda Mühendisliği', 'Kalite güvence']);
+    expect(toProfessionFieldQueryVariant('Makine Mühendisi')).toBe(
+      'Makine Mühendisliği',
+    );
+    expect(toProfessionFieldQueryVariant('Çevre Mühendisi')).toBe(
+      'Çevre Mühendisliği',
+    );
+    expect(toProfessionFieldQueryVariant('denetçi')).toBeNull();
+    expect(toProfessionFieldQueryVariant('Mimar')).toBeNull();
   });
 
   it('treats makine vs gıda titles as competing disciplines', () => {

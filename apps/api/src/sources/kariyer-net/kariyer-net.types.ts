@@ -43,14 +43,16 @@ export type KariyerNetRawJob = {
 };
 
 export type KariyerNetPaginationStopReason =
-  | 'max_age'
   | 'no_results'
   | 'max_pages'
-  | 'blocked_after_success';
+  | 'blocked_after_success'
+  | 'pagination_loop';
 
 export type KariyerNetProviderResult = {
   jobs: readonly KariyerNetRawJob[];
   pagesFetched?: number;
   jobsCollected?: number;
+  detailsFetched?: number;
+  detailsFailed?: number;
   stopReason?: KariyerNetPaginationStopReason | null;
 };

@@ -36,6 +36,10 @@ export class KariyerNetSourceAdapter implements JobSourceAdapter {
     return this.provider.capabilities;
   }
 
+  get providerMode(): string {
+    return this.provider.mode;
+  }
+
   isEnabled(): boolean {
     return this.provider.isEnabled();
   }
@@ -120,7 +124,67 @@ export class KariyerNetSourceAdapter implements JobSourceAdapter {
       jobs,
       pagesFetched: rawResult.pagesFetched,
       jobsCollected: rawResult.jobsCollected ?? jobs.length,
+      detailsFetched: rawResult.detailsFetched,
+      detailsFailed: rawResult.detailsFailed,
       stopReason: rawResult.stopReason ?? null,
+      providerMode: this.provider.mode,
+    };
+  }
+
+  async enrichMissingDescriptions(
+    jobs: readonly SourceJobRaw[],
+  ): Promise<{
+    jobs: SourceJobRaw[];
+    detailsFetched: number;
+    detailsFailed: number;
+  }> {
+    if (!this.provider.enrichMissingDescriptions) {
+      return { jobs: [...jobs], detailsFetched: 0, detailsFailed: 0 };
+    }
+
+    const missing = jobs.filter((job) => !job.description?.trim());
+    if (missing.length === 0) {
+      return { jobs: [...jobs], detailsFetched: 0, detailsFailed: 0 };
+    }
+
+    const rawJobs: KariyerNetRawJob[] = missing.map((job) => ({
+      externalJobId: job.sourceJobId,
+      canonicalUrl: job.canonicalUrl,
+      title: job.title,
+      companyName: job.companyName,
+      location: job.location,
+      workModel: job.workModel,
+      description: job.description,
+      publishedAt: job.publishedAt,
+      experienceLevel: job.experienceLevel,
+      technologies: job.technologies,
+    }));
+    const enriched = await this.provider.enrichMissingDescriptions(rawJobs);
+    const byId = new Map(
+      enriched.jobs.map((job) => [
+        typeof job.externalJobId === 'string' ? job.externalJobId : '',
+        job,
+      ]),
+    );
+    const merged = jobs.map((job) => {
+      const detail = byId.get(job.sourceJobId);
+      if (!detail) {
+        return job;
+      }
+
+      const description =
+        typeof detail.description === 'string' && detail.description.trim()
+          ? detail.description.trim()
+          : job.description;
+      return description && description !== job.description
+        ? { ...job, description }
+        : job;
+    });
+
+    return {
+      jobs: merged,
+      detailsFetched: enriched.detailsFetched,
+      detailsFailed: enriched.detailsFailed,
     };
   }
 }

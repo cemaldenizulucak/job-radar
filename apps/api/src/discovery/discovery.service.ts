@@ -4,7 +4,7 @@ import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { SourceId } from '../common/domain.types.js';
-import { hasExplicitSearchLocationFilter, adapterLocationsForFetch, coalesceSubdivisionNames } from '../common/search-location.js';
+import { hasExplicitSearchLocationFilter, coalesceSubdivisionNames } from '../common/search-location.js';
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
 import { LocationsService } from '../locations/locations.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
@@ -12,7 +12,6 @@ import { JobsService } from '../jobs/jobs.service.js';
 import type { NormalizedJob } from '../jobs/jobs.types.js';
 import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { MatchingService } from '../matching/matching.service.js';
-import { expandKeywordsForSourceQuery } from '../matching/profession-forms.js';
 import { queryMatchKind } from '../matching/match-text.js';
 import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
@@ -21,7 +20,7 @@ import type { PersistedJobForNotification } from '../notifications/notifications
 import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { SearchesService } from '../searches/searches.service.js';
-import type { SourceSearchQuery } from '../sources/job-source.adapter.js';
+import type { SourceSearchQuery, SourceJobRaw } from '../sources/job-source.adapter.js';
 import { sourceErrorCategory } from '../sources/source-errors.js';
 import { SourceRegistry } from '../sources/source-registry.js';
 import {
@@ -32,6 +31,7 @@ import {
   readPositiveIntEnv,
 } from './discovery-window.js';
 import { DiscoveryRunGate } from './discovery-run-gate.js';
+import { DiscoveryScanCursorStore } from './discovery-scan-cursor.js';
 import {
   EMPTY_DISCOVERY_SUMMARY,
   FAILED_DISCOVERY_RESULT,
@@ -39,17 +39,40 @@ import {
   toImmediateDiscoveryResult,
   type DiscoveryRunSummary,
   type ImmediateDiscoveryResult,
+  type ListingDiagnosis,
   type MatchReevaluationPair,
   type MatchReevaluationReport,
 } from './discovery.types.js';
+import { listingDiagnosisFromDecision } from './listing-diagnostics.js';
 import { diffJobSearchMatches } from './match-reevaluation.js';
 import { normalizeSourceJob } from './job-normalizer.js';
+import {
+  listingMatchesDiagnosisTarget,
+  parseDiagnosisListingUrl,
+} from './diagnosis-listing-url.js';
+import {
+  DEFAULT_MAX_QUERIES_PER_SEARCH_SOURCE,
+  DEFAULT_TIME_BUDGET_MS_PER_SEARCH_SOURCE,
+  buildSourceQueryUnits,
+  nextQueryStartIndex,
+  resolveScanKind,
+  selectQueryUnits,
+  sourceQueryPlanFingerprint,
+  type ScanKind,
+  type SourceQueryUnit,
+} from './source-query-plan.js';
 
 type SearchSourceFetchStat = {
   savedSearchId: string;
   source: SourceId;
   fetchedJobCount: number;
   normalizedJobCount: number;
+  queriesAttempted: number;
+  queriesCompleted: number;
+  queriesDeferred: number;
+  detailsFetched: number;
+  detailsFailed: number;
+  providerMode: string | null;
 };
 
 @Injectable()
@@ -57,6 +80,7 @@ export class DiscoveryService {
   private readonly logger = new Logger(DiscoveryService.name);
   private readonly runGate = new DiscoveryRunGate();
   private readonly immediateRuns = new Map<string, ImmediateDiscoveryResult>();
+  private readonly scanCursors = new DiscoveryScanCursorStore();
 
   constructor(
     @Inject(forwardRef(() => SearchesService))
@@ -77,7 +101,7 @@ export class DiscoveryService {
   async run(): Promise<DiscoveryRunSummary> {
     return this.runGate.runExclusive(async () => {
       const searches = await this.searchesService.getActiveSearches();
-      return this.execute(searches, { markStale: true });
+      return this.execute(searches, { markStale: true, trigger: 'scheduled' });
     });
   }
 
@@ -87,7 +111,7 @@ export class DiscoveryService {
     }
 
     return this.runGate.runForSearch(savedSearch.id, () =>
-      this.execute([savedSearch], { markStale: false }),
+      this.execute([savedSearch], { markStale: false, trigger: 'user' }),
     );
   }
 
@@ -99,6 +123,37 @@ export class DiscoveryService {
     this.immediateRuns.set(savedSearch.id, PENDING_DISCOVERY_RESULT);
     void this.runEnqueuedSearch(savedSearch);
     return PENDING_DISCOVERY_RESULT;
+  }
+
+  /**
+   * Explains why a listing is missing from a saved search when the catalog
+   * row is already loaded. Does not dump the full catalog.
+   */
+  async diagnoseListing(input: {
+    savedSearchId: string;
+    sourceId?: SourceId;
+    sourceJobId?: string;
+    url?: string;
+  }): Promise<ListingDiagnosis | null> {
+    const parsedUrl = input.url ? parseDiagnosisListingUrl(input.url) : null;
+    const searches = await this.searchesService.getActiveSearches();
+    const search = searches.find((item) => item.id === input.savedSearchId);
+    if (!search) {
+      return null;
+    }
+
+    const catalogJobs = await this.loadCatalogJobs();
+    const job = catalogJobs.find((item) =>
+      listingMatchesDiagnosisTarget(item, { ...input, parsedUrl }),
+    );
+    const decision = job ? this.matchingService.evaluateMatch(job, search) : null;
+    return listingDiagnosisFromDecision({
+      job: job ?? null,
+      decision,
+      maxAgeDays: this.maxAgeDays(),
+      publishedAt: job?.publishedAt,
+      isActive: job?.isActive,
+    });
   }
 
   /**
@@ -186,7 +241,7 @@ export class DiscoveryService {
 
   private async execute(
     searches: readonly SavedSearch[],
-    options: { markStale: boolean },
+    options: { markStale: boolean; trigger: 'scheduled' | 'user' },
   ): Promise<DiscoveryRunSummary> {
     if (searches.length === 0) {
       return { ...EMPTY_DISCOVERY_SUMMARY };
@@ -198,14 +253,19 @@ export class DiscoveryService {
         .filter((code): code is string => Boolean(code)),
     );
 
+    const runId = randomUUID();
     const catalogJobs = await this.loadCatalogJobs();
     const catalogMatches = this.matchingService.matchJobsToSearches(
       catalogJobs,
       searches,
     );
 
-    const fetched = await this.fetchNormalizedJobs(searches);
+    const fetched = await this.fetchNormalizedJobs(searches, {
+      trigger: options.trigger,
+      runId,
+    });
     let jobsInserted = 0;
+    let jobsUpdated = 0;
     const persisted: MatchableJob[] = [];
     const persistedForNotification: PersistedJobForNotification[] = [];
 
@@ -214,6 +274,8 @@ export class DiscoveryService {
       const matchable = toMatchableJob(result.id, job);
       if (result.inserted) {
         jobsInserted += 1;
+      } else {
+        jobsUpdated += 1;
       }
 
       persisted.push(matchable);
@@ -290,7 +352,15 @@ export class DiscoveryService {
     });
 
     this.logger.log({
-      message: 'Discovery Kariyer.net collection',
+      message: 'Discovery run telemetry',
+      runId,
+      scanKind: fetched.scanKind,
+      providerModes: fetched.providerModes,
+      queriesAttempted: fetched.queriesAttempted,
+      queriesCompleted: fetched.queriesCompleted,
+      queriesDeferred: fetched.queriesDeferred,
+      detailsFetched: fetched.detailsFetched,
+      detailsFailed: fetched.detailsFailed,
       kariyerNetPagesFetched: fetched.kariyerNetPagesFetched,
       kariyerNetJobsCollected: fetched.kariyerNetJobsCollected,
       stopReason: fetched.stopReason,
@@ -301,6 +371,7 @@ export class DiscoveryService {
       searchesProcessed: searches.length,
       jobsFetched: fetched.jobsFetched,
       jobsInserted,
+      jobsUpdated,
       matchesCreated,
       duplicateGroupsCreated,
       notificationsCreated,
@@ -314,6 +385,14 @@ export class DiscoveryService {
       rawProviderJobs: fetched.rawProviderJobs,
       normalizedJobs: fetched.uniqueJobs.length,
       notifiedJobCount,
+      runId,
+      scanKind: fetched.scanKind,
+      queriesAttempted: fetched.queriesAttempted,
+      queriesCompleted: fetched.queriesCompleted,
+      queriesDeferred: fetched.queriesDeferred,
+      detailsFetched: fetched.detailsFetched,
+      detailsFailed: fetched.detailsFailed,
+      providerModes: fetched.providerModes,
     };
   }
 
@@ -364,6 +443,7 @@ export class DiscoveryService {
 
   private async fetchNormalizedJobs(
     searches: readonly SavedSearch[],
+    options: { trigger: 'scheduled' | 'user'; runId: string },
   ): Promise<{
     jobsFetched: number;
     uniqueJobs: NormalizedJob[];
@@ -375,6 +455,13 @@ export class DiscoveryService {
     sourceFailures: number;
     sourcePartials: number;
     perSearch: readonly SearchSourceFetchStat[];
+    scanKind: ScanKind | 'mixed';
+    queriesAttempted: number;
+    queriesCompleted: number;
+    queriesDeferred: number;
+    detailsFetched: number;
+    detailsFailed: number;
+    providerModes: Record<string, string>;
   }> {
     const uniqueJobs = new Map<string, NormalizedJob>();
     let jobsFetched = 0;
@@ -385,25 +472,56 @@ export class DiscoveryService {
     let sourceAttempts = 0;
     let sourceFailures = 0;
     let sourcePartials = 0;
+    let queriesAttempted = 0;
+    let queriesCompleted = 0;
+    let queriesDeferred = 0;
+    let detailsFetched = 0;
+    let detailsFailed = 0;
+    const providerModes: Record<string, string> = {};
+    const scanKinds = new Set<ScanKind>();
     const perSearch: SearchSourceFetchStat[] = [];
     const catalogSourceIds = this.sourceRegistry
       .list()
       .map((adapter) => adapter.sourceId);
 
     for (const search of searches) {
+      const scanKind = resolveScanKind({
+        trigger: options.trigger,
+        lastDiscoveredAt: search.lastDiscoveredAt,
+      });
+      scanKinds.add(scanKind);
       const sourceIds =
         search.sourceIds.length > 0 ? search.sourceIds : catalogSourceIds;
 
       for (const sourceId of sourceIds) {
-        const fetched = await this.fetchFromSource(search, sourceId, uniqueJobs);
+        const fetched = await this.fetchFromSource(
+          search,
+          sourceId,
+          uniqueJobs,
+          { runId: options.runId, scanKind },
+        );
         perSearch.push({
           savedSearchId: search.id,
           source: sourceId,
           fetchedJobCount: fetched.raw,
           normalizedJobCount: fetched.accepted,
+          queriesAttempted: fetched.queriesAttempted,
+          queriesCompleted: fetched.queriesCompleted,
+          queriesDeferred: fetched.queriesDeferred,
+          detailsFetched: fetched.detailsFetched,
+          detailsFailed: fetched.detailsFailed,
+          providerMode: fetched.providerMode,
         });
         jobsFetched += fetched.accepted;
         rawProviderJobs += fetched.raw;
+        queriesAttempted += fetched.queriesAttempted;
+        queriesCompleted += fetched.queriesCompleted;
+        queriesDeferred += fetched.queriesDeferred;
+        detailsFetched += fetched.detailsFetched;
+        detailsFailed += fetched.detailsFailed;
+        if (fetched.providerMode) {
+          providerModes[sourceId] = fetched.providerMode;
+        }
         if (fetched.outcome !== 'skipped') {
           sourceAttempts += 1;
         }
@@ -423,6 +541,9 @@ export class DiscoveryService {
       }
     }
 
+    const scanKind =
+      scanKinds.size === 1 ? ([...scanKinds][0] ?? 'periodic') : 'mixed';
+
     return {
       jobsFetched,
       uniqueJobs: [...uniqueJobs.values()],
@@ -434,6 +555,13 @@ export class DiscoveryService {
       sourceFailures,
       sourcePartials,
       perSearch,
+      scanKind,
+      queriesAttempted,
+      queriesCompleted,
+      queriesDeferred,
+      detailsFetched,
+      detailsFailed,
+      providerModes,
     };
   }
 
@@ -441,11 +569,18 @@ export class DiscoveryService {
     search: SavedSearch,
     sourceId: SourceId,
     uniqueJobs: Map<string, NormalizedJob>,
+    options: { runId: string; scanKind: ScanKind },
   ): Promise<{
     accepted: number;
     raw: number;
     outcome: 'skipped' | 'ok' | 'partial' | 'failed';
     stopReason: string | null;
+    queriesAttempted: number;
+    queriesCompleted: number;
+    queriesDeferred: number;
+    detailsFetched: number;
+    detailsFailed: number;
+    providerMode: string | null;
     kariyerNet?: {
       pagesFetched: number;
       jobsCollected: number;
@@ -457,82 +592,207 @@ export class DiscoveryService {
     if (!adapter || !adapter.isEnabled()) {
       this.logger.log({
         message: 'Skipping disabled or unknown source',
+        runId: options.runId,
         source: sourceId,
         savedSearchId: search.id,
+        providerMode: adapter?.providerMode ?? null,
       });
-      return { accepted: 0, raw: 0, outcome: 'skipped', stopReason: null };
+      return {
+        accepted: 0,
+        raw: 0,
+        outcome: 'skipped',
+        stopReason: null,
+        queriesAttempted: 0,
+        queriesCompleted: 0,
+        queriesDeferred: 0,
+        detailsFetched: 0,
+        detailsFailed: 0,
+        providerMode: adapter?.providerMode ?? null,
+      };
     }
 
+    const units = buildSourceQueryUnits(search);
+    const fingerprint = sourceQueryPlanFingerprint(search);
+    const startIndex = this.scanCursors.read(
+      search.id,
+      sourceId,
+      fingerprint,
+    ).nextIndex;
+    const planned = selectQueryUnits(units, {
+      startIndex,
+      maxQueries: this.maxQueriesPerSearchSource(),
+    });
     const startedAt = Date.now();
+    const deadline = startedAt + this.timeBudgetMs();
+    const collected = new Map<string, SourceJobRaw>();
+    let raw = 0;
+    let accepted = 0;
+    let queriesCompleted = 0;
+    let queriesFailed = 0;
+    let pagesFetched = 0;
+    let stopReason: string | null = null;
+    let providerMode = adapter.providerMode ?? null;
+    const deferredFromPlan = [...planned.deferred];
 
-    try {
-      const result = await adapter.search(toSourceQuery(search, this.maxAgeDays()));
-      let accepted = 0;
-      const now = new Date();
-
-      for (const raw of result.jobs) {
-        const normalized = normalizeSourceJob(result.sourceId, raw);
-        if (!normalized) {
-          continue;
-        }
-
-        if (!isWithinSourceMaxAge(normalized.publishedAt, this.maxAgeDays(), now)) {
-          this.logger.log({
-            message: 'Discarded job older than source max age',
-            source: sourceId,
-            savedSearchId: search.id,
-            title: normalized.title,
-          });
-          continue;
-        }
-
-        accepted += 1;
-        uniqueJobs.set(
-          sourceListingIdentity(normalized.sourceId, normalized.sourceJobId),
-          normalized,
-        );
+    for (const unit of planned.selected) {
+      if (Date.now() >= deadline) {
+        deferredFromPlan.push(unit);
+        stopReason = preferStopReason(stopReason, 'time_budget');
+        continue;
       }
 
-      this.logger.log({
-        message: 'Source fetch completed',
-        source: sourceId,
-        savedSearchId: search.id,
-        durationMs: Date.now() - startedAt,
-        fetched: result.jobs.length,
-        normalized: accepted,
-        pagesFetched: result.pagesFetched ?? null,
-        jobsCollected: result.jobsCollected ?? result.jobs.length,
-        stopReason: result.stopReason ?? null,
-      });
-
-      const stopReason = result.stopReason ?? null;
-
-      return {
-        accepted,
-        raw: result.jobs.length,
-        outcome: isPartialStopReason(stopReason) ? 'partial' : 'ok',
-        stopReason,
-        kariyerNet:
-          sourceId === 'kariyer_net'
-            ? {
-                pagesFetched: result.pagesFetched ?? 0,
-                jobsCollected: result.jobsCollected ?? result.jobs.length,
-                stopReason,
-              }
-            : undefined,
-      };
-    } catch (error) {
-      this.logger.error({
-        message: 'Source adapter failed; continuing discovery',
-        source: sourceId,
-        savedSearchId: search.id,
-        durationMs: Date.now() - startedAt,
-        fetched: 0,
-        normalized: 0,
-        errorCategory: sourceErrorCategory(error),
-      });
-      return { accepted: 0, raw: 0, outcome: 'failed', stopReason: null };
+      try {
+        const result = await adapter.search(
+          toSourceQuery(search, unit, this.maxAgeDays()),
+        );
+        providerMode = result.providerMode ?? providerMode;
+        raw += result.jobs.length;
+        pagesFetched += result.pagesFetched ?? 0;
+        if (result.stopReason) {
+          stopReason = preferStopReason(stopReason, result.stopReason);
+        }
+        for (const job of result.jobs) {
+          collected.set(
+            sourceListingIdentity(result.sourceId, job.sourceJobId),
+            job,
+          );
+        }
+        queriesCompleted += 1;
+      } catch (error) {
+        queriesFailed += 1;
+        this.logger.error({
+          message: 'Source query failed; keeping other query results',
+          runId: options.runId,
+          source: sourceId,
+          savedSearchId: search.id,
+          providerMode,
+          queryOrigin: unit.origin,
+          errorCategory: sourceErrorCategory(error),
+        });
+      }
     }
+
+    const queriesDeferred = deferredFromPlan.length;
+    if (queriesDeferred > 0 && !stopReason) {
+      stopReason = 'query_budget';
+    }
+    this.scanCursors.write(search.id, sourceId, {
+      fingerprint,
+      nextIndex: nextQueryStartIndex({
+        unitCount: units.length,
+        startIndex,
+        attempted: queriesCompleted + queriesFailed,
+        deferredCount: queriesDeferred,
+      }),
+    });
+
+    let detailsFetched = 0;
+    let detailsFailed = 0;
+    let jobsForNormalize = [...collected.values()];
+    if (adapter.enrichMissingDescriptions && jobsForNormalize.length > 0) {
+      try {
+        const enriched = await adapter.enrichMissingDescriptions(jobsForNormalize);
+        jobsForNormalize = [...enriched.jobs];
+        detailsFetched = enriched.detailsFetched;
+        detailsFailed = enriched.detailsFailed;
+      } catch (error) {
+        this.logger.warn({
+          message: 'Description enrichment failed; keeping list-card jobs',
+          runId: options.runId,
+          source: sourceId,
+          savedSearchId: search.id,
+          error: error instanceof Error ? error.message : 'unknown',
+        });
+      }
+    }
+
+    const now = new Date();
+    for (const rawJob of jobsForNormalize) {
+      const normalized = normalizeSourceJob(sourceId, rawJob);
+      if (!normalized) {
+        continue;
+      }
+
+      if (!isWithinSourceMaxAge(normalized.publishedAt, this.maxAgeDays(), now)) {
+        this.logger.log({
+          message: 'Discarded job older than source max age',
+          runId: options.runId,
+          source: sourceId,
+          savedSearchId: search.id,
+          title: normalized.title,
+        });
+        continue;
+      }
+
+      accepted += 1;
+      uniqueJobs.set(
+        sourceListingIdentity(normalized.sourceId, normalized.sourceJobId),
+        normalized,
+      );
+    }
+
+    const outcome = sourceOutcome({
+      queriesAttempted: planned.selected.length,
+      queriesCompleted,
+      queriesFailed,
+      queriesDeferred,
+      stopReason,
+    });
+
+    this.logger.log({
+      message: 'Source fetch completed',
+      runId: options.runId,
+      source: sourceId,
+      savedSearchId: search.id,
+      providerMode,
+      scanKind: options.scanKind,
+      durationMs: Date.now() - startedAt,
+      queriesAttempted: planned.selected.length,
+      queriesCompleted,
+      queriesDeferred,
+      fetched: raw,
+      normalized: accepted,
+      pagesFetched,
+      detailsFetched,
+      detailsFailed,
+      jobsCollected: collected.size,
+      stopReason,
+    });
+
+    return {
+      accepted,
+      raw,
+      outcome,
+      stopReason,
+      queriesAttempted: planned.selected.length,
+      queriesCompleted,
+      queriesDeferred,
+      detailsFetched,
+      detailsFailed,
+      providerMode,
+      kariyerNet:
+        sourceId === 'kariyer_net'
+          ? {
+              pagesFetched,
+              jobsCollected: collected.size,
+              stopReason,
+            }
+          : undefined,
+    };
+  }
+
+  private maxQueriesPerSearchSource(): number {
+    return readPositiveIntEnv(
+      this.config.get<string>('DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE'),
+      DEFAULT_MAX_QUERIES_PER_SEARCH_SOURCE,
+    );
+  }
+
+  private timeBudgetMs(): number {
+    return readPositiveIntEnv(
+      this.config.get<string>('DISCOVERY_TIME_BUDGET_MS_PER_SEARCH_SOURCE'),
+      DEFAULT_TIME_BUDGET_MS_PER_SEARCH_SOURCE,
+    );
   }
 
   private logSavedSearchMatchDebug(input: {
@@ -717,7 +977,36 @@ export class DiscoveryService {
 const PARTIAL_STOP_REASONS = new Set([
   'pagination_loop',
   'blocked_after_success',
+  'query_budget',
+  'time_budget',
+  'max_pages',
 ]);
+
+function sourceOutcome(input: {
+  queriesAttempted: number;
+  queriesCompleted: number;
+  queriesFailed: number;
+  queriesDeferred: number;
+  stopReason: string | null;
+}): 'ok' | 'partial' | 'failed' {
+  if (input.queriesAttempted === 0) {
+    return 'ok';
+  }
+
+  if (input.queriesCompleted === 0 && input.queriesFailed > 0) {
+    return 'failed';
+  }
+
+  if (
+    input.queriesFailed > 0 ||
+    input.queriesDeferred > 0 ||
+    isPartialStopReason(input.stopReason)
+  ) {
+    return 'partial';
+  }
+
+  return 'ok';
+}
 
 function isPartialStopReason(reason: string | null | undefined): boolean {
   return Boolean(reason && PARTIAL_STOP_REASONS.has(reason));
@@ -731,6 +1020,14 @@ function preferStopReason(
     return 'blocked_after_success';
   }
 
+  if (next === 'time_budget' || current === 'time_budget') {
+    return 'time_budget';
+  }
+
+  if (next === 'query_budget' || current === 'query_budget') {
+    return 'query_budget';
+  }
+
   if (next === 'pagination_loop' || current === 'pagination_loop') {
     return 'pagination_loop';
   }
@@ -740,12 +1037,13 @@ function preferStopReason(
 
 function toSourceQuery(
   search: SavedSearch,
+  unit: SourceQueryUnit,
   maxAgeDays: number,
 ): SourceSearchQuery {
   return {
-    keywords: expandKeywordsForSourceQuery(search.keywords),
+    keywords: [unit.keyword],
     technologies: [],
-    locations: adapterLocationsForFetch(search),
+    locations: unit.location ? [unit.location] : [],
     workModels: [],
     experienceLevels: search.experienceLevels,
     savedSearchId: search.id,
@@ -822,5 +1120,9 @@ function toMatchableJob(id: string, job: NormalizedJob): MatchableJob {
     workModel: job.workModel,
     experienceLevel: job.experienceLevel,
     technologies: job.technologies,
+    sourceJobId: job.sourceJobId,
+    canonicalUrl: job.canonicalUrl,
+    isActive: job.isActive,
+    publishedAt: job.publishedAt,
   };
 }

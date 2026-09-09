@@ -22,8 +22,11 @@ import {
   isKariyerNetDebugHtmlEnabled,
   writeKariyerNetDebugHtml,
 } from './kariyer-net-debug-html.js';
-import { parseKariyerNetSearchHtml } from './kariyer-net-html.parser.js';
-import { shouldStopKariyerNetPagination } from './kariyer-net-pagination.js';
+import { parseKariyerNetSearchHtml, parseKariyerNetJobDetailHtml } from './kariyer-net-html.parser.js';
+import {
+  kariyerNetPageSignature,
+  shouldStopKariyerNetPagination,
+} from './kariyer-net-pagination.js';
 import type { KariyerNetProvider } from './kariyer-net.provider.js';
 import { buildKariyerNetSearchUrl } from './kariyer-net-search-url.js';
 import {
@@ -79,6 +82,7 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
     const maxPages = this.config.maxPages;
     let pagesFetched = 0;
     let stopReason: KariyerNetPaginationStopReason | null = null;
+    let previousPageSignature: string | null = null;
 
     for (let page = 1; page <= maxPages; page += 1) {
       const url = buildKariyerNetSearchUrl(input, this.config.baseUrl, page);
@@ -150,8 +154,9 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
         page,
         maxPages,
         jobsOnPage: pageJobs,
-        maxAgeDays: input.maxAgeDays,
+        previousPageSignature,
       });
+      previousPageSignature = kariyerNetPageSignature(pageJobs);
 
       this.logger.log({
         message: 'Kariyer.net search page fetched',
@@ -184,6 +189,58 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
       jobsCollected: jobs.length,
       stopReason,
     };
+  }
+
+  async enrichMissingDescriptions(
+    jobs: readonly KariyerNetRawJob[],
+  ): Promise<{
+    jobs: readonly KariyerNetRawJob[];
+    detailsFetched: number;
+    detailsFailed: number;
+  }> {
+    const enriched: KariyerNetRawJob[] = jobs.map((job) => ({ ...job }));
+    let detailsFetched = 0;
+    let detailsFailed = 0;
+
+    for (const job of enriched) {
+      if (hasText(job.description)) {
+        continue;
+      }
+
+      if (detailsFetched + detailsFailed >= this.config.maxDetailRequests) {
+        break;
+      }
+
+      const url =
+        typeof job.canonicalUrl === 'string' ? job.canonicalUrl.trim() : '';
+      if (!url) {
+        continue;
+      }
+
+      await this.clock.sleep(this.config.delayMs);
+
+      try {
+        const response = await this.getWithRetry(url);
+        if (isBlockedHttpStatus(response.status)) {
+          detailsFailed += 1;
+          continue;
+        }
+
+        throwIfFailedStatus(response.status);
+        const detail = parseKariyerNetJobDetailHtml(response.body, url, this.config.baseUrl);
+        if (detail.description) {
+          job.description = detail.description;
+        }
+        if (!hasText(job.publishedAt) && detail.publishedAt) {
+          job.publishedAt = detail.publishedAt;
+        }
+        detailsFetched += 1;
+      } catch {
+        detailsFailed += 1;
+      }
+    }
+
+    return { jobs: enriched, detailsFetched, detailsFailed };
   }
 
   private async fetchSearchPage(
@@ -372,4 +429,8 @@ function kariyerJobIdentity(job: KariyerNetRawJob): string | null {
   }
 
   return null;
+}
+
+function hasText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }

@@ -53,6 +53,10 @@ export class LinkedInSourceAdapter implements JobSourceAdapter {
     return this.provider.capabilities;
   }
 
+  get providerMode(): string {
+    return this.provider.mode;
+  }
+
   isEnabled(): boolean {
     return this.provider.isEnabled();
   }
@@ -148,6 +152,7 @@ export class LinkedInSourceAdapter implements JobSourceAdapter {
       pagesFetched: rawResult.pagesFetched,
       jobsCollected: rawResult.jobsCollected ?? jobs.length,
       stopReason: rawResult.stopReason ?? null,
+      providerMode: this.provider.mode,
     };
   }
 }

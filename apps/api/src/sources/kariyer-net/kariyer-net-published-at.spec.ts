@@ -3,10 +3,11 @@ import { parseKariyerNetPublishedAt } from './kariyer-net-published-at.js';
 const NOW = new Date('2026-09-02T10:00:00.000Z');
 
 describe('parseKariyerNetPublishedAt', () => {
-  it('parses "update 1 gün" as now minus 1 day', () => {
-    expect(parseKariyerNetPublishedAt('update 1 gün', NOW)).toBe(
-      '2026-09-01T10:00:00.000Z',
-    );
+  it('does not treat an update label as a publish date', () => {
+    expect(parseKariyerNetPublishedAt('update 1 gün', NOW)).toBeNull();
+    expect(
+      parseKariyerNetPublishedAt('14 gün önce güncellendi', NOW),
+    ).toBeNull();
   });
 
   it('parses "1 gün" as now minus 1 day', () => {

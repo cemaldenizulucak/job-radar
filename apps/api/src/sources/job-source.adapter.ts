@@ -39,15 +39,28 @@ export type SourceSearchResult = {
   jobs: readonly SourceJobRaw[];
   pagesFetched?: number;
   jobsCollected?: number;
+  detailsFetched?: number;
+  detailsFailed?: number;
   stopReason?: string | null;
+  providerMode?: string;
+};
+
+export type SourceDescriptionEnrichment = {
+  jobs: readonly SourceJobRaw[];
+  detailsFetched: number;
+  detailsFailed: number;
 };
 
 export interface JobSourceAdapter {
   readonly sourceId: SourceId;
   readonly displayName: string;
   readonly capabilities: SourceAdapterCapabilities;
+  readonly providerMode?: string;
   isEnabled(): boolean;
   search(query: SourceSearchQuery): Promise<SourceSearchResult>;
+  enrichMissingDescriptions?(
+    jobs: readonly SourceJobRaw[],
+  ): Promise<SourceDescriptionEnrichment>;
 }
 
 export const MOCK_SOURCE_CAPABILITIES: SourceAdapterCapabilities = {

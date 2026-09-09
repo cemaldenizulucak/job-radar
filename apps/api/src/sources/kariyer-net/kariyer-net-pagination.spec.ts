@@ -1,6 +1,10 @@
-import { shouldStopKariyerNetPagination } from './kariyer-net-pagination.js';
+import {
+  kariyerNetPageSignature,
+  shouldStopKariyerNetPagination,
+} from './kariyer-net-pagination.js';
 
 const now = new Date('2026-09-02T10:00:00.000Z');
+void now;
 
 describe('shouldStopKariyerNetPagination', () => {
   it('stops when the page has no jobs', () => {
@@ -9,18 +13,15 @@ describe('shouldStopKariyerNetPagination', () => {
         page: 2,
         maxPages: 10,
         jobsOnPage: [],
-        now,
       }),
     ).toBe('no_results');
   });
 
-  it('stops when the oldest reliably parsed job is older than 30 days', () => {
+  it('does not stop just because one listing looks old', () => {
     expect(
       shouldStopKariyerNetPagination({
         page: 2,
         maxPages: 10,
-        maxAgeDays: 30,
-        now,
         jobsOnPage: [
           {
             externalJobId: '1',
@@ -38,16 +39,14 @@ describe('shouldStopKariyerNetPagination', () => {
           },
         ],
       }),
-    ).toBe('max_age');
+    ).toBeNull();
   });
 
-  it('does not stop on age when publishedAt is missing', () => {
+  it('does not stop on missing publishedAt', () => {
     expect(
       shouldStopKariyerNetPagination({
         page: 1,
         maxPages: 10,
-        maxAgeDays: 30,
-        now,
         jobsOnPage: [
           {
             externalJobId: '1',
@@ -65,8 +64,6 @@ describe('shouldStopKariyerNetPagination', () => {
       shouldStopKariyerNetPagination({
         page: 10,
         maxPages: 10,
-        maxAgeDays: 30,
-        now,
         jobsOnPage: [
           {
             externalJobId: '1',
@@ -78,5 +75,26 @@ describe('shouldStopKariyerNetPagination', () => {
         ],
       }),
     ).toBe('max_pages');
+  });
+
+  it('stops when the same page identities repeat', () => {
+    const jobs = [
+      {
+        externalJobId: '1',
+        canonicalUrl: 'https://www.kariyer.net/is-ilani/1',
+        title: 'Frontend Developer',
+        companyName: 'Same',
+      },
+    ];
+    const previous = kariyerNetPageSignature(jobs);
+
+    expect(
+      shouldStopKariyerNetPagination({
+        page: 2,
+        maxPages: 10,
+        jobsOnPage: jobs,
+        previousPageSignature: previous,
+      }),
+    ).toBe('pagination_loop');
   });
 });

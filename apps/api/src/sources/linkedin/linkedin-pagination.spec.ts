@@ -14,7 +14,7 @@ describe('shouldStopLinkedInPagination', () => {
     ).toBe('no_results');
   });
 
-  it('stops when the oldest reliably parsed job is older than 30 days', () => {
+  it('does not stop just because one listing looks old', () => {
     expect(
       shouldStopLinkedInPagination({
         page: 2,
@@ -32,7 +32,7 @@ describe('shouldStopLinkedInPagination', () => {
           },
         ],
       }),
-    ).toBe('max_age');
+    ).toBeNull();
   });
 
   it('does not stop on age when publishedAt is missing', () => {

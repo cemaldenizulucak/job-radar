@@ -1,8 +1,10 @@
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
 import type { DuplicateGroup } from '../duplicates/duplicates.types.js';
+import { BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
 import { sourceListingIdentity } from '../jobs/job-identity.js';
+import { mergeNormalizedJobUpdate } from '../jobs/listing-merge.js';
 import { JobsService } from '../jobs/jobs.service.js';
 import type { NormalizedJob } from '../jobs/jobs.types.js';
 import { MatchingService } from '../matching/matching.service.js';
@@ -55,7 +57,12 @@ class FakeSearchesService extends SearchesService {
   }
 
   override getActiveSearches(): Promise<SavedSearch[]> {
-    return Promise.resolve(this.active);
+    return Promise.resolve(
+      this.active.map((item) => ({
+        ...item,
+        lastDiscoveredAt: this.discoveredAt.get(item.id) ?? item.lastDiscoveredAt ?? null,
+      })),
+    );
   }
 
   override markDiscoveredAt(
@@ -89,7 +96,7 @@ class FakeJobsService extends JobsService {
     const existing = this.listings.get(key);
 
     if (existing) {
-      existing.job = job;
+      existing.job = mergeNormalizedJobUpdate(job, existing.job);
       return Promise.resolve({ id: existing.id, inserted: false });
     }
 
@@ -165,6 +172,10 @@ class FakeJobsService extends JobsService {
         workModel: job.workModel,
         experienceLevel: job.experienceLevel,
         technologies: job.technologies,
+        sourceJobId: job.sourceJobId,
+        canonicalUrl: job.canonicalUrl,
+        isActive: job.isActive,
+        publishedAt: job.publishedAt,
       })),
     );
   }
@@ -284,6 +295,7 @@ function createDiscovery(
   groups = new FakeDuplicateGroupsService(),
   notifications = new FakeNotificationsService(),
   profiles = new FakeProfilesService(),
+  config: Record<string, string | undefined> = {},
 ): {
   discovery: DiscoveryService;
   jobs: FakeJobsService;
@@ -324,7 +336,7 @@ function createDiscovery(
     jobs,
     notifications,
     profiles,
-    { get: () => undefined } as never,
+    { get: (key: string) => config[key] } as never,
     locations,
   );
 
@@ -337,25 +349,30 @@ describe('DiscoveryService', () => {
 
     const result = await discovery.run();
 
-    expect(result).toEqual({
-      usersProcessed: 1,
-      searchesProcessed: 1,
-      jobsFetched: 6,
-      jobsInserted: 6,
-      matchesCreated: 4,
-      duplicateGroupsCreated: 1,
-      notificationsCreated: 1,
-      kariyerNetPagesFetched: 1,
-      kariyerNetJobsCollected: 3,
-      stopReason: null,
-      sourceAttempts: 2,
-      sourceFailures: 0,
-      sourcePartials: 0,
-      catalogJobsChecked: 0,
-      rawProviderJobs: 6,
-      normalizedJobs: 6,
-      notifiedJobCount: 4,
-    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        usersProcessed: 1,
+        searchesProcessed: 1,
+        jobsFetched: 6,
+        jobsInserted: 6,
+        matchesCreated: 4,
+        duplicateGroupsCreated: 1,
+        notificationsCreated: 1,
+        kariyerNetPagesFetched: 2,
+        kariyerNetJobsCollected: 3,
+        sourceAttempts: 2,
+        sourceFailures: 0,
+        catalogJobsChecked: 0,
+        rawProviderJobs: 12,
+        normalizedJobs: 6,
+        notifiedJobCount: 4,
+        queriesAttempted: 4,
+        queriesCompleted: 4,
+        queriesDeferred: 0,
+        scanKind: 'first',
+      }),
+    );
+    expect(result.runId).toEqual(expect.any(String));
     expect(jobs.listings.size).toBe(6);
     expect(
       jobs.listings.has(sourceListingIdentity('linkedin', 'li-abc-frontend')),
@@ -483,7 +500,7 @@ describe('DiscoveryService', () => {
 
     expect(result.jobsFetched).toBe(4);
     expect(result.jobsInserted).toBe(4);
-    expect(result.kariyerNetPagesFetched).toBe(1);
+    expect(result.kariyerNetPagesFetched).toBe(2);
     expect(result.kariyerNetJobsCollected).toBe(4);
     expect(result.stopReason).toBe('blocked_after_success');
     expect(result.sourceAttempts).toBe(1);
@@ -505,7 +522,7 @@ describe('DiscoveryService', () => {
 
     expect(result.jobsFetched).toBe(3);
     expect(result.jobsInserted).toBe(3);
-    expect(result.kariyerNetPagesFetched).toBe(1);
+    expect(result.kariyerNetPagesFetched).toBe(2);
     expect(result.kariyerNetJobsCollected).toBe(3);
     expect(result.stopReason).toBeNull();
     expect(
@@ -892,7 +909,10 @@ describe('DiscoveryService', () => {
         };
       },
     };
-    const target = search({ sourceIds: ['kariyer_net'] });
+    const target = search({
+      sourceIds: ['kariyer_net'],
+      keywords: ['frontend'],
+    });
     const { discovery } = createDiscovery([target], [adapter]);
 
     const first = discovery.runForSavedSearch(target);
@@ -1029,7 +1049,7 @@ describe('DiscoveryService', () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]?.workModels).toEqual([]);
-    expect(received[0]?.locations).toEqual(['Türkiye']);
+    expect(received[0]?.locations).toEqual(['İzmir']);
     expect(received[0]?.keywords).toEqual(['Frontend Developer']);
   });
 
@@ -1616,11 +1636,12 @@ describe('DiscoveryService', () => {
 
     const result = await discovery.runForSavedSearch(target);
 
-    expect(received[0]?.keywords).toEqual([
-      'Gıda Mühendisi',
-      'Gıda Mühendisliği',
+    expect(received.map((query) => `${query.keywords[0]}@${query.locations[0]}`).sort()).toEqual([
+      'Gıda Mühendisi@İstanbul',
+      'Gıda Mühendisi@İzmir',
+      'Gıda Mühendisliği@İstanbul',
+      'Gıda Mühendisliği@İzmir',
     ]);
-    expect(received[0]?.locations).toEqual(['Türkiye']);
     expect(result.matchesCreated).toBe(1);
     expect(jobs.matches).toEqual([
       {
@@ -1690,5 +1711,340 @@ describe('DiscoveryService', () => {
     expect(applied.deleteCount).toBe(1);
     expect(jobs.matches).toEqual([]);
     expect(jobs.listings.size).toBe(1);
+  });
+
+  it('sends alternative keywords and cities as separate queries, not one AND query', async () => {
+    const received: SourceSearchQuery[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query);
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-gida',
+      keywords: ['Gıda Mühendisi', 'Kalite güvence', 'denetçi'],
+      countryName: 'Türkiye',
+      subdivisionNames: ['İzmir', 'Manisa'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter]);
+
+    await discovery.runForSavedSearch(target);
+
+    const pairs = received.map(
+      (query) => `${query.keywords.join('|')}@${query.locations.join('|')}`,
+    );
+    expect(pairs).toContain('Gıda Mühendisi@İzmir');
+    expect(pairs).toContain('Gıda Mühendisi@Manisa');
+    expect(pairs).toContain('Kalite güvence@İzmir');
+    expect(pairs).toContain('denetçi@Manisa');
+    expect(pairs.every((pair) => !pair.includes('Gıda Mühendisi|Kalite'))).toBe(
+      true,
+    );
+  });
+
+  it('keeps later-page jobs and other queries when one query fails', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        if (query.keywords[0] === 'denetçi') {
+          throw new SourceUnavailableError('kariyer_net', 'rate limited');
+        }
+
+        if (query.keywords[0] === 'Kalite güvence') {
+          return {
+            sourceId: 'kariyer_net',
+            pagesFetched: 2,
+            jobsCollected: 1,
+            jobs: [
+              {
+                sourceJobId: 'kn-page-2',
+                canonicalUrl: 'https://www.kariyer.net/is-ilani/kalite-2',
+                title: 'Kalite Güvence Uzmanı',
+                companyName: 'Manisa Co',
+                location: 'Manisa',
+                description: 'Kalite güvence süreçleri',
+              },
+            ],
+          };
+        }
+
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-gida',
+      keywords: ['Gıda Mühendisi', 'Kalite güvence', 'denetçi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs } = createDiscovery([target], [adapter]);
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(result.sourcePartials).toBe(1);
+    expect(jobs.listings.has('kariyer_net:kn-page-2')).toBe(true);
+    expect(result.jobsInserted).toBe(1);
+  });
+
+  it('reports leftover queries as partial and continues them on the next periodic run', async () => {
+    const received: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query.keywords[0] ?? '');
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-limit',
+      keywords: ['alpha', 'beta', 'gamma'],
+      sourceIds: ['kariyer_net'],
+    });
+    const searchesService = new FakeSearchesService([target]);
+    const jobs = new FakeJobsService();
+    const discovery = new DiscoveryService(
+      searchesService,
+      new SourceRegistry([adapter]),
+      new MatchingService(),
+      new DuplicatesService(),
+      new FakeDuplicateGroupsService(),
+      jobs,
+      new FakeNotificationsService(),
+      new FakeProfilesService(),
+      {
+        get: (key: string) =>
+          key === 'DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE' ? '2' : undefined,
+      } as never,
+      {
+        primeSubdivisionCaches: vi.fn().mockResolvedValue(undefined),
+        getCachedSubdivisionNames: vi.fn().mockReturnValue(null),
+      } as never,
+    );
+
+    const first = await discovery.runForSavedSearch(target);
+    expect(first.queriesAttempted).toBe(2);
+    expect(first.queriesDeferred).toBe(1);
+    expect(first.sourcePartials).toBe(1);
+    expect(received).toEqual(['alpha', 'beta']);
+
+    searchesService.discoveredAt.set('search-limit', new Date().toISOString());
+    received.length = 0;
+    const second = await discovery.run();
+    expect(second.scanKind).toBe('periodic');
+    expect(received).toEqual(['gamma', 'alpha']);
+  });
+
+  it('continues leftover queries on the next user-triggered scan, not only periodic', async () => {
+    const received: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query.keywords[0] ?? '');
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-user-continue',
+      keywords: ['alpha', 'beta', 'gamma'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter], undefined, undefined, undefined, undefined, {
+      DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '2',
+    });
+
+    await discovery.runForSavedSearch(target);
+    expect(received).toEqual(['alpha', 'beta']);
+
+    received.length = 0;
+    await discovery.runForSavedSearch(target);
+    expect(received).toEqual(['gamma', 'alpha']);
+  });
+
+  it('invalidates continuation when keywords or cities change', async () => {
+    const received: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query.keywords[0] ?? '');
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-fingerprint',
+      keywords: ['alpha', 'beta', 'gamma'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, searches } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '2' },
+    );
+
+    await discovery.runForSavedSearch(target);
+    expect(received).toEqual(['alpha', 'beta']);
+
+    target.keywords = ['delta', 'epsilon', 'zeta'];
+    searches.discoveredAt.set('search-fingerprint', new Date().toISOString());
+    received.length = 0;
+    await discovery.runForSavedSearch(target);
+    expect(received).toEqual(['delta', 'epsilon']);
+  });
+
+  it('defers remaining queries when the 40s time budget expires even if they fit the count cap', async () => {
+    const received: string[] = [];
+    let now = 1_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query.keywords[0] ?? '');
+        now += 50_000;
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-time',
+      keywords: ['alpha', 'beta', 'gamma'],
+      sourceIds: ['kariyer_net'],
+    });
+
+    try {
+      const { discovery } = createDiscovery(
+        [target],
+        [adapter],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '8',
+          DISCOVERY_TIME_BUDGET_MS_PER_SEARCH_SOURCE: '40000',
+        },
+      );
+
+      const first = await discovery.runForSavedSearch(target);
+      expect(first.queriesAttempted).toBe(3);
+      expect(first.queriesCompleted).toBe(1);
+      expect(first.queriesDeferred).toBe(2);
+      expect(first.sourcePartials).toBe(1);
+      expect(first.stopReason).toBe('time_budget');
+      expect(received).toEqual(['alpha']);
+
+      received.length = 0;
+      const second = await discovery.runForSavedSearch(target);
+      expect(second.stopReason).toBe('time_budget');
+      expect(received).toEqual(['beta']);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('diagnoses an allowlisted catalog URL without fetching it', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const target = search({
+      id: 'search-diagnose',
+      sourceIds: ['kariyer_net'],
+    });
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'kariyer_net',
+      sourceJobId: 'kn-1',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/kalite-123',
+      title: 'Kalite Mühendisi',
+      companyName: 'Tukaş',
+      titleNormalized: 'kalite muhendisi',
+      companyNormalized: 'tukas',
+      description: 'Gıda Mühendisliği bölümünden mezun',
+      location: 'Manisa',
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+      publishedAt: null,
+      isActive: true,
+    });
+    const { discovery } = createDiscovery([target], undefined, jobs);
+
+    const result = await discovery.diagnoseListing({
+      savedSearchId: 'search-diagnose',
+      url: 'https://www.kariyer.net/is-ilani/kalite-123',
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result?.inCatalog).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
+  it('rejects localhost and private listing URLs before catalog lookup', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const { discovery } = createDiscovery([search({ id: 'search-diagnose' })]);
+
+    await expect(
+      discovery.diagnoseListing({
+        savedSearchId: 'search-diagnose',
+        url: 'https://127.0.0.1/is-ilani/1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      discovery.diagnoseListing({
+        savedSearchId: 'search-diagnose',
+        url: 'https://example.com/jobs/1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

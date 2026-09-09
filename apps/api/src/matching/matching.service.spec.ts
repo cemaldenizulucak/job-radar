@@ -1320,6 +1320,34 @@ describe('MatchingService food-engineering field equivalence', () => {
     ).toBe(false);
   });
 
+  it('does not match Kalite Mühendisi without description evidence', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        job({
+          title: 'Kalite Mühendisi',
+          description: null,
+          technologies: [],
+        }),
+        search({ keywords: ['Gıda Mühendisi'] }),
+      ),
+    ).toBe(false);
+  });
+
+  it('accepts Manisa when İzmir and Manisa are both selected', () => {
+    expect(
+      matcher.jobMatchesSearch(
+        qualityFoodListing(),
+        search({
+          keywords: ['Gıda Mühendisi'],
+          countryCode: 'TR',
+          countryName: 'Türkiye',
+          subdivisionCodes: ['35', '45'],
+          subdivisionNames: ['İzmir', 'Manisa'],
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it('does not match Manisa when the search location is İzmir', () => {
     expect(
       matcher.jobMatchesSearch(

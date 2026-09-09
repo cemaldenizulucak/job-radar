@@ -11,6 +11,10 @@ export type MatchableJob = {
   workModel: WorkModel | null;
   experienceLevel: string | null;
   technologies: readonly string[];
+  sourceJobId?: string | null;
+  canonicalUrl?: string | null;
+  isActive?: boolean;
+  publishedAt?: string | null;
 };
 
 export type JobSearchMatch = {

@@ -72,6 +72,31 @@ export function parseKariyerNetSearchHtml(
   };
 }
 
+export function parseKariyerNetJobDetailHtml(
+  html: string,
+  canonicalUrl: string,
+  baseUrl = KARIYER_NET_DEFAULT_BASE_URL,
+): { description: string | null; publishedAt: string | null } {
+  const parsed = parseKariyerNetSearchHtml(html, baseUrl);
+  if (parsed.kind !== 'jobs') {
+    return { description: null, publishedAt: null };
+  }
+
+  const target = canonicalizeKariyerNetJobUrl(canonicalUrl, baseUrl);
+  const match =
+    parsed.jobs.find((job) => job.canonicalUrl === target) ?? parsed.jobs[0];
+  const description =
+    typeof match?.description === 'string' && match.description.trim().length > 0
+      ? match.description.trim()
+      : null;
+  const publishedAt =
+    typeof match?.publishedAt === 'string' && match.publishedAt.trim().length > 0
+      ? match.publishedAt.trim()
+      : null;
+
+  return { description, publishedAt };
+}
+
 function looksLikeChallenge(html: string): boolean {
   if (!CHALLENGE_PATTERN.test(html)) {
     return false;

@@ -2,6 +2,7 @@ import type { SourceAdapterCapabilities } from '../job-source.adapter.js';
 import type {
   KariyerNetProviderMode,
   KariyerNetProviderResult,
+  KariyerNetRawJob,
   KariyerNetSearchInput,
 } from './kariyer-net.types.js';
 
@@ -14,4 +15,11 @@ export interface KariyerNetProvider {
   readonly capabilities: SourceAdapterCapabilities;
   isEnabled(): boolean;
   search(input: KariyerNetSearchInput): Promise<KariyerNetProviderResult>;
+  enrichMissingDescriptions?(
+    jobs: readonly KariyerNetRawJob[],
+  ): Promise<{
+    jobs: readonly KariyerNetRawJob[];
+    detailsFetched: number;
+    detailsFailed: number;
+  }>;
 }

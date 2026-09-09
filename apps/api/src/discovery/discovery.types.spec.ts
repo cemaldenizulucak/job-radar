@@ -27,6 +27,17 @@ describe('immediateDiscoveryStatus', () => {
     ).toBe('partial');
   });
 
+  it('is partial when leftover queries were deferred', () => {
+    expect(
+      immediateDiscoveryStatus({
+        ...EMPTY_DISCOVERY_SUMMARY,
+        sourceAttempts: 1,
+        queriesDeferred: 2,
+        jobsFetched: 4,
+      }),
+    ).toBe('partial');
+  });
+
   it('is partial when a source kept earlier pages after a pagination loop', () => {
     expect(
       immediateDiscoveryStatus({

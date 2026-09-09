@@ -64,6 +64,10 @@ function parseAbsoluteTimestamp(value: string): string | null {
 }
 
 function parseRelativeTimestamp(value: string, now: Date): string | null {
+  if (isUpdateTimestampLabel(value)) {
+    return null;
+  }
+
   const normalized = normalizeRelativeDate(value);
   if (normalized.length === 0) {
     return null;
@@ -98,6 +102,23 @@ function parseRelativeTimestamp(value: string, now: Date): string | null {
   }
 
   return null;
+}
+
+function isUpdateTimestampLabel(value: string): boolean {
+  const folded = value
+    .toLocaleLowerCase('tr-TR')
+    .replaceAll('ı', 'i')
+    .replaceAll('ş', 's')
+    .replaceAll('ğ', 'g')
+    .replaceAll('ü', 'u')
+    .replaceAll('ö', 'o')
+    .replaceAll('ç', 'c');
+
+  return (
+    /\bguncellendi\b/.test(folded) ||
+    /\bupdated?\b/.test(folded) ||
+    /\bson guncelleme\b/.test(folded)
+  );
 }
 
 function normalizeRelativeDate(value: string): string {

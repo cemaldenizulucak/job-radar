@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseKariyerNetSearchHtml } from './kariyer-net-html.parser.js';
+import { parseKariyerNetJobDetailHtml, parseKariyerNetSearchHtml } from './kariyer-net-html.parser.js';
 import { fallbackIdFromCanonicalUrl } from './kariyer-net-listing-id.js';
 import {
   kariyerNetNormalizeRejectionReasons,
@@ -223,5 +223,31 @@ describe('parseKariyerNetSearchHtml', () => {
     }
 
     expect(parsed.jobs.length).toBeGreaterThan(0);
+  });
+});
+
+describe('parseKariyerNetJobDetailHtml', () => {
+  it('reads JSON-LD description from a detail page', () => {
+    const html = `<!DOCTYPE html>
+<html><head>
+<script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Kalite Mühendisi',
+      url: 'https://www.kariyer.net/is-ilani/ornek-kalite-4299999999',
+      description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+      hiringOrganization: { name: 'Ornek Gida' },
+      datePosted: '2026-08-20',
+    })}</script>
+</head><body></body></html>`;
+
+    expect(
+      parseKariyerNetJobDetailHtml(
+        html,
+        'https://www.kariyer.net/is-ilani/ornek-kalite-4299999999',
+      ),
+    ).toEqual({
+      description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+      publishedAt: '2026-08-20',
+    });
   });
 });

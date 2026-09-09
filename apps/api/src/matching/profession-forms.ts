@@ -225,9 +225,14 @@ export function expandKeywordsForSourceQuery(
   };
 
   for (const keyword of keywords) {
-    push(keyword);
     for (const part of keyword.split(',')) {
-      const variant = toProfessionFieldQueryVariant(part.trim());
+      const phrase = part.trim();
+      if (!phrase) {
+        continue;
+      }
+
+      push(phrase);
+      const variant = toProfessionFieldQueryVariant(phrase);
       if (variant) {
         push(variant);
       }

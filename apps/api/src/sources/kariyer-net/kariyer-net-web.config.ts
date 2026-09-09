@@ -6,6 +6,7 @@ export const KARIYER_NET_DEFAULT_DELAY_MS = 750;
 export const KARIYER_NET_MAX_RETRIES = 1;
 export const KARIYER_NET_MAX_JOBS_PER_SEARCH = 25;
 export const KARIYER_NET_DEFAULT_MAX_PAGES = 10;
+export const KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS = 8;
 export const KARIYER_NET_USER_AGENT =
   'JobRadar/1.0 (personal private job digest; low-volume)';
 
@@ -16,6 +17,7 @@ export type KariyerNetWebConfig = {
   maxRetries: number;
   maxJobsPerSearch: number;
   maxPages: number;
+  maxDetailRequests: number;
   userAgent: string;
   debugHtml: boolean;
 };
@@ -38,6 +40,13 @@ export function readKariyerNetWebConfig(env: {
     maxPages: Math.min(
       20,
       readPositiveInt(env.get('KARIYER_NET_MAX_PAGES'), KARIYER_NET_DEFAULT_MAX_PAGES),
+    ),
+    maxDetailRequests: Math.min(
+      25,
+      readPositiveInt(
+        env.get('KARIYER_NET_MAX_DETAIL_REQUESTS'),
+        KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS,
+      ),
     ),
     userAgent: KARIYER_NET_USER_AGENT,
     debugHtml: isKariyerNetDebugHtmlEnabled(env.get('KARIYER_NET_DEBUG_HTML')),

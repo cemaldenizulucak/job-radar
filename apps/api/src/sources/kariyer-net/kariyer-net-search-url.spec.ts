@@ -1,6 +1,20 @@
 import { buildKariyerNetSearchUrl, toLocationSlug } from './kariyer-net-search-url.js';
 
 describe('buildKariyerNetSearchUrl', () => {
+  it('keeps a profession phrase intact on kw', () => {
+    const parsed = new URL(
+      buildKariyerNetSearchUrl({
+        keywords: ['Gıda Mühendisi'],
+        locations: ['Manisa'],
+        workTypes: [],
+        experienceLevels: [],
+      }),
+    );
+
+    expect(parsed.pathname).toBe('/is-ilanlari/manisa');
+    expect(parsed.searchParams.get('kw')).toBe('Gıda Mühendisi');
+  });
+
   it('puts keywords on kw and omits work type and experience', () => {
     const parsed = new URL(
       buildKariyerNetSearchUrl({

@@ -193,26 +193,24 @@ export function deriveSavedSearchLocations(input: {
   return sanitizeLocationList(input.locations);
 }
 
-/** Broad adapter location so LinkedIn/Kariyer are not limited to the first city. */
+/**
+ * Selected cities are fetch alternatives. Discovery fans them out because
+ * Kariyer.net and LinkedIn public search accept one location at a time.
+ */
 export function adapterLocationsForFetch(
   search: StructuredSearchLocation,
 ): string[] {
+  const cities = coalesceSubdivisionNames(search);
+  if (cities.length > 0) {
+    return cities;
+  }
+
   const country = sanitizeLocationToken(search.countryName);
   if (country) {
     return [country];
   }
 
-  const cities = coalesceSubdivisionNames(search);
-  if (cities.length === 1) {
-    return [cities[0] ?? ''].filter((value) => value.length > 0);
-  }
-
-  if (cities.length > 1) {
-    return [];
-  }
-
-  const legacy = sanitizeLocationList(search.locations);
-  return legacy.length > 0 ? [legacy[0] ?? ''] : [];
+  return uniqueCityTokens(sanitizeLocationList(search.locations));
 }
 
 export function resolveSavedSearchLocation(
@@ -496,6 +494,28 @@ function resolveLegacySearchLocations(
   locations: readonly string[],
 ): ResolvedSearchLocation {
   return resolveEffectiveSearchLocation(locations, null);
+}
+
+function uniqueCityTokens(locations: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const cities: string[] = [];
+
+  for (const location of locations) {
+    const city = sanitizeLocationToken(location.split(',')[0] ?? location);
+    if (!city) {
+      continue;
+    }
+
+    const key = normalizeForSearch(city);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    cities.push(city);
+  }
+
+  return cities;
 }
 
 function uniqueLocations(values: readonly (string | null | undefined)[]): string[] {

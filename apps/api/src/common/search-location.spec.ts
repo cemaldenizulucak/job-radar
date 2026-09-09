@@ -277,13 +277,13 @@ describe('multi-city saved search location', () => {
     expect(jobLocationMatchResult('Berlin', resolved)).toBe('fail');
   });
 
-  it('sends the country, not the first city, to job-source adapters', () => {
+  it('sends selected cities so adapters can query each alternative', () => {
     expect(
       adapterLocationsForFetch({
         locations: ['İzmir', 'İzmir, Türkiye', 'İstanbul', 'İstanbul, Türkiye'],
         countryName: 'Türkiye',
         subdivisionNames: ['İzmir', 'İstanbul'],
       }),
-    ).toEqual(['Türkiye']);
+    ).toEqual(['İzmir', 'İstanbul']);
   });
 });

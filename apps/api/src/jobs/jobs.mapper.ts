@@ -6,7 +6,7 @@ export const JOB_FEED_SELECT =
   'id, title, company, description, location, work_model, experience_level, technologies, source, source_job_id, original_url, published_at, discovered_at, duplicate_group_id, created_at';
 
 export const MATCHABLE_JOB_SELECT =
-  'id, title, company, description, location, work_model, experience_level, technologies, source';
+  'id, title, company, description, location, work_model, experience_level, technologies, source, source_job_id, original_url, is_active, published_at';
 
 export type JobFeedRow = {
   item: JobListItem;
@@ -85,6 +85,10 @@ export function mapMatchableJobRow(value: unknown): MatchableJob | null {
     workModel: readWorkModel(value, 'work_model'),
     experienceLevel: readString(value, 'experience_level'),
     technologies: readStringArray(value, 'technologies'),
+    sourceJobId: readString(value, 'source_job_id'),
+    canonicalUrl: readString(value, 'original_url'),
+    isActive: value.is_active !== false,
+    publishedAt: readString(value, 'published_at'),
   };
 }
 

@@ -25,6 +25,7 @@ import {
 } from '../searches/searches.mapper.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { decideListingWrite } from './job-identity.js';
+import { mergeNormalizedJobUpdate } from './listing-merge.js';
 import { attachFavoriteState } from './attach-favorite-state.js';
 import { applyJobNewness, resolveJobNewWindowHours } from './job-newness.js';
 import { clampJobFeedLimit, JOB_FEED_MAX_LIMIT } from './job-feed-visibility.js';
@@ -923,16 +924,20 @@ export class JobsService {
   }
 
   async upsertNormalized(job: NormalizedJob): Promise<JobUpsertResult> {
-    const existingId = await this.findIdBySourceIdentity(
+    const existing = await this.findExistingListing(
       job.sourceId,
       job.sourceJobId,
     );
-    const decision = decideListingWrite(existingId);
+    const decision = decideListingWrite(existing?.id ?? null);
     const now = new Date().toISOString();
 
-    if (decision === 'update' && existingId) {
-      await this.updateExisting(existingId, job, now);
-      return { id: existingId, inserted: false };
+    if (decision === 'update' && existing) {
+      await this.updateExisting(
+        existing.id,
+        mergeNormalizedJobUpdate(job, existing),
+        now,
+      );
+      return { id: existing.id, inserted: false };
     }
 
     const id = randomUUID();
@@ -1108,14 +1113,18 @@ export class JobsService {
     return Array.isArray(data) ? data.length : 0;
   }
 
-  private async findIdBySourceIdentity(
+  private async findExistingListing(
     sourceId: SourceId,
     sourceJobId: string,
-  ): Promise<string | null> {
+  ): Promise<{
+    id: string;
+    description: string | null;
+    publishedAt: string | null;
+  } | null> {
     const { data, error } = await this.supabase
       .getClient()
       .from('jobs')
-      .select('id')
+      .select('id, description, published_at')
       .eq('source', sourceId)
       .eq('source_job_id', sourceJobId)
       .maybeSingle();
@@ -1126,7 +1135,21 @@ export class JobsService {
     }
 
     const id = isRecord(data) ? data.id : null;
-    return typeof id === 'string' && id.length > 0 ? id : null;
+    if (typeof id !== 'string' || id.length === 0) {
+      return null;
+    }
+
+    return {
+      id,
+      description:
+        isRecord(data) && typeof data.description === 'string'
+          ? data.description
+          : null,
+      publishedAt:
+        isRecord(data) && typeof data.published_at === 'string'
+          ? data.published_at
+          : null,
+    };
   }
 
   private async insertListing(
