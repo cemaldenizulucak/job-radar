@@ -12,6 +12,7 @@ import type { JobSearchMatch } from '../matching/matching.types.js';
 import { SearchesService } from '../searches/searches.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { buildDiscoveryNotificationDrafts } from '../notifications/discovery-notification.js';
+import { TelegramNotificationService } from '../notifications/telegram-notification.service.js';
 import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import type { JobSourceAdapter, SourceSearchQuery } from '../sources/job-source.adapter.js';
@@ -461,6 +462,7 @@ function createDiscovery(
   profiles = new FakeProfilesService(),
   config: Record<string, string | undefined> = {},
   runState = new MemoryDiscoveryRunStateStore(),
+  telegram?: TelegramNotificationService,
 ): {
   discovery: DiscoveryService;
   jobs: FakeJobsService;
@@ -505,6 +507,7 @@ function createDiscovery(
     { get: (key: string) => config[key] } as never,
     locations,
     runState,
+    telegram,
   );
 
   return { discovery, jobs, groups, notifications, searches: searchesService, runState };
@@ -602,6 +605,30 @@ describe('DiscoveryService', () => {
       notificationsCreated: 0,
     });
     expect(jobs.listings.size).toBe(6);
+  });
+
+  it('does not fail discovery when Telegram delivery throws', async () => {
+    const notifyNewMatches = vi.fn(async () => {
+      throw new Error('telegram unavailable');
+    });
+    const { discovery, jobs } = createDiscovery(
+      [search()],
+      undefined,
+      new FakeJobsService(),
+      new FakeDuplicateGroupsService(),
+      new FakeNotificationsService(),
+      new FakeProfilesService(),
+      {},
+      new MemoryDiscoveryRunStateStore(),
+      { notifyNewMatches } as unknown as TelegramNotificationService,
+    );
+
+    await expect(discovery.run()).resolves.toMatchObject({
+      jobsInserted: 6,
+      matchesCreated: 4,
+    });
+    expect(jobs.listings.size).toBe(6);
+    expect(notifyNewMatches).toHaveBeenCalled();
   });
 
   it('isolates a failing adapter so the other source still stores jobs', async () => {

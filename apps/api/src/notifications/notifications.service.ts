@@ -15,6 +15,9 @@ import type {
   NotificationRecord,
 } from './notifications.types.js';
 
+// Nest writes only the current columns. Legacy `body` / `read_at` stay on the
+// database when present and are filled by docs/TELEGRAM_NOTIFICATIONS.sql
+// triggers. PostgREST errors if this payload names a column the table lacks.
 const NOTIFICATION_SELECT =
   'id, user_id, title, message, type, is_read, created_at, data';
 

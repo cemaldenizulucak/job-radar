@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -31,6 +32,7 @@ import {
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { selectVisibleNewMatches } from '../notifications/discovery-notification.js';
 import type { PersistedJobForNotification } from '../notifications/notifications.types.js';
+import { TelegramNotificationService } from '../notifications/telegram-notification.service.js';
 import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { SearchesService } from '../searches/searches.service.js';
@@ -137,6 +139,8 @@ export class DiscoveryService {
     private readonly locationsService: LocationsService,
     @Inject(DiscoveryRunStateStore)
     private readonly runState: DiscoveryRunStateStore,
+    @Optional()
+    private readonly telegramNotifications?: TelegramNotificationService,
   ) {
     void this.profilesService;
   }
@@ -617,7 +621,7 @@ export class DiscoveryService {
         this.matchingService.evaluateMatch(job, search),
       verifiedKeys,
     });
-    await this.jobsService.reconcileUnverifiedSourceCandidates({
+    const unverifiedCreated = await this.jobsService.reconcileUnverifiedSourceCandidates({
       searchIds: searches.map((search) => search.id),
       candidates: unverified,
       describedJobIds: new Set(
@@ -640,6 +644,11 @@ export class DiscoveryService {
       jobsForNotification,
       this.maxAgeDays(),
     );
+    const telegramVisible = selectVisibleNewMatches(
+      uniqueMatches([...createdMatches, ...unverifiedCreated]),
+      jobsForNotification,
+      this.maxAgeDays(),
+    );
     const matchesCreated = createdMatches.length;
     const notifiedJobCount = visible.jobs.length;
 
@@ -655,6 +664,11 @@ export class DiscoveryService {
     const notificationsCreated = await this.createDiscoveryNotifications(
       visible.matches,
       visible.jobs,
+      searches,
+    );
+    await this.sendTelegramNotifications(
+      telegramVisible.matches,
+      matchableJobs,
       searches,
     );
 
@@ -773,6 +787,39 @@ export class DiscoveryService {
         error: error instanceof Error ? error.message : 'unknown',
       });
       return 0;
+    }
+  }
+
+  private async sendTelegramNotifications(
+    matches: readonly JobSearchMatch[],
+    jobs: readonly MatchableJob[],
+    searches: readonly SavedSearch[],
+  ): Promise<void> {
+    if (!this.telegramNotifications || matches.length === 0) {
+      return;
+    }
+
+    try {
+      await this.telegramNotifications.notifyNewMatches({
+        matches,
+        jobs: jobs.map((job) => ({
+          id: job.id,
+          sourceId: job.sourceId,
+          title: job.title,
+          companyName: job.companyName,
+          location: job.location,
+          canonicalUrl: job.canonicalUrl ?? null,
+        })),
+        searches: searches.map((search) => ({
+          id: search.id,
+          name: search.name,
+        })),
+      });
+    } catch (error) {
+      this.logger.warn({
+        message: 'Telegram notifications failed; discovery continues',
+        error: error instanceof Error ? error.message : 'unknown',
+      });
     }
   }
 
