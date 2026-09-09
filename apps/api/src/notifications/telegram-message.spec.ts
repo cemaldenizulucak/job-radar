@@ -29,7 +29,7 @@ function input(
         canonicalUrl: 'https://www.kariyer.net/is-ilani/job-1',
       },
     ],
-    searches: [{ id: 'search-a', name: 'Frontend' }],
+    searches: [{ id: 'search-a', name: 'Frontend', userId: 'user-1' }],
     ...overrides,
   };
 }
@@ -37,6 +37,7 @@ function input(
 function item(overrides: Partial<TelegramJobItem> = {}): TelegramJobItem {
   return {
     jobId: 'job-1',
+    userId: 'user-1',
     title: 'Frontend Developer',
     companyName: 'ACME',
     location: 'İstanbul',
@@ -111,8 +112,8 @@ describe('telegram message formatting', () => {
           },
         ],
         searches: [
-          { id: 'search-a', name: 'Frontend' },
-          { id: 'search-b', name: 'Angular' },
+          { id: 'search-a', name: 'Frontend', userId: 'user-1' },
+          { id: 'search-b', name: 'Angular', userId: 'user-1' },
         ],
       }),
     );
@@ -174,5 +175,36 @@ describe('telegram message formatting', () => {
 
     expect(message?.text).not.toContain('İlanı aç:');
     expect(message?.text).not.toContain('javascript:');
+  });
+
+  it('keeps the same listing separate when two users matched it', () => {
+    const grouped = groupJobsForTelegram(
+      input({
+        matches: [
+          {
+            jobId: 'job-1',
+            savedSearchId: 'search-a',
+            matchStatus: MATCH_STATUS.verified,
+          },
+          {
+            jobId: 'job-1',
+            savedSearchId: 'search-b',
+            matchStatus: MATCH_STATUS.verified,
+          },
+        ],
+        searches: [
+          { id: 'search-a', name: 'Frontend', userId: 'user-1' },
+          { id: 'search-b', name: 'Backend', userId: 'user-2' },
+        ],
+      }),
+    );
+
+    expect(grouped).toHaveLength(2);
+    expect(grouped.find((row) => row.userId === 'user-1')?.searchNames).toEqual([
+      'Frontend',
+    ]);
+    expect(grouped.find((row) => row.userId === 'user-2')?.searchNames).toEqual([
+      'Backend',
+    ]);
   });
 });

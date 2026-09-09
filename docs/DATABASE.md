@@ -296,6 +296,10 @@ Favoriting does **not** automatically insert an application row. The two feature
 
 Digest-per-run (one notification summarizing new matches) is the MVP shape, not one notification per listing.
 
+### 4.10b Telegram linking
+
+See [TELEGRAM_MULTI_USER.sql](./TELEGRAM_MULTI_USER.sql). Each user may bind one private Telegram chat. Link codes are stored as SHA-256 hashes only. `telegram_job_notifications` is unique on `(user_id, job_id)` so the same listing can notify two users and must not notify one user twice.
+
 ### 4.11 `device_tokens`
 
 | Column | Type | Notes |
@@ -385,7 +389,8 @@ A `sources` table is optional later (feature flags, last successful fetch). Not 
 
 Even if Postgres RLS is added later, NestJS must enforce:
 
-- A user CRUD-owns only their `saved_searches`, `job_favorites`, `job_applications`, `notifications`, `device_tokens`, `profiles`.
+- A user CRUD-owns only their `saved_searches`, `job_favorites`, `job_applications`, `notifications`, `device_tokens`, `profiles`, and Telegram connection.
+- Raw `telegram_chat_id` and link-code hashes are not returned on public GETs.
 - Job feed queries **must** join through that user’s searches (or favorites/applications).
 - `raw_payload` is never exposed on public GETs.
 - `discovery_runs` are admin/internal only.

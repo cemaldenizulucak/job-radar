@@ -12,6 +12,7 @@ export type TelegramJobFields = {
 
 export type TelegramJobItem = {
   jobId: string;
+  userId: string;
   title: string;
   companyName: string;
   location: string | null;
@@ -24,13 +25,14 @@ export type TelegramJobItem = {
 export type TelegramNotifyInput = {
   matches: readonly { jobId: string; savedSearchId: string; matchStatus?: MatchStatus }[];
   jobs: readonly TelegramJobFields[];
-  searches: readonly { id: string; name: string }[];
+  searches: readonly { id: string; name: string; userId: string }[];
 };
 
 export type TelegramLedgerStatus = 'pending' | 'sending' | 'sent';
 
 export type TelegramLedgerRow = {
   id: string;
+  userId: string;
   jobId: string;
   status: TelegramLedgerStatus;
   payload: TelegramJobItem;

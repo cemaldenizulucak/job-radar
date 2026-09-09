@@ -202,3 +202,6 @@ grant select, insert, update, delete
 
 comment on table public.telegram_job_notifications is
   'One row per job listing for Telegram send-once. pending/sending can retry; sent is final.';
+
+-- Per-user linking, hashed link codes, update_id dedupe, and (user_id, job_id)
+-- uniqueness are in TELEGRAM_MULTI_USER.sql. Do not drop existing ledger rows.

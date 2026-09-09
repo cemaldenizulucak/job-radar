@@ -1,0 +1,20 @@
+export const telegramCopy = {
+  sectionTitle: 'Telegram Bildirimleri',
+  disconnectedHint: 'Kayıtlı aramalarına uyan yeni ilanlar Telegram’a gönderilir.',
+  connect: 'Telegram’ı bağla',
+  connecting: 'Kod oluşturuluyor...',
+  instruction: 'Botu aç ve /link KOD komutunu gönder.',
+  copyCode: 'Kodu kopyala',
+  copied: 'Kod kopyalandı.',
+  openBot: 'Botu aç',
+  connected: 'Telegram bağlı',
+  disconnect: 'Bağlantıyı kaldır',
+  disconnectTitle: 'Telegram bağlantısı kaldırılsın mı?',
+  disconnectMessage: 'Yeni ilanlar bu sohbete gönderilmez. İlan, favori ve arama verilerin silinmez.',
+  codeExpired: 'Kodun süresi doldu. Yeni bir kod oluştur.',
+  expiresIn: (minutes: number) =>
+    minutes === 1 ? 'Kod 1 dakika geçerli.' : `Kod ${minutes} dakika geçerli.`,
+  loadError: 'Telegram durumu yüklenemedi.',
+  createError: 'Bağlantı kodu oluşturulamadı.',
+  disconnectError: 'Bağlantı kaldırılamadı.',
+} as const;

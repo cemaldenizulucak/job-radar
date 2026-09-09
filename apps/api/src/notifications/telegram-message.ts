@@ -50,22 +50,24 @@ export function groupJobsForTelegram(
 ): TelegramJobItem[] {
   const jobsById = new Map(input.jobs.map((job) => [job.id, job]));
   const searchesById = new Map(
-    input.searches.map((search) => [search.id, search.name]),
+    input.searches.map((search) => [search.id, search]),
   );
   const grouped = new Map<string, TelegramJobItem>();
 
   for (const match of input.matches) {
     const job = jobsById.get(match.jobId);
-    if (!job) {
+    const search = searchesById.get(match.savedSearchId);
+    if (!job || !search?.userId) {
       continue;
     }
 
     const status = parseMatchStatus(match.matchStatus);
-    const searchName = sanitizeField(searchesById.get(match.savedSearchId) ?? '');
-    const existing = grouped.get(job.id);
+    const searchName = sanitizeField(search.name);
+    const groupKey = `${search.userId}:${job.id}`;
+    const existing = grouped.get(groupKey);
 
     if (!existing) {
-      grouped.set(job.id, toTelegramJobItem(job, status, searchName));
+      grouped.set(groupKey, toTelegramJobItem(job, search.userId, status, searchName));
       continue;
     }
 
@@ -133,11 +135,13 @@ export function splitTelegramMessages(
 
 function toTelegramJobItem(
   job: TelegramJobFields,
+  userId: string,
   status: TelegramJobItem['matchStatus'],
   searchName: string,
 ): TelegramJobItem {
   return {
     jobId: job.id,
+    userId,
     title: sanitizeField(job.title),
     companyName: sanitizeField(job.companyName),
     location: sanitizeField(job.location ?? '') || null,

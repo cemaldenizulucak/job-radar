@@ -813,6 +813,7 @@ export class DiscoveryService {
         searches: searches.map((search) => ({
           id: search.id,
           name: search.name,
+          userId: search.userId,
         })),
       });
     } catch (error) {

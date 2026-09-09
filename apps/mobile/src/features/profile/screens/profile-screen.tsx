@@ -14,6 +14,8 @@ import { useTheme } from '@/hooks/use-theme';
 
 import { ConfirmDialog } from '@/features/searches/components/confirm-dialog';
 
+import { TelegramSettingsSection } from '@/features/telegram/components/telegram-settings-section';
+
 import { profileCopy } from '../copy';
 import { LocationFields } from '../components/location-fields';
 import {
@@ -258,6 +260,8 @@ export function ProfileScreen() {
           />
         </View>
       </SectionCard>
+
+      <TelegramSettingsSection enabled={Boolean(user)} />
 
       <SectionCard title={profileCopy.scanFrequency}>
         <ThemedText>{profileCopy.scanFrequencyValue}</ThemedText>

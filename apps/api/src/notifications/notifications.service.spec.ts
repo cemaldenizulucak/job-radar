@@ -152,8 +152,9 @@ describe('NotificationsService', () => {
         }),
       }),
     );
-    expect(insert.mock.calls[0]?.[0]).not.toHaveProperty('body');
-    expect(insert.mock.calls[0]?.[0]).not.toHaveProperty('read_at');
+    const inserted = insert.mock.calls.at(0)?.at(0);
+    expect(inserted).not.toHaveProperty('body');
+    expect(inserted).not.toHaveProperty('read_at');
     expect(result).toMatchObject({
       id: 'n-test',
       userId: 'user-1',
@@ -226,7 +227,7 @@ describe('NotificationsService', () => {
     const result = await service.markRead('n-1', 'user-1');
 
     expect(update).toHaveBeenCalledWith({ is_read: true });
-    expect(update.mock.calls[0]?.[0]).not.toHaveProperty('read_at');
+    expect(update.mock.calls.at(0)?.at(0)).not.toHaveProperty('read_at');
     expect(eqId).toHaveBeenCalledWith('id', 'n-1');
     expect(eqUser).toHaveBeenCalledWith('user_id', 'user-1');
     expect(result.isRead).toBe(true);

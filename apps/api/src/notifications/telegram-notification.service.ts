@@ -11,6 +11,20 @@ import { ConfigService } from '@nestjs/config';
 
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
 import {
+  resolveTelegramChatIds,
+  type TelegramChatLookupClient,
+} from '../telegram/telegram-connection.service.js';
+import {
+  readOptionalTelegramEnv,
+} from '../telegram/telegram-env.js';
+import {
+  defaultTelegramHttpPost,
+  TELEGRAM_HTTP_POST,
+  TELEGRAM_REQUEST_TIMEOUT_MS,
+  telegramSendMessageUrl,
+  type TelegramHttpPost,
+} from '../telegram/telegram-http.js';
+import {
   groupJobsForTelegram,
   isSafeHttpUrl,
   splitTelegramMessages,
@@ -23,22 +37,12 @@ import type {
   TelegramNotifyInput,
 } from './telegram-types.js';
 
-export const TELEGRAM_HTTP_POST = 'TELEGRAM_HTTP_POST';
+export { TELEGRAM_HTTP_POST, type TelegramHttpPost };
 
-export type TelegramHttpPost = (
-  url: string,
-  init: RequestInit,
-) => Promise<Response>;
-
-const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 export const TELEGRAM_CLAIM_STALE_MS = 10 * 60 * 1000;
-// One TELEGRAM_CHAT_ID for the whole API: every user search notifies the same
-// chat. Deduping by job_id is enough — the same listing matching several
-// searches (or several users) must produce one Telegram message. Per-user
-// inbox rows stay on `notifications`.
 const TELEGRAM_LEDGER_TABLE = 'telegram_job_notifications';
 const TELEGRAM_LEDGER_SELECT =
-  'id, job_id, status, payload, claimed_at, sent_at';
+  'id, user_id, job_id, status, payload, claimed_at, sent_at';
 
 type SafeSupabaseError = {
   message: string;
@@ -51,7 +55,8 @@ type SafeSupabaseError = {
 export class TelegramNotificationService implements OnModuleInit {
   private readonly logger = new Logger(TelegramNotificationService.name);
   readonly #token: string | null;
-  readonly #chatId: string | null;
+  readonly #legacyChatId: string | null;
+  readonly #legacyUserId: string | null;
   private readonly httpPost: TelegramHttpPost;
 
   constructor(
@@ -61,24 +66,33 @@ export class TelegramNotificationService implements OnModuleInit {
     @Inject(TELEGRAM_HTTP_POST)
     httpPost?: TelegramHttpPost,
   ) {
-    this.#token = readOptionalEnv(configService, 'TELEGRAM_BOT_TOKEN');
-    this.#chatId = readOptionalEnv(configService, 'TELEGRAM_CHAT_ID');
-    this.httpPost = httpPost ?? defaultHttpPost;
+    this.#token = readOptionalTelegramEnv(configService, 'TELEGRAM_BOT_TOKEN');
+    this.#legacyChatId = readOptionalTelegramEnv(configService, 'TELEGRAM_CHAT_ID');
+    this.#legacyUserId = readOptionalTelegramEnv(
+      configService,
+      'TELEGRAM_LEGACY_USER_ID',
+    );
+    this.httpPost = httpPost ?? defaultTelegramHttpPost;
   }
 
   onModuleInit(): void {
     if (this.isEnabled()) {
       this.logger.log('Telegram notifications enabled');
+      if (this.#legacyChatId && !this.#legacyUserId) {
+        this.logger.warn(
+          'TELEGRAM_CHAT_ID is ignored because TELEGRAM_LEGACY_USER_ID is not set',
+        );
+      }
       return;
     }
 
     this.logger.warn(
-      'Telegram notifications disabled because TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set',
+      'Telegram notifications disabled because TELEGRAM_BOT_TOKEN is not set',
     );
   }
 
   isEnabled(): boolean {
-    return this.#token !== null && this.#chatId !== null;
+    return this.#token !== null;
   }
 
   async notifyNewMatches(input: TelegramNotifyInput): Promise<void> {
@@ -88,7 +102,12 @@ export class TelegramNotificationService implements OnModuleInit {
 
     try {
       const items = groupJobsForTelegram(input);
+      const chatIds = await this.resolveChatIds(items.map((item) => item.userId));
+
       for (const item of items) {
+        if (!chatIds.has(item.userId)) {
+          continue;
+        }
         await this.insertPending(item);
       }
 
@@ -97,19 +116,28 @@ export class TelegramNotificationService implements OnModuleInit {
         return;
       }
 
-      const messages = splitTelegramMessages(claimed);
-      for (const message of messages) {
-        const sent = await this.sendPlainText(message.text);
-        if (sent) {
-          await this.markSent(message.jobIds);
-        } else {
-          await this.revertToPending(message.jobIds);
+      const byUser = groupClaimedByUser(claimed, chatIds);
+      for (const [userId, userItems] of byUser) {
+        const chatId = chatIds.get(userId);
+        if (!chatId) {
+          await this.revertToPending(userId, userItems.map((item) => item.jobId));
+          continue;
+        }
+
+        const messages = splitTelegramMessages(userItems);
+        for (const message of messages) {
+          const sent = await this.sendPlainText(chatId, message.text);
+          if (sent) {
+            await this.markSent(userId, message.jobIds);
+          } else {
+            await this.revertToPending(userId, message.jobIds);
+          }
         }
       }
     } catch (error) {
       this.logger.warn({
         message: 'Telegram notification failed; discovery continues',
-        error: safeErrorMessage(error, this.#token, this.#chatId),
+        error: safeErrorMessage(error, this.#token, this.#legacyChatId),
       });
     }
   }
@@ -122,11 +150,21 @@ export class TelegramNotificationService implements OnModuleInit {
     return `TelegramNotificationService enabled=${this.isEnabled()}`;
   }
 
+  private async resolveChatIds(userIds: readonly string[]): Promise<Map<string, string>> {
+    return resolveTelegramChatIds(
+      this.supabase.getClient() as unknown as TelegramChatLookupClient,
+      userIds,
+      { userId: this.#legacyUserId, chatId: this.#legacyChatId },
+      (error) => this.logSupabaseError(error, 'Failed to load Telegram connections'),
+    );
+  }
+
   private async insertPending(item: TelegramJobItem): Promise<void> {
     const { error } = await this.supabase
       .getClient()
       .from(TELEGRAM_LEDGER_TABLE)
       .insert({
+        user_id: item.userId,
         job_id: item.jobId,
         status: 'pending',
         payload: item,
@@ -204,6 +242,7 @@ export class TelegramNotificationService implements OnModuleInit {
         status: 'sending',
         claimed_at: claimedAt,
       })
+      .eq('user_id', row.userId)
       .eq('job_id', row.jobId)
       .eq('status', row.status);
 
@@ -223,7 +262,7 @@ export class TelegramNotificationService implements OnModuleInit {
     return mapLedgerRow(data) !== null;
   }
 
-  private async markSent(jobIds: readonly string[]): Promise<void> {
+  private async markSent(userId: string, jobIds: readonly string[]): Promise<void> {
     if (jobIds.length === 0) {
       return;
     }
@@ -235,6 +274,7 @@ export class TelegramNotificationService implements OnModuleInit {
         status: 'sent',
         sent_at: new Date().toISOString(),
       })
+      .eq('user_id', userId)
       .in('job_id', [...jobIds])
       .eq('status', 'sending');
 
@@ -243,7 +283,10 @@ export class TelegramNotificationService implements OnModuleInit {
     }
   }
 
-  private async revertToPending(jobIds: readonly string[]): Promise<void> {
+  private async revertToPending(
+    userId: string,
+    jobIds: readonly string[],
+  ): Promise<void> {
     if (jobIds.length === 0) {
       return;
     }
@@ -255,6 +298,7 @@ export class TelegramNotificationService implements OnModuleInit {
         status: 'pending',
         claimed_at: null,
       })
+      .eq('user_id', userId)
       .in('job_id', [...jobIds])
       .eq('status', 'sending');
 
@@ -263,10 +307,9 @@ export class TelegramNotificationService implements OnModuleInit {
     }
   }
 
-  private async sendPlainText(text: string): Promise<boolean> {
+  private async sendPlainText(chatId: string, text: string): Promise<boolean> {
     const token = this.#token;
-    const chatId = this.#chatId;
-    if (!token || !chatId) {
+    if (!token) {
       return false;
     }
 
@@ -310,32 +353,27 @@ export class TelegramNotificationService implements OnModuleInit {
       error: redactTelegramSecrets(
         error.message,
         this.#token,
-        this.#chatId,
+        this.#legacyChatId,
       ),
       code: error.code,
     });
   }
 }
 
-function readOptionalEnv(
-  configService: ConfigService,
-  name: 'TELEGRAM_BOT_TOKEN' | 'TELEGRAM_CHAT_ID',
-): string | null {
-  const value = configService.get<string>(name);
-  if (typeof value !== 'string') {
-    return null;
+function groupClaimedByUser(
+  items: readonly TelegramJobItem[],
+  chatIds: ReadonlyMap<string, string>,
+): Map<string, TelegramJobItem[]> {
+  const grouped = new Map<string, TelegramJobItem[]>();
+  for (const item of items) {
+    if (!chatIds.has(item.userId)) {
+      continue;
+    }
+    const list = grouped.get(item.userId) ?? [];
+    list.push(item);
+    grouped.set(item.userId, list);
   }
-
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function defaultHttpPost(url: string, init: RequestInit): Promise<Response> {
-  return fetch(url, init);
-}
-
-function telegramSendMessageUrl(token: string): string {
-  return `https://api.telegram.org/bot${token}/sendMessage`;
+  return grouped;
 }
 
 function isUniqueViolation(error: SafeSupabaseError): boolean {
@@ -364,15 +402,17 @@ function mapLedgerRow(value: unknown): TelegramLedgerRow | null {
   }
 
   const id = readString(value, 'id');
+  const userId = readString(value, 'user_id');
   const jobId = readString(value, 'job_id');
   const status = parseLedgerStatus(value.status);
   const payload = mapPayload(value.payload);
-  if (!id || !jobId || !status || !payload) {
+  if (!id || !userId || !jobId || !status || !payload) {
     return null;
   }
 
   return {
     id,
+    userId,
     jobId,
     status,
     payload,
@@ -387,12 +427,14 @@ function mapPayload(value: unknown): TelegramJobItem | null {
   }
 
   const jobId = readString(value, 'jobId');
+  const userId = readString(value, 'userId');
   const title = readString(value, 'title');
   const companyName = readString(value, 'companyName') ?? '';
   const sourceId = value.sourceId;
   const matchStatus = value.matchStatus;
   if (
     !jobId ||
+    !userId ||
     !title ||
     (sourceId !== 'linkedin' && sourceId !== 'kariyer_net') ||
     (matchStatus !== 'verified' &&
@@ -409,6 +451,7 @@ function mapPayload(value: unknown): TelegramJobItem | null {
 
   return {
     jobId,
+    userId,
     title,
     companyName,
     location: readString(value, 'location'),

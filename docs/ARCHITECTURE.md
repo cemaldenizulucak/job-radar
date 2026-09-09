@@ -180,7 +180,8 @@ NestJS modules are feature-based. Each module owns its HTTP controllers (if publ
 | `JobsModule` | User-visible job feed, source/search tab counts, job detail (including matching searches and related duplicates). Does **not** delete listings because they are duplicates. |
 | `FavoritesModule` | Per-user favorites, independent of the feed. |
 | `ApplicationsModule` | Per-user application status. Status is never stored on `job_listings`. |
-| `NotificationsModule` | In-app notification list, read state, device token registration for push. |
+| `NotificationsModule` | In-app notification list, read state, device token registration for push. Per-user Telegram job alerts after discovery. |
+| `TelegramModule` | User Telegram linking (`/link` codes), connection status, disconnect, and the bot webhook. |
 | `HealthModule` | Liveness/readiness for hosting. |
 
 ### 5.2 Internal / pipeline modules (no public source-scraping endpoints)

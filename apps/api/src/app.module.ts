@@ -18,6 +18,7 @@ import { ProfilesModule } from './profiles/profiles.module.js';
 import { SchedulerModule } from './scheduler/scheduler.module.js';
 import { SearchesModule } from './searches/searches.module.js';
 import { SourcesModule } from './sources/sources.module.js';
+import { TelegramModule } from './telegram/telegram.module.js';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { SourcesModule } from './sources/sources.module.js';
     DuplicatesModule,
     DiscoveryModule,
     NotificationsModule,
+    TelegramModule,
     PushTokensModule,
     FavoritesModule,
     ApplicationsModule,

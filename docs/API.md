@@ -41,6 +41,7 @@ Protected (JWT required). The user is taken from the token; client `userId` is i
 | GET/PATCH | `/v1/notifications`, `/v1/notifications/:id/read` |
 | GET/PATCH | `/v1/profiles` | `country` and `city` are nullable. PATCH accepts any of `notificationsEnabled`, `country`, `city`. Saved search responses include `effectiveLocation` and `locationSource` (`search` / `profile` / `none`) resolved from the stored search location plus the authenticated user's profile. |
 | POST/DELETE | `/v1/push-tokens` |
+| POST/GET/DELETE | `/v1/telegram/link-code`, `/v1/telegram/status`, `/v1/telegram/connection` | JWT user only. `POST /v1/telegram/link-code` returns a one-time `JR-` code and `expiresAt` (10 minutes). `GET /v1/telegram/status` returns `connected`, masked display name, `connectedAt`, and `botUsername` — never the raw chat ID. |
 | GET/POST/PATCH/DELETE | `/v1/searches`, `/v1/searches/:id`, `/v1/searches/:id/toggle` | Search writes accept optional `countryCode`, `countryName`, `subdivisionCode`, `subdivisionName`. `locations[]` stays for older rows. |
 
 Temporary development helpers (not used by mobile). Disabled unless `ENABLE_DEV_ENDPOINTS=true`. When disabled they return **404** and must stay off in production.
@@ -49,6 +50,18 @@ Temporary development helpers (not used by mobile). Disabled unless `ENABLE_DEV_
 - `POST /v1/discovery/rematch-matches`
 - `POST /v1/scheduler/run`
 - `POST /v1/notifications/test`
+
+Telegram webhook (bot secret, not JWT). Returns **401** when `X-Telegram-Bot-Api-Secret-Token` is missing or wrong. Do not register this URL from API startup.
+
+- `POST /v1/telegram/webhook`
+
+Webhook setup (run separately, never on boot):
+
+```text
+npm run telegram:set-webhook --prefix apps/api
+```
+
+Requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_WEBHOOK_URL` (example `https://api.example.com/v1/telegram/webhook`). SQL: [TELEGRAM_MULTI_USER.sql](./TELEGRAM_MULTI_USER.sql).
 
 Job feed fields:
 
@@ -87,6 +100,7 @@ The remainder of this document is the original contract proposal. Live paths in 
 | Favorites | `/v1/favorites` | FavoritesModule |
 | Applications | `/v1/applications` | ApplicationsModule |
 | Notifications | `/v1/notifications` | NotificationsModule |
+| Telegram link + webhook | `/v1/telegram` | TelegramModule |
 | Push tokens | `/v1/push-tokens` | PushTokensModule |
 | Profiles | `/v1/profiles` | ProfilesModule |
 | Temporary discovery | `/v1/discovery` | DiscoveryModule (`ENABLE_DEV_ENDPOINTS`) |
