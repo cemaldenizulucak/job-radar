@@ -1,4 +1,8 @@
 import type { SourceId, WorkModel } from '../common/domain.types.js';
+import type {
+  DetailFetchErrorCategory,
+  SourceDetailFetchOutcome,
+} from './detail-fetch.types.js';
 
 export type SourceAdapterCapabilities = {
   supportsKeywordSearch: boolean;
@@ -50,7 +54,12 @@ export type SourceDescriptionEnrichment = {
   jobs: readonly SourceJobRaw[];
   detailsFetched: number;
   detailsFailed: number;
+  detailsRequested?: number;
+  descriptionsExtracted?: number;
+  outcomes?: readonly SourceDetailFetchOutcome[];
 };
+
+export type { DetailFetchErrorCategory, SourceDetailFetchOutcome };
 
 export interface JobSourceAdapter {
   readonly sourceId: SourceId;

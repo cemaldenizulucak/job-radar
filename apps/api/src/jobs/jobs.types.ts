@@ -1,4 +1,5 @@
 import type { ApplicationStatus, SourceId, WorkModel } from '../common/domain.types.js';
+import type { MatchStatus } from '../matching/match-status.js';
 
 export type JobListing = {
   id: string;
@@ -70,6 +71,7 @@ export type JobListItem = {
   isNew: boolean;
   isSeen: boolean;
   isFavorite: boolean;
+  matchStatus?: MatchStatus;
 };
 
 export type JobDetail = JobListItem & {
@@ -108,6 +110,7 @@ export type MatchedSearchSummary = {
   matchKind: MatchKind | null;
   terms: readonly string[];
   evidence: readonly MatchEvidenceSummary[];
+  matchStatus?: MatchStatus;
 };
 
 export type JobTabs = {

@@ -246,8 +246,31 @@ describe('parseKariyerNetJobDetailHtml', () => {
         'https://www.kariyer.net/is-ilani/ornek-kalite-4299999999',
       ),
     ).toEqual({
+      kind: 'ok',
+      listingVerified: true,
       description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
       publishedAt: '2026-08-20',
+    });
+  });
+
+  it('classifies a CAPTCHA page that mentions /is-ilani/ as a challenge', () => {
+    const html = `<!DOCTYPE html>
+<html><body>
+  <h1>captcha</h1>
+  <p>Please complete the captcha challenge. captcha captcha.</p>
+  <a href="https://www.kariyer.net/is-ilani/ornek-kalite-4299999999">listing</a>
+</body></html>`;
+
+    expect(
+      parseKariyerNetJobDetailHtml(
+        html,
+        'https://www.kariyer.net/is-ilani/ornek-kalite-4299999999',
+      ),
+    ).toEqual({
+      kind: 'challenge',
+      listingVerified: false,
+      description: null,
+      publishedAt: null,
     });
   });
 });

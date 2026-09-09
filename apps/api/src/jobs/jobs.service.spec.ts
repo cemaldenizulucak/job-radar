@@ -1,4 +1,5 @@
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
+import { MatchingService } from '../matching/matching.service.js';
 import { JobsService } from './jobs.service.js';
 import type { NormalizedJob } from './jobs.types.js';
 
@@ -22,6 +23,68 @@ function job(
     isActive: true,
     ...overrides,
   };
+}
+
+function resolvedQuery(result: { data: unknown; error: unknown }) {
+  const resultPromise = Promise.resolve(result);
+  const query: {
+    select: () => typeof query;
+    eq: () => typeof query;
+    in: () => typeof query;
+    maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+    then: typeof resultPromise.then;
+  } = {
+    select: () => query,
+    eq: () => query,
+    in: () => query,
+    maybeSingle: () => resultPromise,
+    then: resultPromise.then.bind(resultPromise),
+  };
+  return query;
+}
+
+function createDetailService(options: {
+  job: Record<string, unknown>;
+  matchStatus: string;
+  search: Record<string, unknown>;
+}): JobsService {
+  const from = vi.fn((table: string) => {
+    if (table === 'jobs') {
+      return resolvedQuery({ data: [options.job], error: null });
+    }
+
+    if (table === 'job_search_matches') {
+      return resolvedQuery({
+        data: [
+          {
+            job_id: options.job.id,
+            saved_search_id: options.search.id,
+            matched_at: '2026-01-01T00:00:00.000Z',
+            match_status: options.matchStatus,
+          },
+        ],
+        error: null,
+      });
+    }
+
+    if (table === 'saved_searches') {
+      return resolvedQuery({ data: [options.search], error: null });
+    }
+
+    if (table === 'favorites' || table === 'applications') {
+      return resolvedQuery({ data: null, error: null });
+    }
+
+    return resolvedQuery({ data: [], error: null });
+  });
+
+  return new JobsService(
+    {
+      getClient: () => ({ from }),
+    } as unknown as SupabaseService,
+    { get: () => undefined } as never,
+    new MatchingService(),
+  );
 }
 
 function chainableQuery(result: { data: unknown; error: unknown }) {
@@ -697,5 +760,98 @@ describe('JobsService listForUser', () => {
 
     expect(result.items).toEqual([]);
     expect(from).not.toHaveBeenCalledWith('jobs');
+  });
+});
+
+describe('JobsService getByIdForUser match evidence', () => {
+  const qualityJob = {
+    id: 'job-quality',
+    source: 'kariyer_net',
+    title: 'Kalite Mühendisi',
+    company: 'Gıda A.Ş.',
+    location: 'Manisa',
+    work_model: 'onsite',
+    published_at: null,
+    discovered_at: '2026-09-01T12:00:00.000Z',
+    created_at: '2026-09-01T12:00:00.000Z',
+    original_url: 'https://www.kariyer.net/is-ilani/quality-1',
+    source_job_id: 'quality-1',
+    duplicate_group_id: null,
+    technologies: [],
+    description: null as string | null,
+    experience_level: null,
+  };
+
+  const gidaSearch = {
+    id: 'search-gida',
+    user_id: 'user-1',
+    name: 'Gıda Mühendisliği',
+    is_active: true,
+    keywords: ['Gıda Mühendisliği'],
+    technologies: [],
+    locations: [],
+    country_code: null,
+    country_name: null,
+    subdivision_code: null,
+    subdivision_name: null,
+    subdivision_codes: [],
+    subdivision_names: [],
+    work_types: [],
+    experience_levels: [],
+    sources: ['kariyer_net'],
+    created_at: '2026-09-01T00:00:00.000Z',
+    updated_at: '2026-09-01T00:00:00.000Z',
+  };
+
+  it('does not treat a migrated verified match_status as text evidence', async () => {
+    const service = createDetailService({
+      job: qualityJob,
+      matchStatus: 'verified',
+      search: gidaSearch,
+    });
+
+    const detail = await service.getByIdForUser('user-1', 'job-quality');
+
+    expect(detail?.matchedSearches).toEqual([
+      expect.objectContaining({
+        id: 'search-gida',
+        name: 'Gıda Mühendisliği',
+        matchKind: null,
+        terms: [],
+        evidence: [],
+        matchStatus: 'verified',
+      }),
+    ]);
+    expect(
+      JSON.stringify(detail?.matchedSearches).includes('Gıda Mühendisliği açıklamada'),
+    ).toBe(false);
+    expect(
+      detail?.matchedSearches[0]?.evidence.some((item) =>
+        (item.snippet ?? item.matchedText).includes('Gıda'),
+      ),
+    ).toBe(false);
+  });
+
+  it('returns live description evidence when the listing actually matches', async () => {
+    const service = createDetailService({
+      job: {
+        ...qualityJob,
+        description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+      },
+      matchStatus: 'verified',
+      search: gidaSearch,
+    });
+
+    const detail = await service.getByIdForUser('user-1', 'job-quality');
+
+    expect(detail?.matchedSearches[0]).toEqual(
+      expect.objectContaining({
+        matchKind: 'skill',
+        matchStatus: 'verified',
+      }),
+    );
+    expect(detail?.matchedSearches[0]?.evidence[0]?.snippet).toContain(
+      'Gıda Mühendisliği',
+    );
   });
 });

@@ -20,6 +20,11 @@ import {
 import type { DuplicateCandidate } from '../duplicates/duplicates.types.js';
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
 import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
+import {
+  MATCH_STATUS,
+  parseMatchStatus,
+  type MatchStatus,
+} from '../matching/match-status.js';
 import { MatchingService } from '../matching/matching.service.js';
 import {
   mapSavedSearchRow,
@@ -141,15 +146,18 @@ export class JobsService {
       ),
     );
 
-    const page = attachFavoriteState(
-      applyJobNewness(
-        items.slice(0, limit),
-        userMatches,
-        new Date(),
-        this.getNewWindowHours(),
-        seenJobIds,
+    const page = attachMatchStatuses(
+      attachFavoriteState(
+        applyJobNewness(
+          items.slice(0, limit),
+          userMatches,
+          new Date(),
+          this.getNewWindowHours(),
+          seenJobIds,
+        ),
+        favoriteJobIds,
       ),
-      favoriteJobIds,
+      listMatches,
     );
 
     this.logger.log({
@@ -233,14 +241,18 @@ export class JobsService {
       mapped.duplicateGroupId ? [mapped.duplicateGroupId] : [],
     );
     const seenJobIds = await this.loadSeenJobIds(_userId);
-    const [item] = applyJobNewness(
-      attachDuplicateGroupSizes([mapped], sizes),
-      filterMatchesForUser(matches, userSearchIds).filter(
-        (match) => match.jobId === jobId,
+    const jobMatches = filterMatchesForUser(matches, userSearchIds).filter(
+      (match) => match.jobId === jobId,
+    );
+    const [item] = attachMatchStatuses(
+      applyJobNewness(
+        attachDuplicateGroupSizes([mapped], sizes),
+        jobMatches,
+        new Date(),
+        this.getNewWindowHours(),
+        seenJobIds,
       ),
-      new Date(),
-      this.getNewWindowHours(),
-      seenJobIds,
+      jobMatches,
     );
     if (!item) {
       return null;
@@ -265,6 +277,9 @@ export class JobsService {
         matchedSearchIds,
         searchNames,
         savedSearches,
+        new Map(
+          jobMatches.map((match) => [match.savedSearchId, match.matchStatus]),
+        ),
       ),
       duplicateJobs,
       isFavorite: tracking.isFavorite,
@@ -316,22 +331,25 @@ export class JobsService {
       ? await this.loadFavoriteJobIds(userId)
       : new Set<string>();
 
-    return attachFavoriteState(
-      applyJobNewness(
-        attachDuplicateGroupSizes(
-          feedRows,
-          await this.countDuplicateGroupSizes(
-            feedRows
-              .map((row) => row.duplicateGroupId)
-              .filter((groupId): groupId is string => groupId !== null),
+    return attachMatchStatuses(
+      attachFavoriteState(
+        applyJobNewness(
+          attachDuplicateGroupSizes(
+            feedRows,
+            await this.countDuplicateGroupSizes(
+              feedRows
+                .map((row) => row.duplicateGroupId)
+                .filter((groupId): groupId is string => groupId !== null),
+            ),
           ),
+          userMatches,
+          new Date(),
+          this.getNewWindowHours(),
+          seenJobIds,
         ),
-        userMatches,
-        new Date(),
-        this.getNewWindowHours(),
-        seenJobIds,
+        favoriteJobIds,
       ),
-      favoriteJobIds,
+      userMatches,
     );
   }
 
@@ -617,17 +635,32 @@ export class JobsService {
     matchedSearchIds: readonly string[],
     searchNames: ReadonlyMap<string, string>,
     savedSearches: ReadonlyMap<string, SavedSearch>,
+    matchStatusBySearch: ReadonlyMap<string, MatchStatus> = new Map(),
   ): MatchedSearchSummary[] {
     return matchedSearchIds.map((id) => {
       const saved = savedSearches.get(id);
       const name = saved?.name ?? searchNames.get(id) ?? id;
+      const matchStatus = parseMatchStatus(matchStatusBySearch.get(id));
+      if (matchStatus === MATCH_STATUS.unverifiedSourceCandidate) {
+        return {
+          ...emptyMatchedSearch(id, name),
+          matchStatus,
+        };
+      }
+
       if (!this.matchingService || !job || !saved) {
-        return emptyMatchedSearch(id, name);
+        return {
+          ...emptyMatchedSearch(id, name),
+          matchStatus,
+        };
       }
 
       const decision = this.matchingService.evaluateMatch(job, saved);
       if (!decision.matched) {
-        return emptyMatchedSearch(id, name);
+        return {
+          ...emptyMatchedSearch(id, name),
+          matchStatus,
+        };
       }
 
       return {
@@ -643,6 +676,7 @@ export class JobsService {
           kind: item.kind,
           basis: item.basis,
         })),
+        matchStatus,
       };
     });
   }
@@ -776,7 +810,7 @@ export class JobsService {
     const query = this.supabase
       .getClient()
       .from('job_search_matches')
-      .select('job_id, saved_search_id, matched_at');
+      .select('job_id, saved_search_id, matched_at, match_status');
 
     const { data, error } = savedSearchId
       ? await query.eq('saved_search_id', savedSearchId)
@@ -805,6 +839,7 @@ export class JobsService {
           jobId,
           savedSearchId: searchId,
           matchedAt: readDate(row, 'matched_at'),
+          matchStatus: parseMatchStatus(row.match_status),
         });
       }
     }
@@ -1167,14 +1202,29 @@ export class JobsService {
     const created: JobSearchMatch[] = [];
 
     for (const match of matches) {
+      const incomingStatus = parseMatchStatus(match.matchStatus);
       const existing = await this.findMatch(match.jobId, match.savedSearchId);
 
       if (existing) {
+        if (
+          incomingStatus === MATCH_STATUS.verified &&
+          existing.matchStatus !== MATCH_STATUS.verified
+        ) {
+          await this.updateMatchStatus(
+            match.jobId,
+            match.savedSearchId,
+            MATCH_STATUS.verified,
+          );
+        }
         continue;
       }
 
-      await this.insertMatch(match);
-      created.push(match);
+      const stored = {
+        ...match,
+        matchStatus: incomingStatus,
+      };
+      await this.insertMatch(stored);
+      created.push(stored);
     }
 
     return created;
@@ -1203,12 +1253,56 @@ export class JobsService {
     for (const [searchId, jobIds] of desiredBySearch) {
       const existing = await this.loadMatches(searchId);
       const staleJobIds = existing
+        .filter((row) => row.matchStatus === MATCH_STATUS.verified)
         .map((row) => row.jobId)
         .filter((jobId) => !jobIds.has(jobId));
       await this.deleteMatches(searchId, staleJobIds);
     }
 
-    return this.saveMatches(desired);
+    return this.saveMatches(
+      desired.map((match) => ({
+        ...match,
+        matchStatus: parseMatchStatus(match.matchStatus),
+      })),
+    );
+  }
+
+  async reconcileUnverifiedSourceCandidates(input: {
+    searchIds: readonly string[];
+    candidates: readonly JobSearchMatch[];
+    describedJobIds: ReadonlySet<string>;
+  }): Promise<JobSearchMatch[]> {
+    const allowed = new Set(input.searchIds.filter((id) => id.trim().length > 0));
+    if (allowed.size === 0) {
+      return [];
+    }
+
+    const desired = input.candidates.filter((match) =>
+      allowed.has(match.savedSearchId),
+    );
+    const desiredKeys = new Set(
+      desired.map((match) => `${match.jobId}:${match.savedSearchId}`),
+    );
+
+    for (const searchId of allowed) {
+      const existing = await this.loadMatches(searchId);
+      const staleUnverified = existing
+        .filter(
+          (row) =>
+            row.matchStatus === MATCH_STATUS.unverifiedSourceCandidate &&
+            input.describedJobIds.has(row.jobId) &&
+            !desiredKeys.has(`${row.jobId}:${row.savedSearchId}`),
+        )
+        .map((row) => row.jobId);
+      await this.deleteMatches(searchId, staleUnverified);
+    }
+
+    return this.saveMatches(
+      desired.map((match) => ({
+        ...match,
+        matchStatus: MATCH_STATUS.unverifiedSourceCandidate,
+      })),
+    );
   }
 
   async listMatchesForSearches(
@@ -1226,6 +1320,7 @@ export class JobsService {
         matches.push({
           jobId: row.jobId,
           savedSearchId: row.savedSearchId,
+          matchStatus: row.matchStatus,
         });
       }
     }
@@ -1362,11 +1457,11 @@ export class JobsService {
   private async findMatch(
     jobId: string,
     savedSearchId: string,
-  ): Promise<boolean> {
+  ): Promise<JobMatchRow | null> {
     const { data, error } = await this.supabase
       .getClient()
       .from('job_search_matches')
-      .select('id')
+      .select('job_id, saved_search_id, matched_at, match_status')
       .eq('job_id', jobId)
       .eq('saved_search_id', savedSearchId)
       .maybeSingle();
@@ -1376,7 +1471,40 @@ export class JobsService {
       throw new InternalServerErrorException('Failed to look up job match.');
     }
 
-    return data !== null;
+    if (!isRecord(data)) {
+      return null;
+    }
+
+    const storedJobId = readString(data, 'job_id');
+    const storedSearchId = readString(data, 'saved_search_id');
+    if (!storedJobId || !storedSearchId) {
+      return null;
+    }
+
+    return {
+      jobId: storedJobId,
+      savedSearchId: storedSearchId,
+      matchedAt: readDate(data, 'matched_at'),
+      matchStatus: parseMatchStatus(data.match_status),
+    };
+  }
+
+  private async updateMatchStatus(
+    jobId: string,
+    savedSearchId: string,
+    matchStatus: MatchStatus,
+  ): Promise<void> {
+    const { error } = await this.supabase
+      .getClient()
+      .from('job_search_matches')
+      .update({ match_status: matchStatus })
+      .eq('job_id', jobId)
+      .eq('saved_search_id', savedSearchId);
+
+    if (error) {
+      this.logSupabaseError(error);
+      throw new InternalServerErrorException('Failed to update job match.');
+    }
   }
 
   private async deleteMatches(
@@ -1411,7 +1539,12 @@ export class JobsService {
         saved_search_id: match.savedSearchId,
         matched_at: now,
         match_score: 1,
-        match_reason: 'Matched saved search filters',
+        match_reason:
+          parseMatchStatus(match.matchStatus) ===
+          MATCH_STATUS.unverifiedSourceCandidate
+            ? 'Unverified source candidate'
+            : 'Matched saved search filters',
+        match_status: parseMatchStatus(match.matchStatus),
       });
 
     if (error) {
@@ -1550,6 +1683,7 @@ type JobMatchRow = {
   jobId: string;
   savedSearchId: string;
   matchedAt: Date | null;
+  matchStatus: MatchStatus;
 };
 
 function uniqueStrings(values: readonly string[]): string[] {
@@ -1609,7 +1743,35 @@ function emptyMatchedSearch(id: string, name: string): MatchedSearchSummary {
     matchKind: null,
     terms: [],
     evidence: [],
+    matchStatus: MATCH_STATUS.verified,
   };
+}
+
+function attachMatchStatuses(
+  items: readonly JobListItem[],
+  matches: readonly JobMatchRow[],
+): JobListItem[] {
+  const byJob = new Map<string, JobMatchRow[]>();
+  for (const match of matches) {
+    const list = byJob.get(match.jobId) ?? [];
+    list.push(match);
+    byJob.set(match.jobId, list);
+  }
+
+  return items.map((item) => {
+    const jobMatches = byJob.get(item.id) ?? [];
+    const unverifiedOnly =
+      jobMatches.length > 0 &&
+      jobMatches.every(
+        (match) => match.matchStatus === MATCH_STATUS.unverifiedSourceCandidate,
+      );
+    return {
+      ...item,
+      matchStatus: unverifiedOnly
+        ? MATCH_STATUS.unverifiedSourceCandidate
+        : MATCH_STATUS.verified,
+    };
+  });
 }
 
 function resolveScopedJobIds(

@@ -44,4 +44,21 @@ describe('mergeNormalizedJobUpdate', () => {
 
     expect(merged.description).toBe('Gıda mühendisliği mezunu');
   });
+
+  it('does not overwrite a stored description with challenge HTML', () => {
+    const merged = mergeNormalizedJobUpdate(
+      job({
+        description:
+          '<html>captcha captcha Please complete the captcha</html>',
+      }),
+      {
+        description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+        publishedAt: null,
+      },
+    );
+
+    expect(merged.description).toBe(
+      'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+    );
+  });
 });

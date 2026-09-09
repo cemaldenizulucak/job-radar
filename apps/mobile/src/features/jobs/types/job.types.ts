@@ -26,6 +26,7 @@ export type JobListItem = {
   isNew: boolean;
   isSeen: boolean;
   isFavorite: boolean;
+  matchStatus?: 'verified' | 'unverified_source_candidate';
 };
 
 export type DuplicateJobLink = {
@@ -51,6 +52,7 @@ export type MatchedSearch = {
   matchKind: 'direct' | 'skill' | null;
   terms: readonly string[];
   evidence: readonly MatchedSearchEvidence[];
+  matchStatus?: 'verified' | 'unverified_source_candidate';
 };
 
 export type JobDetail = JobListItem & {

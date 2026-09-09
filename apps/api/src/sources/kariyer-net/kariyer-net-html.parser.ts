@@ -1,3 +1,7 @@
+import {
+  isUsableJobDescription,
+  textLooksLikeAccessChallenge,
+} from '../../jobs/listing-description.js';
 import type { KariyerNetRawJob } from './kariyer-net.types.js';
 import {
   canonicalizeKariyerNetJobUrl,
@@ -27,8 +31,6 @@ const COMPANY_IMAGE_PATTERN =
 const SKIP_TITLE_PATTERN =
   /^(incele|detay|başvur|basvur|daha fazla|view|apply|details?)$/i;
 
-const CHALLENGE_PATTERN =
-  /güvenlik doğrulaması|guvenlik dogrulamasi|captcha|cf-challenge|just a moment|access denied|bot detection/i;
 const EMPTY_RESULTS_PATTERN =
   /ilan bulunamad[ıi]|sonuç bulunamad[ıi]|sonuc bulunamadi|no jobs? found/i;
 
@@ -36,6 +38,13 @@ export type KariyerNetHtmlParseResult =
   | { kind: 'jobs'; jobs: KariyerNetRawJob[] }
   | { kind: 'blocked'; reason: 'challenge' }
   | { kind: 'mismatch'; reason: string };
+
+export type KariyerNetDetailParseResult = {
+  kind: 'ok' | 'challenge' | 'mismatch';
+  listingVerified: boolean;
+  description: string | null;
+  publishedAt: string | null;
+};
 
 export function parseKariyerNetSearchHtml(
   html: string,
@@ -76,29 +85,69 @@ export function parseKariyerNetJobDetailHtml(
   html: string,
   canonicalUrl: string,
   baseUrl = KARIYER_NET_DEFAULT_BASE_URL,
-): { description: string | null; publishedAt: string | null } {
+): KariyerNetDetailParseResult {
+  if (html.trim().length === 0) {
+    return emptyDetailResult('mismatch');
+  }
+
+  const jsonLdJobs = extractJobsFromJsonLd(html, baseUrl);
+  const listingVerified = jsonLdJobs.some((job) =>
+    Boolean(typeof job.title === 'string' && job.title.trim()),
+  );
+
+  if (textLooksLikeAccessChallenge(html) && !listingVerified) {
+    return emptyDetailResult('challenge');
+  }
+
   const parsed = parseKariyerNetSearchHtml(html, baseUrl);
+  if (parsed.kind === 'blocked') {
+    return emptyDetailResult('challenge');
+  }
+
   if (parsed.kind !== 'jobs') {
-    return { description: null, publishedAt: null };
+    return emptyDetailResult('mismatch');
   }
 
   const target = canonicalizeKariyerNetJobUrl(canonicalUrl, baseUrl);
   const match =
-    parsed.jobs.find((job) => job.canonicalUrl === target) ?? parsed.jobs[0];
-  const description =
-    typeof match?.description === 'string' && match.description.trim().length > 0
-      ? match.description.trim()
-      : null;
+    parsed.jobs.find((job) => job.canonicalUrl === target) ??
+    jsonLdJobs.find((job) => job.canonicalUrl === target) ??
+    (listingVerified ? jsonLdJobs[0] : undefined);
+  const rawDescription =
+    typeof match?.description === 'string' ? match.description.trim() : '';
+  const description = isUsableJobDescription(rawDescription)
+    ? rawDescription
+    : null;
   const publishedAt =
     typeof match?.publishedAt === 'string' && match.publishedAt.trim().length > 0
       ? match.publishedAt.trim()
       : null;
 
-  return { description, publishedAt };
+  if (!listingVerified && !match) {
+    return emptyDetailResult('mismatch');
+  }
+
+  return {
+    kind: 'ok',
+    listingVerified: listingVerified || Boolean(match?.title),
+    description,
+    publishedAt,
+  };
+}
+
+function emptyDetailResult(
+  kind: 'challenge' | 'mismatch',
+): KariyerNetDetailParseResult {
+  return {
+    kind,
+    listingVerified: false,
+    description: null,
+    publishedAt: null,
+  };
 }
 
 function looksLikeChallenge(html: string): boolean {
-  if (!CHALLENGE_PATTERN.test(html)) {
+  if (!textLooksLikeAccessChallenge(html)) {
     return false;
   }
 

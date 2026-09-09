@@ -388,4 +388,74 @@ describe('KariyerNetWebProvider', () => {
       enriched.jobs.find((job) => job.externalJobId === '4291000001')?.description,
     ).toBeUndefined();
   });
+
+  it('does not treat a 403 CAPTCHA detail page as fetched', async () => {
+    const captchaHtml = `<html><body>${'captcha '.repeat(40)}<a href="/is-ilani/x">x</a></body></html>`;
+    const provider = new KariyerNetWebProvider(
+      { ...config(), maxPages: 1, maxDetailRequests: 1 },
+      httpClient(async (request) => {
+        if (request.url.includes('/is-ilani/')) {
+          return {
+            status: 403,
+            contentType: 'text/html',
+            body: captchaHtml,
+          };
+        }
+
+        return {
+          status: 200,
+          contentType: 'text/html',
+          body: listingHtmlWithJobs(1),
+        };
+      }),
+    );
+
+    const searched = await provider.search(emptyInput);
+    const enriched = await provider.enrichMissingDescriptions(searched.jobs);
+
+    expect(enriched.detailsFetched).toBe(0);
+    expect(enriched.descriptionsExtracted).toBe(0);
+    expect(enriched.outcomes?.[0]).toEqual(
+      expect.objectContaining({
+        requestSucceeded: false,
+        detailFetched: false,
+        descriptionExtracted: false,
+        errorCategory: 'challenge',
+        httpStatus: 403,
+      }),
+    );
+    expect(enriched.jobs[0]?.description).toBeUndefined();
+    expect(JSON.stringify(enriched.jobs[0]?.description ?? '')).not.toContain(
+      'captcha',
+    );
+  });
+
+  it('does not treat a 200 CAPTCHA detail page as fetched', async () => {
+    const captchaHtml = `<html><body>${'captcha '.repeat(40)}<a href="/is-ilani/x">x</a></body></html>`;
+    const provider = new KariyerNetWebProvider(
+      { ...config(), maxPages: 1, maxDetailRequests: 1 },
+      httpClient(async (request) => {
+        if (request.url.includes('/is-ilani/')) {
+          return {
+            status: 200,
+            contentType: 'text/html',
+            body: captchaHtml,
+          };
+        }
+
+        return {
+          status: 200,
+          contentType: 'text/html',
+          body: listingHtmlWithJobs(1),
+        };
+      }),
+    );
+
+    const searched = await provider.search(emptyInput);
+    const enriched = await provider.enrichMissingDescriptions(searched.jobs);
+
+    expect(enriched.detailsFetched).toBe(0);
+    expect(enriched.outcomes?.[0]?.errorCategory).toBe('challenge');
+    expect(enriched.jobs[0]?.description).toBeUndefined();
+  });
 });

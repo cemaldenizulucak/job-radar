@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { jobsEmptyMessage, matchKindLabel } from './copy';
+import { jobsEmptyMessage, isUnverifiedSourceMatch, matchKindLabel } from './copy';
 
 describe('jobsEmptyMessage', () => {
   it('uses the matched empty copy when the matched feed has no jobs', () => {
@@ -38,5 +38,13 @@ describe('matchKindLabel', () => {
     expect(matchKindLabel('direct')).toBe('Doğrudan eşleşme');
     expect(matchKindLabel('skill')).toBe('Beceri eşleşmesi');
     expect(matchKindLabel(null)).toBeNull();
+  });
+});
+
+describe('isUnverifiedSourceMatch', () => {
+  it('labels unverified source candidates without inventing evidence', () => {
+    expect(isUnverifiedSourceMatch('unverified_source_candidate')).toBe(true);
+    expect(isUnverifiedSourceMatch('verified')).toBe(false);
+    expect(isUnverifiedSourceMatch(undefined)).toBe(false);
   });
 });

@@ -25,6 +25,7 @@ export function jobCardAccessibilityLabel(input: {
   isNew: boolean;
   isFavorite?: boolean;
   relevanceLabel?: string;
+  isPossibleMatch?: boolean;
 }): string {
   const parts: string[] = [];
 
@@ -37,6 +38,9 @@ export function jobCardAccessibilityLabel(input: {
 
   parts.push(input.title, input.companyName, input.sourceLabel);
 
+  if (input.isPossibleMatch) {
+    parts.push('Olası eşleşme');
+  }
   if (input.relevanceLabel) {
     parts.push(input.relevanceLabel);
   }

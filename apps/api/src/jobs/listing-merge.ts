@@ -1,4 +1,5 @@
 import type { NormalizedJob } from './jobs.types.js';
+import { isUsableJobDescription } from './listing-description.js';
 
 export type ExistingListingFields = {
   description: string | null;
@@ -15,13 +16,9 @@ export function mergeNormalizedJobUpdate(
 ): NormalizedJob {
   return {
     ...incoming,
-    description: hasText(incoming.description)
+    description: isUsableJobDescription(incoming.description)
       ? incoming.description
       : existing.description,
     publishedAt: incoming.publishedAt ?? existing.publishedAt,
   };
-}
-
-function hasText(value: string | null | undefined): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
 }

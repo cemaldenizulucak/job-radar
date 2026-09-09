@@ -1,9 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import type { SourceId } from '../../common/domain.types.js';
+import { isUsableJobDescription } from '../../jobs/listing-description.js';
 import type {
   JobSourceAdapter,
   SourceAdapterCapabilities,
+  SourceDescriptionEnrichment,
   SourceJobRaw,
   SourceSearchQuery,
   SourceSearchResult,
@@ -136,11 +138,7 @@ export class KariyerNetSourceAdapter implements JobSourceAdapter {
 
   async enrichMissingDescriptions(
     jobs: readonly SourceJobRaw[],
-  ): Promise<{
-    jobs: SourceJobRaw[];
-    detailsFetched: number;
-    detailsFailed: number;
-  }> {
+  ): Promise<SourceDescriptionEnrichment> {
     if (!this.provider.enrichMissingDescriptions) {
       return { jobs: [...jobs], detailsFetched: 0, detailsFailed: 0 };
     }
@@ -176,7 +174,8 @@ export class KariyerNetSourceAdapter implements JobSourceAdapter {
       }
 
       const description =
-        typeof detail.description === 'string' && detail.description.trim()
+        typeof detail.description === 'string' &&
+        isUsableJobDescription(detail.description)
           ? detail.description.trim()
           : job.description;
       return description && description !== job.description
@@ -188,6 +187,9 @@ export class KariyerNetSourceAdapter implements JobSourceAdapter {
       jobs: merged,
       detailsFetched: enriched.detailsFetched,
       detailsFailed: enriched.detailsFailed,
+      detailsRequested: enriched.detailsRequested,
+      descriptionsExtracted: enriched.descriptionsExtracted,
+      outcomes: enriched.outcomes,
     };
   }
 }

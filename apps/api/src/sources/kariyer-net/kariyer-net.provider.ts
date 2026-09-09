@@ -1,4 +1,5 @@
 import type { SourceAdapterCapabilities } from '../job-source.adapter.js';
+import type { SourceDetailFetchOutcome } from '../detail-fetch.types.js';
 import type {
   KariyerNetProviderMode,
   KariyerNetProviderResult,
@@ -21,5 +22,8 @@ export interface KariyerNetProvider {
     jobs: readonly KariyerNetRawJob[];
     detailsFetched: number;
     detailsFailed: number;
+    detailsRequested?: number;
+    descriptionsExtracted?: number;
+    outcomes?: readonly SourceDetailFetchOutcome[];
   }>;
 }

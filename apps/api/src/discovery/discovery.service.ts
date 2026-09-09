@@ -21,15 +21,20 @@ import { mergeNormalizedJobUpdate } from '../jobs/listing-merge.js';
 import type { CatalogListingRecord, NormalizedJob } from '../jobs/jobs.types.js';
 import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { MatchingService } from '../matching/matching.service.js';
+import { MATCH_STATUS, parseMatchStatus } from '../matching/match-status.js';
 import { queryMatchKind } from '../matching/match-text.js';
 import type { JobSearchMatch, MatchableJob } from '../matching/matching.types.js';
+import {
+  collectUnverifiedSourceCandidates,
+  type SearchScopedProvenance,
+} from '../matching/source-candidate-match.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { selectVisibleNewMatches } from '../notifications/discovery-notification.js';
 import type { PersistedJobForNotification } from '../notifications/notifications.types.js';
 import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { SearchesService } from '../searches/searches.service.js';
-import type { SourceSearchQuery, SourceJobRaw } from '../sources/job-source.adapter.js';
+import type { SourceSearchQuery, SourceJobRaw, SourceDetailFetchOutcome } from '../sources/job-source.adapter.js';
 import { sourceErrorCategory } from '../sources/source-errors.js';
 import { SourceRegistry } from '../sources/source-registry.js';
 import { KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS } from '../sources/kariyer-net/kariyer-net-web.config.js';
@@ -212,10 +217,35 @@ export class DiscoveryService {
         catalogJobs,
         searches,
       );
-      const diff = diffJobSearchMatches(existing, desired);
+      const describedJobIds = new Set(
+        catalogJobs
+          .filter((job) => Boolean(job.description?.trim()))
+          .map((job) => job.id),
+      );
+      const pendingUnverified = existing.filter(
+        (match) =>
+          parseMatchStatus(match.matchStatus) ===
+            MATCH_STATUS.unverifiedSourceCandidate &&
+          !describedJobIds.has(match.jobId),
+      );
+      const pendingKeys = new Set(
+        pendingUnverified.map(
+          (match) => `${match.jobId}:${match.savedSearchId}`,
+        ),
+      );
+      const existingForDiff = existing.filter(
+        (match) => !pendingKeys.has(`${match.jobId}:${match.savedSearchId}`),
+      );
+      const diff = diffJobSearchMatches(existingForDiff, desired);
+      const keptMatches = [...diff.keep, ...pendingUnverified];
 
       if (!dryRun) {
         await this.jobsService.syncMatchesForSearches(searchIds, desired);
+        await this.jobsService.reconcileUnverifiedSourceCandidates({
+          searchIds,
+          candidates: [],
+          describedJobIds,
+        });
       }
 
       const titles = new Map(catalogJobs.map((job) => [job.id, job.title]));
@@ -236,7 +266,7 @@ export class DiscoveryService {
         jobsEvaluated: catalogJobs.length,
         existingMatches: existing.length,
         desiredMatches: desired.length,
-        keepCount: diff.keep.length,
+        keepCount: keptMatches.length,
         insertCount: diff.insert.length,
         deleteCount: diff.remove.length,
       });
@@ -247,12 +277,12 @@ export class DiscoveryService {
         jobsEvaluated: catalogJobs.length,
         existingMatches: existing.length,
         desiredMatches: desired.length,
-        keepCount: diff.keep.length,
+        keepCount: keptMatches.length,
         insertCount: diff.insert.length,
         deleteCount: diff.remove.length,
         listingsUnchanged: true,
         applicationsUnchanged: true,
-        sampleKept: diff.keep.slice(0, 10).map(annotate),
+        sampleKept: keptMatches.slice(0, 10).map(annotate),
         sampleInserts: diff.insert.slice(0, 10).map(annotate),
         sampleDeletes: diff.remove.slice(0, 10).map(annotate),
       };
@@ -298,18 +328,32 @@ export class DiscoveryService {
     };
 
     let detailFetched = false;
+    let requestSucceeded = false;
+    let descriptionExtracted = false;
+    let errorCategory: string | null = null;
+    let httpStatus: number | null = null;
     let enriched = raw;
     try {
       const result = await adapter.enrichMissingDescriptions([raw]);
       enriched = result.jobs[0] ?? raw;
-      detailFetched = result.detailsFetched > 0;
+      const outcome = result.outcomes?.[0] ?? fallbackOutcome(result, listing.sourceJobId);
+      requestSucceeded = outcome.requestSucceeded;
+      detailFetched = outcome.detailFetched;
+      descriptionExtracted = outcome.descriptionExtracted;
+      errorCategory = outcome.errorCategory;
+      httpStatus = outcome.httpStatus;
     } catch (error) {
       this.logger.warn({
         message: 'Listing detail refresh failed',
         jobId,
         source: listing.sourceId,
+        errorCategory: 'unavailable',
         error: error instanceof Error ? error.message : 'unknown',
       });
+      requestSucceeded = false;
+      detailFetched = false;
+      descriptionExtracted = false;
+      errorCategory = 'unavailable';
     }
 
     const incoming = normalizeSourceJob(listing.sourceId, enriched);
@@ -329,8 +373,29 @@ export class DiscoveryService {
     );
     const created = await this.jobsService.syncMatchesForSearches(
       searches.map((search) => search.id),
-      desired,
+      desired.map((match) => ({
+        ...match,
+        matchStatus: MATCH_STATUS.verified,
+      })),
     );
+    const queueItem = (await this.runState.listQueueItems()).find(
+      (item) => item.jobId === jobId,
+    );
+    const provenances = provenancesFromQueueItem(jobId, queueItem);
+    const unverified = collectUnverifiedSourceCandidates({
+      jobs: [matchable],
+      searches,
+      provenances,
+      detailErrorByJobId: new Map([[jobId, errorCategory]]),
+      evaluateMatch: (job, search) =>
+        this.matchingService.evaluateMatch(job, search),
+      verifiedKeys: new Set(desired.map((match) => `${match.jobId}:${match.savedSearchId}`)),
+    });
+    await this.jobsService.reconcileUnverifiedSourceCandidates({
+      searchIds: searches.map((search) => search.id),
+      candidates: unverified,
+      describedJobIds: descriptionStored ? new Set([jobId]) : new Set(),
+    });
     const decisions = searches.map((search) => {
       const decision = this.matchingService.evaluateMatch(matchable, search);
       return {
@@ -341,12 +406,25 @@ export class DiscoveryService {
       };
     });
 
-    await this.runState.completeDetail(jobId);
+    const nowIso = new Date().toISOString();
+    if (detailFetched && descriptionExtracted && descriptionStored) {
+      await this.runState.completeDetail(jobId);
+    } else {
+      await this.runState.failDetail(
+        jobId,
+        errorCategory ?? 'empty',
+        nowIso,
+      );
+    }
 
     return {
       jobId,
+      requestSucceeded,
       detailFetched,
+      descriptionExtracted,
       descriptionStored,
+      errorCategory,
+      httpStatus,
       matchesCreated: created.length,
       decisions,
     };
@@ -513,11 +591,41 @@ export class DiscoveryService {
       persisted,
       searches,
     );
-    const allMatches = uniqueMatches([...catalogMatches, ...liveMatches]);
+    const allMatches = uniqueMatches([...catalogMatches, ...liveMatches]).map(
+      (match) => ({
+        ...match,
+        matchStatus: MATCH_STATUS.verified,
+      }),
+    );
     const createdMatches = await this.jobsService.syncMatchesForSearches(
       searches.map((search) => search.id),
       allMatches,
     );
+    const provenancesByJobId = provenancesByPersistedJob(
+      persisted,
+      fetched.jobProvenances,
+    );
+    const verifiedKeys = new Set(
+      allMatches.map((match) => `${match.jobId}:${match.savedSearchId}`),
+    );
+    const unverified = collectUnverifiedSourceCandidates({
+      jobs: persisted,
+      searches,
+      provenances: provenancesByJobId,
+      detailErrorByJobId: detailDrain.detailErrorByJobId,
+      evaluateMatch: (job, search) =>
+        this.matchingService.evaluateMatch(job, search),
+      verifiedKeys,
+    });
+    await this.jobsService.reconcileUnverifiedSourceCandidates({
+      searchIds: searches.map((search) => search.id),
+      candidates: unverified,
+      describedJobIds: new Set(
+        matchableJobs
+          .filter((job) => Boolean(job.description?.trim()))
+          .map((job) => job.id),
+      ),
+    });
     const discoveredAt = new Date().toISOString();
     await this.searchesService.markDiscoveredAt(
       searches.map((search) => search.id),
@@ -592,6 +700,8 @@ export class DiscoveryService {
         0,
       ),
       detailsQueued: detailDrain.detailsQueued,
+      detailsRequested: detailDrain.detailsRequested,
+      descriptionsExtracted: detailDrain.descriptionsExtracted,
       kariyerNetPagesFetched: fetched.kariyerNetPagesFetched,
       kariyerNetJobsCollected: fetched.kariyerNetJobsCollected,
       stopReason: fetched.stopReason,
@@ -633,6 +743,8 @@ export class DiscoveryService {
         0,
       ),
       detailsQueued: detailDrain.detailsQueued,
+      detailsRequested: detailDrain.detailsRequested,
+      descriptionsExtracted: detailDrain.descriptionsExtracted,
       providerModes: fetched.providerModes,
     };
   }
@@ -704,6 +816,7 @@ export class DiscoveryService {
     queriesDeferred: number;
     providerModes: Record<string, string>;
     detailIntents: readonly DetailIntent[];
+    jobProvenances: ReadonlyMap<string, readonly SearchScopedProvenance[]>;
   }> {
     const uniqueJobs = new Map<string, NormalizedJob>();
     let jobsFetched = 0;
@@ -721,6 +834,7 @@ export class DiscoveryService {
     let queriesDeferred = 0;
     const detailIntents: DetailIntent[] = [];
     const intentKeys = new Set<string>();
+    const jobProvenances = new Map<string, SearchScopedProvenance[]>();
     const providerModes: Record<string, string> = {};
     const scanKinds = new Set<ScanKind>();
     const perSearch: SearchSourceFetchStat[] = [];
@@ -777,6 +891,18 @@ export class DiscoveryService {
           intentKeys.add(intent.identity);
           detailIntents.push(intent);
         }
+        for (const [identity, items] of fetched.provenances) {
+          const existing = jobProvenances.get(identity) ?? [];
+          jobProvenances.set(identity, [
+            ...existing,
+            ...items.map((item) => ({
+              savedSearchId: search.id,
+              keyword: item.keyword,
+              origin: item.origin,
+              location: item.location,
+            })),
+          ]);
+        }
         if (fetched.providerMode) {
           providerModes[sourceId] = fetched.providerMode;
         }
@@ -821,6 +947,7 @@ export class DiscoveryService {
       queriesDeferred,
       providerModes,
       detailIntents,
+      jobProvenances,
     };
   }
 
@@ -842,6 +969,7 @@ export class DiscoveryService {
     detailsSkipped: number;
     detailsBackoff: number;
     detailIntents: readonly DetailIntent[];
+    provenances: ReadonlyMap<string, readonly SourceQueryProvenance[]>;
     providerMode: string | null;
     kariyerNet?: {
       pagesFetched: number;
@@ -872,6 +1000,7 @@ export class DiscoveryService {
         detailsSkipped: 0,
         detailsBackoff: 0,
         detailIntents: [],
+        provenances: new Map(),
         providerMode: adapter?.providerMode ?? null,
       };
     }
@@ -1091,6 +1220,7 @@ export class DiscoveryService {
       detailsSkipped: report.skipped.length,
       detailsBackoff: report.backoffCount,
       detailIntents,
+      provenances,
       providerMode,
       kariyerNet:
         sourceId === 'kariyer_net'
@@ -1119,6 +1249,9 @@ export class DiscoveryService {
     detailsSkipped: number;
     detailsBackoff: number;
     detailsQueued: number;
+    detailsRequested: number;
+    descriptionsExtracted: number;
+    detailErrorByJobId: Map<string, string | null>;
   }> {
     void input.searches;
     const idByIdentity = new Map(
@@ -1153,6 +1286,9 @@ export class DiscoveryService {
     let detailsSelected = 0;
     let detailsAttempted = 0;
     let detailsSkipped = 0;
+    let detailsRequested = 0;
+    let descriptionsExtracted = 0;
+    const detailErrorByJobId = new Map<string, string | null>();
     const nowIso = new Date().toISOString();
     const persistedById = new Map(input.persisted.map((job) => [job.id, job]));
     const selectedSamples: {
@@ -1193,6 +1329,7 @@ export class DiscoveryService {
           assertAllowedJobSourceUrl(item.sourceUrl);
         } catch {
           await this.runState.failDetail(item.jobId, 'invalid_url', nowIso);
+          detailErrorByJobId.set(item.jobId, 'invalid_url');
           detailsFailed += 1;
           continue;
         }
@@ -1219,11 +1356,16 @@ export class DiscoveryService {
 
       detailsAttempted += toFetch.length;
       let enrichedJobs: SourceJobRaw[] = toFetch.map((entry) => entry.raw);
+      let outcomes: readonly SourceDetailFetchOutcome[] = [];
       try {
         const result = await adapter.enrichMissingDescriptions(
           toFetch.map((entry) => entry.raw),
         );
         enrichedJobs = [...result.jobs];
+        outcomes = result.outcomes ?? [];
+        detailsRequested +=
+          result.detailsRequested ??
+          (outcomes.length > 0 ? outcomes.length : toFetch.length);
       } catch (error) {
         this.logger.warn({
           message: 'Description enrichment failed; keeping list-card jobs',
@@ -1233,19 +1375,37 @@ export class DiscoveryService {
         });
         for (const entry of toFetch) {
           await this.runState.failDetail(entry.item.jobId, 'unavailable', nowIso);
+          detailErrorByJobId.set(entry.item.jobId, 'unavailable');
           detailsFailed += 1;
         }
+        detailsRequested += toFetch.length;
         continue;
       }
 
       const bySourceJobId = new Map(
         enrichedJobs.map((job) => [job.sourceJobId, job]),
       );
+      const outcomeBySourceJobId = new Map(
+        outcomes.map((item) => [item.sourceJobId, item]),
+      );
       for (const entry of toFetch) {
         const detail = bySourceJobId.get(entry.item.sourceJobId);
+        const outcome =
+          outcomeBySourceJobId.get(entry.item.sourceJobId) ??
+          fallbackOutcome(
+            {
+              detailsFetched: detail?.description?.trim() ? 1 : 0,
+              detailsFailed: detail?.description?.trim() ? 0 : 1,
+            },
+            entry.item.sourceJobId,
+          );
         const description = detail?.description?.trim() ?? '';
-        if (!description) {
-          await this.runState.failDetail(entry.item.jobId, 'empty', nowIso);
+        const extracted =
+          outcome.descriptionExtracted && Boolean(description);
+        if (!extracted) {
+          const category = outcome.errorCategory ?? 'empty';
+          await this.runState.failDetail(entry.item.jobId, category, nowIso);
+          detailErrorByJobId.set(entry.item.jobId, category);
           detailsFailed += 1;
           continue;
         }
@@ -1257,6 +1417,7 @@ export class DiscoveryService {
         });
         if (!incoming) {
           await this.runState.failDetail(entry.item.jobId, 'parse', nowIso);
+          detailErrorByJobId.set(entry.item.jobId, 'parse');
           detailsFailed += 1;
           continue;
         }
@@ -1287,6 +1448,7 @@ export class DiscoveryService {
         persistedById.set(upserted.id, matchable);
         await this.runState.completeDetail(entry.item.jobId);
         detailsFetched += 1;
+        descriptionsExtracted += 1;
         if (selectedSamples.length < 8) {
           selectedSamples.push({
             jobId: entry.item.jobId,
@@ -1308,6 +1470,8 @@ export class DiscoveryService {
       detailsFetched,
       detailsFailed,
       detailsSkipped,
+      detailsRequested,
+      descriptionsExtracted,
       selectedSample: selectedSamples,
     });
 
@@ -1321,6 +1485,9 @@ export class DiscoveryService {
       detailsSkipped,
       detailsBackoff: 0,
       detailsQueued: queued.queuedCount,
+      detailsRequested,
+      descriptionsExtracted,
+      detailErrorByJobId,
     };
   }
 
@@ -1665,19 +1832,25 @@ function toSourceQuery(
 function uniqueMatches(
   matches: readonly JobSearchMatch[],
 ): JobSearchMatch[] {
-  const seen = new Set<string>();
-  const unique: JobSearchMatch[] = [];
+  const byKey = new Map<string, JobSearchMatch>();
 
   for (const match of matches) {
     const key = `${match.jobId}:${match.savedSearchId}`;
-    if (seen.has(key)) {
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, match);
       continue;
     }
-    seen.add(key);
-    unique.push(match);
+
+    if (
+      existing.matchStatus !== MATCH_STATUS.verified &&
+      match.matchStatus === MATCH_STATUS.verified
+    ) {
+      byKey.set(key, match);
+    }
   }
 
-  return unique;
+  return [...byKey.values()];
 }
 
 function mergeNotificationJobs(
@@ -1789,6 +1962,56 @@ function queueReasonFrom(
 function clipLogTitle(title: string): string {
   const trimmed = title.trim();
   return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
+}
+
+function fallbackOutcome(
+  result: { detailsFetched: number; detailsFailed?: number },
+  sourceJobId: string,
+): SourceDetailFetchOutcome {
+  const detailFetched = result.detailsFetched > 0;
+  return {
+    sourceJobId,
+    requestSucceeded: detailFetched,
+    detailFetched,
+    descriptionExtracted: detailFetched,
+    errorCategory: detailFetched ? null : 'empty',
+    httpStatus: detailFetched ? 200 : null,
+  };
+}
+
+function provenancesFromQueueItem(
+  jobId: string,
+  item: DetailQueueItem | undefined,
+): Map<string, SearchScopedProvenance[]> {
+  const map = new Map<string, SearchScopedProvenance[]>();
+  if (
+    !item?.queryTerm ||
+    (item.queryTermKind !== 'user' && item.queryTermKind !== 'profession_variant')
+  ) {
+    return map;
+  }
+
+  map.set(jobId, [
+    {
+      savedSearchId: '',
+      keyword: item.queryTerm,
+      origin: item.queryTermKind,
+      location: item.queryLocation,
+    },
+  ]);
+  return map;
+}
+
+function provenancesByPersistedJob(
+  persisted: readonly MatchableJob[],
+  byIdentity: ReadonlyMap<string, readonly SearchScopedProvenance[]>,
+): Map<string, SearchScopedProvenance[]> {
+  const mapped = new Map<string, SearchScopedProvenance[]>();
+  for (const job of persisted) {
+    const identity = sourceListingIdentity(job.sourceId, job.sourceJobId ?? '');
+    mapped.set(job.id, [...(byIdentity.get(identity) ?? [])]);
+  }
+  return mapped;
 }
 
 function uniqueSourceIds(values: readonly SourceId[]): SourceId[] {

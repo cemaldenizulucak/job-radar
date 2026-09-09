@@ -4,6 +4,8 @@ import {
   isAllowedJobSourceUrl,
   redirectKeepsJobSourceHost,
 } from '../../common/job-source-url.js';
+import { isUsableJobDescription } from '../../jobs/listing-description.js';
+import type { SourceDetailFetchOutcome } from '../detail-fetch.types.js';
 import {
   isSourceError,
   SourceAuthenticationError,
@@ -26,7 +28,8 @@ import {
   isKariyerNetDebugHtmlEnabled,
   writeKariyerNetDebugHtml,
 } from './kariyer-net-debug-html.js';
-import { parseKariyerNetSearchHtml, parseKariyerNetJobDetailHtml } from './kariyer-net-html.parser.js';
+import { parseKariyerNetSearchHtml } from './kariyer-net-html.parser.js';
+import { classifyKariyerNetDetailResponse } from './kariyer-net-detail-result.js';
 import {
   kariyerNetPageSignature,
   shouldStopKariyerNetPagination,
@@ -115,7 +118,7 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
               pagesFetched,
               accumulated: jobsById.size,
               stopReason,
-              errorCategory: 'authentication',
+              errorCategory: 'challenge',
             });
             break;
           }
@@ -204,24 +207,34 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
     jobs: readonly KariyerNetRawJob[];
     detailsFetched: number;
     detailsFailed: number;
+    detailsRequested: number;
+    descriptionsExtracted: number;
+    outcomes: SourceDetailFetchOutcome[];
   }> {
     const enriched: KariyerNetRawJob[] = jobs.map((job) => ({ ...job }));
-    let detailsFetched = 0;
-    let detailsFailed = 0;
+    const outcomes: SourceDetailFetchOutcome[] = [];
 
     for (const job of enriched) {
       if (hasText(job.description)) {
         continue;
       }
 
-      if (detailsFetched + detailsFailed >= this.config.maxDetailRequests) {
+      if (outcomes.length >= this.config.maxDetailRequests) {
         break;
       }
 
+      const sourceJobId = kariyerJobIdentity(job) ?? '';
       const url =
         typeof job.canonicalUrl === 'string' ? job.canonicalUrl.trim() : '';
       if (!url || !isAllowedJobSourceUrl(url)) {
-        detailsFailed += 1;
+        outcomes.push({
+          sourceJobId,
+          requestSucceeded: false,
+          detailFetched: false,
+          descriptionExtracted: false,
+          errorCategory: 'invalid_url',
+          httpStatus: null,
+        });
         continue;
       }
 
@@ -230,29 +243,80 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
       try {
         const response = await this.getWithRetry(url);
         if (!redirectKeepsJobSourceHost(url, response.finalUrl)) {
-          detailsFailed += 1;
-          continue;
-        }
-        if (isBlockedHttpStatus(response.status)) {
-          detailsFailed += 1;
+          outcomes.push({
+            sourceJobId,
+            requestSucceeded: false,
+            detailFetched: false,
+            descriptionExtracted: false,
+            errorCategory: 'redirect',
+            httpStatus: response.status,
+          });
           continue;
         }
 
-        throwIfFailedStatus(response.status);
-        const detail = parseKariyerNetJobDetailHtml(response.body, url, this.config.baseUrl);
-        if (detail.description) {
-          job.description = detail.description;
+        const classified = classifyKariyerNetDetailResponse({
+          httpStatus: response.status,
+          html: response.body,
+          canonicalUrl: url,
+          baseUrl: this.config.baseUrl,
+        });
+        if (!classified.detailFetched) {
+          this.logger.warn({
+            message: 'Kariyer.net listing detail was not usable',
+            source: 'kariyer_net',
+            errorCategory: classified.errorCategory,
+            httpStatus: classified.httpStatus,
+            requestSucceeded: classified.requestSucceeded,
+            detailFetched: classified.detailFetched,
+            descriptionExtracted: classified.descriptionExtracted,
+          });
         }
-        if (!hasText(job.publishedAt) && detail.publishedAt) {
-          job.publishedAt = detail.publishedAt;
+        if (classified.description && isUsableJobDescription(classified.description)) {
+          job.description = classified.description;
         }
-        detailsFetched += 1;
-      } catch {
-        detailsFailed += 1;
+        if (!hasText(job.publishedAt) && classified.publishedAt) {
+          job.publishedAt = classified.publishedAt;
+        }
+        outcomes.push({
+          sourceJobId,
+          requestSucceeded: classified.requestSucceeded,
+          detailFetched: classified.detailFetched,
+          descriptionExtracted: classified.descriptionExtracted,
+          errorCategory: classified.errorCategory,
+          httpStatus: classified.httpStatus,
+        });
+      } catch (error) {
+        const category =
+          error instanceof SourceRateLimitError
+            ? 'rate_limit'
+            : error instanceof SourceUnavailableError
+              ? 'unavailable'
+              : 'unavailable';
+        outcomes.push({
+          sourceJobId,
+          requestSucceeded: false,
+          detailFetched: false,
+          descriptionExtracted: false,
+          errorCategory: category,
+          httpStatus: null,
+        });
       }
     }
 
-    return { jobs: enriched, detailsFetched, detailsFailed };
+    const detailsFetched = outcomes.filter((item) => item.detailFetched).length;
+    const descriptionsExtracted = outcomes.filter(
+      (item) => item.descriptionExtracted,
+    ).length;
+    const detailsFailed = outcomes.filter((item) => !item.detailFetched).length;
+
+    return {
+      jobs: enriched,
+      detailsFetched,
+      detailsFailed,
+      detailsRequested: outcomes.length,
+      descriptionsExtracted,
+      outcomes,
+    };
   }
 
   private async fetchSearchPage(
@@ -277,7 +341,7 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
       this.logger.warn({
         message: 'Kariyer.net served a challenge or login wall',
         source: 'kariyer_net',
-        errorCategory: 'authentication',
+        errorCategory: 'challenge',
         page,
         httpStatus: response.status,
       });
@@ -312,7 +376,7 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
       this.logger.warn({
         message: 'Kariyer.net served a challenge or login wall',
         source: 'kariyer_net',
-        errorCategory: 'authentication',
+        errorCategory: 'challenge',
         page,
       });
       return { kind: 'blocked' };

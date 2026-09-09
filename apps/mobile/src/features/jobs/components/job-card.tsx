@@ -7,7 +7,7 @@ import { pressOpacity } from '@/constants/ui';
 import { FavoriteHeartButton } from '@/features/favorites/components/favorite-heart-button';
 import { useTheme } from '@/hooks/use-theme';
 
-import { jobsCopy } from '../copy';
+import { jobsCopy, isUnverifiedSourceMatch } from '../copy';
 import { useJobsSeenStore } from '../stores/jobs-seen.store';
 import type { JobListItem } from '../types/job.types';
 import {
@@ -78,6 +78,7 @@ export function JobCard({
           isNew: appearance.showNewBadge,
           isFavorite,
           relevanceLabel,
+          isPossibleMatch: isUnverifiedSourceMatch(job.matchStatus),
         })}
         disabled={!onPress}
         onPress={onPress}
@@ -105,6 +106,13 @@ export function JobCard({
             backgroundColor={sourceAppearance.badgeBackground}
             textColor={sourceAppearance.badgeTextColor}
           />
+          {isUnverifiedSourceMatch(job.matchStatus) ? (
+            <AppBadge
+              label={jobsCopy.possibleMatchBadge}
+              backgroundColor={theme.warningMuted}
+              textColor={theme.text}
+            />
+          ) : null}
         </View>
 
         <View style={styles.body}>

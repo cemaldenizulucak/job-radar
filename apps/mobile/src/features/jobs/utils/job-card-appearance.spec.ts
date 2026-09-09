@@ -64,4 +64,17 @@ describe('jobCardAccessibilityLabel', () => {
       }),
     ).toBe('Yeni, Frontend Developer, Acme, Kariyer.net, Favori');
   });
+
+  it('announces a possible match without invented evidence', () => {
+    expect(
+      jobCardAccessibilityLabel({
+        title: 'Kalite Mühendisi',
+        companyName: 'Example Food Co',
+        sourceLabel: 'Kariyer.net',
+        isUnread: false,
+        isNew: false,
+        isPossibleMatch: true,
+      }),
+    ).toBe('Kalite Mühendisi, Example Food Co, Kariyer.net, Olası eşleşme');
+  });
 });

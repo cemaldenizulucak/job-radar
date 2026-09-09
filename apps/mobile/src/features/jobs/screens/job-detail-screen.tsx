@@ -21,7 +21,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { ApplicationStatusPicker } from '../components/application-status-picker';
 import { DuplicateJobRow } from '../components/duplicate-job-row';
 import { JobDetailHeader } from '../components/job-detail-header';
-import { jobsCopy, jobsUiError, matchKindLabel } from '../copy';
+import { jobsCopy, jobsUiError, matchKindLabel, isUnverifiedSourceMatch } from '../copy';
 import type { JobApplicationStatus, JobDetail, MatchedSearch } from '../types/job.types';
 import { formatTurkishJobDateFromIso } from '../utils/job-dates';
 import {
@@ -284,17 +284,29 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
 }
 
 function MatchedSearchBlock({ search }: { search: MatchedSearch }) {
-  const kind = matchKindLabel(search.matchKind);
-  const terms = search.terms.length > 0 ? search.terms.join(', ') : null;
-  const snippets = search.evidence
-    .map((item) => item.snippet ?? item.matchedText)
-    .filter((value) => value.trim().length > 0);
+  const unverified = isUnverifiedSourceMatch(search.matchStatus);
+  const kind = unverified ? jobsCopy.possibleMatchBadge : matchKindLabel(search.matchKind);
+  const terms = unverified
+    ? null
+    : search.terms.length > 0
+      ? search.terms.join(', ')
+      : null;
+  const snippets = unverified
+    ? []
+    : search.evidence
+        .map((item) => item.snippet ?? item.matchedText)
+        .filter((value) => value.trim().length > 0);
 
   return (
     <View style={styles.matchBlock}>
       <DetailRow label={jobsCopy.matchedSearchLabel} value={search.name} />
       {kind ? <DetailRow label={jobsCopy.matchKindLabel} value={kind} /> : null}
-      {search.evidence.some((item) => item.basis === 'education_field') ? (
+      {unverified ? (
+        <ThemedText type="meta" themeColor="textSecondary">
+          {jobsCopy.possibleMatchHint}
+        </ThemedText>
+      ) : null}
+      {!unverified && search.evidence.some((item) => item.basis === 'education_field') ? (
         <DetailRow
           label={jobsCopy.matchBasisLabel}
           value={jobsCopy.matchBasisEducation}

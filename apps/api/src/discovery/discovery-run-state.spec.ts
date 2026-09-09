@@ -76,9 +76,10 @@ describe('MemoryDiscoveryRunStateStore', () => {
   it('reclaims an in-progress job after the lease expires', async () => {
     const store = new MemoryDiscoveryRunStateStore();
     await store.enqueueDetails([sample]);
+    const now = '2099-01-01T00:00:00.000Z';
     const first = await store.listDueDetails(
       'kariyer_net',
-      '2026-09-09T12:00:00.000Z',
+      now,
       1,
     );
     expect(first).toHaveLength(1);
@@ -86,14 +87,14 @@ describe('MemoryDiscoveryRunStateStore', () => {
 
     const stillLeased = await store.listDueDetails(
       'kariyer_net',
-      '2026-09-09T12:01:00.000Z',
+      '2099-01-01T00:01:00.000Z',
       1,
     );
     expect(stillLeased).toEqual([]);
 
     const afterCrash = await store.listDueDetails(
       'kariyer_net',
-      '2026-09-09T12:03:00.000Z',
+      '2099-01-01T00:03:00.000Z',
       1,
     );
     expect(afterCrash.map((item) => item.jobId)).toEqual(['job-1']);
@@ -102,7 +103,7 @@ describe('MemoryDiscoveryRunStateStore', () => {
   it('does not let a second worker claim a leased job', async () => {
     const store = new MemoryDiscoveryRunStateStore();
     await store.enqueueDetails([sample]);
-    const now = '2026-09-09T12:00:00.000Z';
+    const now = '2099-01-01T00:00:00.000Z';
     const first = await store.listDueDetails('kariyer_net', now, 1);
     const second = await store.listDueDetails('kariyer_net', now, 1);
     expect(first.map((item) => item.jobId)).toEqual(['job-1']);
@@ -112,7 +113,7 @@ describe('MemoryDiscoveryRunStateStore', () => {
   it('does not return the same jobId from two concurrent claims', async () => {
     const store = new MemoryDiscoveryRunStateStore();
     await store.enqueueDetails([sample]);
-    const now = '2026-09-09T12:00:00.000Z';
+    const now = '2099-01-01T00:00:00.000Z';
     const [left, right] = await Promise.all([
       store.listDueDetails('kariyer_net', now, 1),
       store.listDueDetails('kariyer_net', now, 1),
@@ -124,7 +125,7 @@ describe('MemoryDiscoveryRunStateStore', () => {
   it('clears the queue row on success and keeps backoff metadata together on failure', async () => {
     const store = new MemoryDiscoveryRunStateStore();
     await store.enqueueDetails([sample, { ...sample, jobId: 'job-2', sourceJobId: 'ext-2' }]);
-    const now = '2026-09-09T12:00:00.000Z';
+    const now = '2099-01-01T00:00:00.000Z';
     const claimed = await store.listDueDetails('kariyer_net', now, 1);
     const claimedId = claimed[0]?.jobId ?? '';
     await store.completeDetail(claimedId);

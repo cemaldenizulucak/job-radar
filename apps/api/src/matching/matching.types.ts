@@ -1,4 +1,5 @@
 import type { SourceId, WorkModel } from '../common/domain.types.js';
+import type { MatchStatus } from './match-status.js';
 import type { JobRoleFamily } from './search-terms.js';
 
 export type MatchableJob = {
@@ -20,6 +21,7 @@ export type MatchableJob = {
 export type JobSearchMatch = {
   jobId: string;
   savedSearchId: string;
+  matchStatus?: MatchStatus;
 };
 
 export type MatchFieldResult = 'pass' | 'fail' | 'unknown' | 'skipped';

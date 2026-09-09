@@ -45,6 +45,8 @@ export type DiscoveryRunSummary = {
   detailsSkipped: number;
   detailsBackoff: number;
   detailsQueued: number;
+  detailsRequested: number;
+  descriptionsExtracted: number;
   providerModes: Readonly<Record<string, string>>;
 };
 
@@ -81,6 +83,8 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   detailsSkipped: 0,
   detailsBackoff: 0,
   detailsQueued: 0,
+  detailsRequested: 0,
+  descriptionsExtracted: 0,
   providerModes: {},
 };
 
@@ -158,8 +162,12 @@ export type ListingDiagnosis = {
 
 export type ListingDetailRefreshResult = {
   jobId: string;
+  requestSucceeded: boolean;
   detailFetched: boolean;
+  descriptionExtracted: boolean;
   descriptionStored: boolean;
+  errorCategory: string | null;
+  httpStatus: number | null;
   matchesCreated: number;
   decisions: readonly {
     savedSearchId: string;

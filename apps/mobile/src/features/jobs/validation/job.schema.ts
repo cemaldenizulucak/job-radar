@@ -30,6 +30,7 @@ export const jobListItemSchema = z.object({
   isNew: z.boolean(),
   isSeen: z.boolean(),
   isFavorite: z.boolean().optional(),
+  matchStatus: z.enum(['verified', 'unverified_source_candidate']).optional(),
 });
 
 export const duplicateJobLinkSchema = z.object({
@@ -73,6 +74,7 @@ export const jobDetailSchema = jobListItemSchema.extend({
             }),
           )
           .optional(),
+        matchStatus: z.enum(['verified', 'unverified_source_candidate']).optional(),
       }),
     )
     .optional(),

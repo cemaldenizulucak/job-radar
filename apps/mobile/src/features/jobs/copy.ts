@@ -75,7 +75,16 @@ export const jobsCopy = {
   matchBasisEducation: 'Eğitim alanı eşdeğerliği',
   matchedTermsLabel: 'Eşleşen terimler',
   matchEvidenceLabel: 'Kanıt',
+  possibleMatchBadge: 'Olası eşleşme',
+  possibleMatchHint:
+    'İlan Kariyer.net’te arama kriterinizle bulundu ancak açıklama doğrulanamadı.',
 } as const;
+
+export function isUnverifiedSourceMatch(
+  status: string | null | undefined,
+): boolean {
+  return status === 'unverified_source_candidate';
+}
 
 export function matchKindLabel(
   kind: 'direct' | 'skill' | null | undefined,

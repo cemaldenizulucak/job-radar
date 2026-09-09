@@ -39,6 +39,7 @@ export function mapJobListItem(
     ...parsed,
     isMatched: parsed.isMatched ?? parsed.matchedSearchIds.length > 0,
     isFavorite: parsed.isFavorite ?? false,
+    matchStatus: parsed.matchStatus ?? 'verified',
   };
 }
 
@@ -51,9 +52,10 @@ function mapJobDetail(parsed: ReturnType<typeof jobDetailSchema.parse>): JobDeta
     matchedSearches: (parsed.matchedSearches ?? []).map((search) => ({
       id: search.id,
       name: search.name,
-      matchKind: search.matchKind ?? null,
-      terms: search.terms ?? [],
-      evidence: search.evidence ?? [],
+        matchKind: search.matchKind ?? null,
+        terms: search.terms ?? [],
+        evidence: search.evidence ?? [],
+        matchStatus: search.matchStatus ?? 'verified',
     })),
     duplicateJobs: parsed.duplicateJobs ?? [],
     isFavorite: parsed.isFavorite ?? false,

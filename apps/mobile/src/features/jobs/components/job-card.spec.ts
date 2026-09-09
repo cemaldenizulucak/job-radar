@@ -14,5 +14,7 @@ describe('JobCard favorite control', () => {
     expect(source.indexOf('FavoriteHeartButton')).toBeLessThan(source.indexOf('onPress={onPress}'));
     expect(source).toContain('paddingRight: 52');
     expect(source).toContain('numberOfLines={2}');
+    expect(source).toContain('possibleMatchBadge');
+    expect(source).not.toContain('açıklamada geçiyor');
   });
 });

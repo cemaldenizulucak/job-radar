@@ -167,17 +167,25 @@ class FakeJobsService extends JobsService {
     const created: JobSearchMatch[] = [];
 
     for (const match of matches) {
-      const exists = this.matches.some(
+      const incomingStatus = match.matchStatus ?? 'verified';
+      const existing = this.matches.find(
         (item) =>
           item.jobId === match.jobId &&
           item.savedSearchId === match.savedSearchId,
       );
-      if (exists) {
+      if (existing) {
+        if (
+          incomingStatus === 'verified' &&
+          existing.matchStatus === 'unverified_source_candidate'
+        ) {
+          existing.matchStatus = 'verified';
+        }
         continue;
       }
 
-      this.matches.push(match);
-      created.push(match);
+      const stored = { ...match, matchStatus: incomingStatus };
+      this.matches.push(stored);
+      created.push(stored);
     }
 
     return Promise.resolve(created);
@@ -192,14 +200,55 @@ class FakeJobsService extends JobsService {
     const desiredKeys = new Set(
       desired.map((match) => `${match.jobId}:${match.savedSearchId}`),
     );
-    const kept = this.matches.filter(
-      (match) =>
-        !allowed.has(match.savedSearchId) ||
-        desiredKeys.has(`${match.jobId}:${match.savedSearchId}`),
-    );
+    const kept = this.matches.filter((match) => {
+      if (!allowed.has(match.savedSearchId)) {
+        return true;
+      }
+      if (desiredKeys.has(`${match.jobId}:${match.savedSearchId}`)) {
+        return true;
+      }
+      return match.matchStatus === 'unverified_source_candidate';
+    });
     this.matches.length = 0;
     this.matches.push(...kept);
     return this.saveMatches(desired);
+  }
+
+  override reconcileUnverifiedSourceCandidates(input: {
+    searchIds: readonly string[];
+    candidates: readonly JobSearchMatch[];
+    describedJobIds: ReadonlySet<string>;
+  }): Promise<JobSearchMatch[]> {
+    const allowed = new Set(input.searchIds);
+    const desired = input.candidates.filter((match) =>
+      allowed.has(match.savedSearchId),
+    );
+    const desiredKeys = new Set(
+      desired.map((match) => `${match.jobId}:${match.savedSearchId}`),
+    );
+    const kept = this.matches.filter((match) => {
+      if (!allowed.has(match.savedSearchId)) {
+        return true;
+      }
+      if (match.matchStatus !== 'unverified_source_candidate') {
+        return true;
+      }
+      if (
+        input.describedJobIds.has(match.jobId) &&
+        !desiredKeys.has(`${match.jobId}:${match.savedSearchId}`)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    this.matches.length = 0;
+    this.matches.push(...kept);
+    return this.saveMatches(
+      desired.map((match) => ({
+        ...match,
+        matchStatus: 'unverified_source_candidate',
+      })),
+    );
   }
 
   override markInactiveNotSeenSince(): Promise<number> {
@@ -350,6 +399,57 @@ function sameMembers(
 
   const rightSet = new Set(right);
   return left.every((id) => rightSet.has(id));
+}
+
+async function seedUnverifiedQualityListing(
+  jobs: FakeJobsService,
+  options: {
+    searchId: string;
+    sourceJobId: string;
+    description: string | null;
+  },
+): Promise<string> {
+  const id = `kariyer_net:${options.sourceJobId}`;
+  jobs.matches.push({
+    jobId: id,
+    savedSearchId: options.searchId,
+    matchStatus: 'unverified_source_candidate',
+  });
+  await jobs.upsertNormalized({
+    sourceId: 'kariyer_net',
+    sourceJobId: options.sourceJobId,
+    canonicalUrl: `https://www.kariyer.net/is-ilani/${options.sourceJobId}`,
+    title: 'Kalite Mühendisi',
+    companyName: 'Example Food Co',
+    titleNormalized: 'kalite muhendisi',
+    companyNormalized: 'example food co',
+    description: options.description,
+    location: 'Manisa',
+    workModel: null,
+    experienceLevel: null,
+    technologies: [],
+    publishedAt: null,
+    isActive: true,
+  });
+  return id;
+}
+
+function idleKariyerAdapter(
+  enrich?: JobSourceAdapter['enrichMissingDescriptions'],
+): JobSourceAdapter {
+  return {
+    sourceId: 'kariyer_net',
+    displayName: 'Kariyer.net',
+    capabilities: {
+      supportsKeywordSearch: true,
+      supportsLocation: true,
+      supportsRemoteFilter: false,
+      supportsExperienceLevel: false,
+    },
+    isEnabled: () => true,
+    search: async () => ({ sourceId: 'kariyer_net', jobs: [] }),
+    ...(enrich ? { enrichMissingDescriptions: enrich } : {}),
+  };
 }
 
 function createDiscovery(
@@ -813,7 +913,7 @@ describe('DiscoveryService', () => {
     expect(result.matchesCreated).toBe(1);
     expect(result.notificationsCreated).toBe(1);
     expect(jobs.matches).toEqual([
-      { jobId: 'existing-job-id', savedSearchId: 'search-1' },
+      { jobId: 'existing-job-id', savedSearchId: 'search-1', matchStatus: 'verified' },
     ]);
 
     const second = await discovery.run();
@@ -1235,6 +1335,7 @@ describe('DiscoveryService', () => {
       {
         jobId: sourceListingIdentity('linkedin', 'existing-frontend'),
         savedSearchId: 'search-new',
+        matchStatus: 'verified',
       },
     ]);
   });
@@ -1288,6 +1389,7 @@ describe('DiscoveryService', () => {
       {
         jobId: sourceListingIdentity('linkedin', 'existing-computer'),
         savedSearchId: 'search-bilgisayar',
+        matchStatus: 'verified',
       },
     ]);
   });
@@ -1350,6 +1452,7 @@ describe('DiscoveryService', () => {
       {
         jobId: sourceListingIdentity('linkedin', 'shared-computer'),
         savedSearchId: 'search-a',
+        matchStatus: 'verified',
       },
     ]);
     expect(
@@ -1591,6 +1694,7 @@ describe('DiscoveryService', () => {
       {
         jobId: sourceListingIdentity('linkedin', 'gida-izmir'),
         savedSearchId: 'search-izmir',
+        matchStatus: 'verified',
       },
     ]);
     expect(searches.discoveredAt.get('search-izmir')).toEqual(
@@ -1728,6 +1832,7 @@ describe('DiscoveryService', () => {
       {
         jobId: sourceListingIdentity('linkedin', 'li-gida-1'),
         savedSearchId: 'search-gida',
+        matchStatus: 'verified',
       },
     ]);
   });
@@ -1792,6 +1897,108 @@ describe('DiscoveryService', () => {
     expect(applied.deleteCount).toBe(1);
     expect(jobs.matches).toEqual([]);
     expect(jobs.listings.size).toBe(1);
+  });
+
+  it('keeps an unverified source candidate on rematch when the description is still missing', async () => {
+    const jobs = new FakeJobsService();
+    const jobId = await seedUnverifiedQualityListing(jobs, {
+      searchId: 'search-keep-unverified',
+      sourceJobId: 'quality-rematch-keep',
+      description: null,
+    });
+    const { discovery } = createDiscovery(
+      [
+        search({
+          id: 'search-keep-unverified',
+          keywords: ['Gıda Mühendisi'],
+          sourceIds: ['kariyer_net'],
+        }),
+      ],
+      [idleKariyerAdapter()],
+      jobs,
+    );
+
+    const preview = await discovery.rematchStoredMatches();
+    expect(preview.deleteCount).toBe(0);
+    expect(preview.keepCount).toBe(1);
+    expect(jobs.matches).toHaveLength(1);
+
+    const applied = await discovery.rematchStoredMatches({ dryRun: false });
+    expect(applied.deleteCount).toBe(0);
+    expect(applied.listingsUnchanged).toBe(true);
+    expect(applied.applicationsUnchanged).toBe(true);
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({
+        jobId,
+        savedSearchId: 'search-keep-unverified',
+        matchStatus: 'unverified_source_candidate',
+      }),
+    ]);
+    expect(jobs.listings.size).toBe(1);
+    expect(jobs.listings.get(jobId)?.job.description).toBeNull();
+  });
+
+  it('upgrades an unverified candidate on rematch when a stored description matches', async () => {
+    const jobs = new FakeJobsService();
+    const jobId = await seedUnverifiedQualityListing(jobs, {
+      searchId: 'search-rematch-upgrade',
+      sourceJobId: 'quality-rematch-upgrade',
+      description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+    });
+    const { discovery } = createDiscovery(
+      [
+        search({
+          id: 'search-rematch-upgrade',
+          keywords: ['Gıda Mühendisi'],
+          sourceIds: ['kariyer_net'],
+        }),
+      ],
+      [idleKariyerAdapter()],
+      jobs,
+    );
+
+    const applied = await discovery.rematchStoredMatches({ dryRun: false });
+    expect(applied.deleteCount).toBe(0);
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({
+        jobId,
+        savedSearchId: 'search-rematch-upgrade',
+        matchStatus: 'verified',
+      }),
+    ]);
+    expect(jobs.listings.size).toBe(1);
+  });
+
+  it('removes only the unverified candidate on rematch when a stored description does not match', async () => {
+    const jobs = new FakeJobsService();
+    const jobId = await seedUnverifiedQualityListing(jobs, {
+      searchId: 'search-rematch-remove',
+      sourceJobId: 'quality-rematch-remove',
+      description: 'Sadece ofis asistanı aranıyor, mühendislik yok',
+    });
+    const { discovery } = createDiscovery(
+      [
+        search({
+          id: 'search-rematch-remove',
+          keywords: ['Gıda Mühendisi'],
+          sourceIds: ['kariyer_net'],
+        }),
+      ],
+      [idleKariyerAdapter()],
+      jobs,
+    );
+
+    const preview = await discovery.rematchStoredMatches();
+    expect(preview.deleteCount).toBe(1);
+    expect(jobs.matches).toHaveLength(1);
+
+    const applied = await discovery.rematchStoredMatches({ dryRun: false });
+    expect(applied.deleteCount).toBe(1);
+    expect(applied.listingsUnchanged).toBe(true);
+    expect(applied.applicationsUnchanged).toBe(true);
+    expect(jobs.matches).toEqual([]);
+    expect(jobs.listings.size).toBe(1);
+    expect(jobs.listings.get(jobId)?.job.description).toContain('ofis asistanı');
   });
 
   it('sends alternative keywords and cities as separate queries, not one AND query', async () => {
@@ -2829,7 +3036,10 @@ describe('DiscoveryService', () => {
     });
     expect(fetchedUrls).toEqual(['https://www.kariyer.net/is-ilani/refresh-1']);
     expect(result.detailFetched).toBe(true);
+    expect(result.descriptionExtracted).toBe(true);
     expect(result.descriptionStored).toBe(true);
+    expect(result.requestSucceeded).toBe(true);
+    expect(result.errorCategory).toBeNull();
     expect(result.matchesCreated).toBeGreaterThan(0);
     expect(jobs.listings.get('kariyer_net:refresh-1')?.job.description).toContain(
       'Gıda Mühendisliği',
@@ -2841,5 +3051,458 @@ describe('DiscoveryService', () => {
     await expect(
       discovery.refreshListingDetail({ jobId: 'missing-job' }),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('does not report a 403 CAPTCHA detail refresh as success', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'kariyer_net', jobs: [] }),
+      enrichMissingDescriptions: async (jobs) => ({
+        jobs,
+        detailsFetched: 0,
+        detailsFailed: 1,
+        outcomes: jobs.map((item) => ({
+          sourceJobId: item.sourceJobId,
+          requestSucceeded: false,
+          detailFetched: false,
+          descriptionExtracted: false,
+          errorCategory: 'challenge' as const,
+          httpStatus: 403,
+        })),
+      }),
+    };
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'kariyer_net',
+      sourceJobId: 'captcha-1',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/captcha-1',
+      title: 'Kalite Mühendisi',
+      companyName: 'Example Food Co',
+      titleNormalized: 'kalite muhendisi',
+      companyNormalized: 'example food co',
+      description: null,
+      location: 'Manisa',
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+      publishedAt: null,
+      isActive: true,
+    });
+    const target = search({
+      id: 'search-captcha',
+      keywords: ['Gıda Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, runState } = createDiscovery([target], [adapter], jobs);
+    await runState.enqueueDetails([
+      {
+        jobId: 'kariyer_net:captcha-1',
+        sourceId: 'kariyer_net',
+        sourceJobId: 'captcha-1',
+        sourceUrl: 'https://www.kariyer.net/is-ilani/captcha-1',
+        priority: 0,
+        reason: 'profession_variant',
+        queryTermKind: 'profession_variant',
+        queryTerm: 'Gıda Mühendisliği',
+        queryLocation: null,
+      },
+    ]);
+
+    const result = await discovery.refreshListingDetail({
+      jobId: 'kariyer_net:captcha-1',
+    });
+
+    expect(result.detailFetched).toBe(false);
+    expect(result.descriptionExtracted).toBe(false);
+    expect(result.descriptionStored).toBe(false);
+    expect(result.requestSucceeded).toBe(false);
+    expect(result.errorCategory).toBe('challenge');
+    expect(result.httpStatus).toBe(403);
+    expect(jobs.listings.get('kariyer_net:captcha-1')?.job.description).toBeNull();
+    expect(runState.queue.get('kariyer_net:captcha-1')?.status).not.toBeUndefined();
+    expect(runState.queue.has('kariyer_net:captcha-1')).toBe(true);
+  });
+
+  it('keeps a blocked profession-variant listing as an unverified source candidate', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        if (query.keywords[0] !== 'Gıda Mühendisliği') {
+          return { sourceId: 'kariyer_net', jobs: [] };
+        }
+        return {
+          sourceId: 'kariyer_net',
+          jobs: [
+            {
+              sourceJobId: 'quality-blocked',
+              canonicalUrl: 'https://www.kariyer.net/is-ilani/quality-blocked',
+              title: 'Kalite Mühendisi',
+              companyName: 'Example Food Co',
+              location: 'Manisa',
+              listPage: 1,
+            },
+          ],
+        };
+      },
+      enrichMissingDescriptions: async (jobs) => ({
+        jobs,
+        detailsFetched: 0,
+        detailsFailed: jobs.length,
+        outcomes: jobs.map((item) => ({
+          sourceJobId: item.sourceJobId,
+          requestSucceeded: false,
+          detailFetched: false,
+          descriptionExtracted: false,
+          errorCategory: 'challenge' as const,
+          httpStatus: 403,
+        })),
+      }),
+    };
+    const target = search({
+      id: 'search-unverified',
+      keywords: ['Gıda Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs, runState } = createDiscovery([target], [adapter]);
+
+    await discovery.runForSavedSearch(target);
+    await discovery.runForSavedSearch(target);
+
+    expect(jobs.listings.has('kariyer_net:quality-blocked')).toBe(true);
+    expect(jobs.listings.get('kariyer_net:quality-blocked')?.job.description).toBeNull();
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({
+        jobId: 'kariyer_net:quality-blocked',
+        savedSearchId: 'search-unverified',
+        matchStatus: 'unverified_source_candidate',
+      }),
+    ]);
+    expect(runState.queue.get('kariyer_net:quality-blocked')?.status).not.toBe(
+      undefined,
+    );
+  });
+
+  it('does not create an unverified candidate for an unrelated source hit', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({
+        sourceId: 'kariyer_net',
+        jobs: [
+          {
+            sourceJobId: 'machine-1',
+            canonicalUrl: 'https://www.kariyer.net/is-ilani/machine-1',
+            title: 'Makine Mühendisi',
+            companyName: 'Gıda A.Ş.',
+            location: 'Manisa',
+            listPage: 1,
+          },
+        ],
+      }),
+      enrichMissingDescriptions: async (jobs) => ({
+        jobs,
+        detailsFetched: 0,
+        detailsFailed: jobs.length,
+        outcomes: jobs.map((item) => ({
+          sourceJobId: item.sourceJobId,
+          requestSucceeded: false,
+          detailFetched: false,
+          descriptionExtracted: false,
+          errorCategory: 'challenge' as const,
+          httpStatus: 403,
+        })),
+      }),
+    };
+    const target = search({
+      id: 'search-unrelated',
+      keywords: ['Gıda Mühendisliği'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs } = createDiscovery([target], [adapter]);
+
+    await discovery.runForSavedSearch(target);
+
+    expect(jobs.listings.has('kariyer_net:machine-1')).toBe(true);
+    expect(jobs.matches).toEqual([]);
+  });
+
+  it('upgrades an unverified candidate when a later description matches', async () => {
+    const jobs = new FakeJobsService();
+    jobs.matches.push({
+      jobId: 'kariyer_net:quality-later',
+      savedSearchId: 'search-upgrade',
+      matchStatus: 'unverified_source_candidate',
+    });
+    await jobs.upsertNormalized({
+      sourceId: 'kariyer_net',
+      sourceJobId: 'quality-later',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/quality-later',
+      title: 'Kalite Mühendisi',
+      companyName: 'Example Food Co',
+      titleNormalized: 'kalite muhendisi',
+      companyNormalized: 'example food co',
+      description: null,
+      location: 'Manisa',
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+      publishedAt: null,
+      isActive: true,
+    });
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'kariyer_net', jobs: [] }),
+      enrichMissingDescriptions: async (current) => ({
+        jobs: current.map((item) => ({
+          ...item,
+          description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+        })),
+        detailsFetched: current.length,
+        detailsFailed: 0,
+        outcomes: current.map((item) => ({
+          sourceJobId: item.sourceJobId,
+          requestSucceeded: true,
+          detailFetched: true,
+          descriptionExtracted: true,
+          errorCategory: null,
+          httpStatus: 200,
+        })),
+      }),
+    };
+    const target = search({
+      id: 'search-upgrade',
+      keywords: ['Gıda Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter], jobs);
+
+    const result = await discovery.refreshListingDetail({
+      jobId: 'kariyer_net:quality-later',
+    });
+
+    expect(result.detailFetched).toBe(true);
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({
+        jobId: 'kariyer_net:quality-later',
+        savedSearchId: 'search-upgrade',
+        matchStatus: 'verified',
+      }),
+    ]);
+  });
+
+  it('removes an unverified candidate when a later description does not match', async () => {
+    const jobs = new FakeJobsService();
+    jobs.matches.push({
+      jobId: 'kariyer_net:quality-remove',
+      savedSearchId: 'search-remove',
+      matchStatus: 'unverified_source_candidate',
+    });
+    await jobs.upsertNormalized({
+      sourceId: 'kariyer_net',
+      sourceJobId: 'quality-remove',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/quality-remove',
+      title: 'Kalite Mühendisi',
+      companyName: 'Example Food Co',
+      titleNormalized: 'kalite muhendisi',
+      companyNormalized: 'example food co',
+      description: null,
+      location: 'Manisa',
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+      publishedAt: null,
+      isActive: true,
+    });
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'kariyer_net', jobs: [] }),
+      enrichMissingDescriptions: async (current) => ({
+        jobs: current.map((item) => ({
+          ...item,
+          description: 'Sadece ofis asistanı aranıyor, mühendislik yok',
+        })),
+        detailsFetched: current.length,
+        detailsFailed: 0,
+        outcomes: current.map((item) => ({
+          sourceJobId: item.sourceJobId,
+          requestSucceeded: true,
+          detailFetched: true,
+          descriptionExtracted: true,
+          errorCategory: null,
+          httpStatus: 200,
+        })),
+      }),
+    };
+    const target = search({
+      id: 'search-remove',
+      keywords: ['Gıda Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter], jobs);
+
+    await discovery.refreshListingDetail({
+      jobId: 'kariyer_net:quality-remove',
+    });
+
+    expect(jobs.matches).toEqual([]);
+    expect(jobs.listings.get('kariyer_net:quality-remove')?.job.description).toContain(
+      'ofis asistanı',
+    );
+  });
+
+  it('does not change an existing verified match when detail is blocked', async () => {
+    const jobs = new FakeJobsService();
+    jobs.matches.push({
+      jobId: 'kariyer_net:already-verified',
+      savedSearchId: 'search-keep',
+      matchStatus: 'verified',
+    });
+    await jobs.upsertNormalized({
+      sourceId: 'kariyer_net',
+      sourceJobId: 'already-verified',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/already-verified',
+      title: 'Gıda Mühendisi',
+      companyName: 'Example Food Co',
+      titleNormalized: 'gida muhendisi',
+      companyNormalized: 'example food co',
+      description: 'Gıda Mühendisliği mezunu',
+      location: 'Manisa',
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+      publishedAt: null,
+      isActive: true,
+    });
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({ sourceId: 'kariyer_net', jobs: [] }),
+      enrichMissingDescriptions: async (current) => ({
+        jobs: current,
+        detailsFetched: 0,
+        detailsFailed: current.length,
+        outcomes: current.map((item) => ({
+          sourceJobId: item.sourceJobId,
+          requestSucceeded: false,
+          detailFetched: false,
+          descriptionExtracted: false,
+          errorCategory: 'challenge' as const,
+          httpStatus: 403,
+        })),
+      }),
+    };
+    const target = search({
+      id: 'search-keep',
+      keywords: ['Gıda Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter], jobs);
+
+    await discovery.refreshListingDetail({
+      jobId: 'kariyer_net:already-verified',
+    });
+
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({
+        jobId: 'kariyer_net:already-verified',
+        savedSearchId: 'search-keep',
+        matchStatus: 'verified',
+      }),
+    ]);
+    expect(jobs.listings.get('kariyer_net:already-verified')?.job.description).toBe(
+      'Gıda Mühendisliği mezunu',
+    );
+  });
+
+  it('keeps an unverified candidate when listing-detail refresh is still blocked', async () => {
+    const jobs = new FakeJobsService();
+    const jobId = await seedUnverifiedQualityListing(jobs, {
+      searchId: 'search-refresh-blocked',
+      sourceJobId: 'quality-refresh-blocked',
+      description: null,
+    });
+    const { discovery } = createDiscovery(
+      [
+        search({
+          id: 'search-refresh-blocked',
+          keywords: ['Gıda Mühendisi'],
+          sourceIds: ['kariyer_net'],
+        }),
+      ],
+      [
+        idleKariyerAdapter(async (current) => ({
+          jobs: current,
+          detailsFetched: 0,
+          detailsFailed: current.length,
+          outcomes: current.map((item) => ({
+            sourceJobId: item.sourceJobId,
+            requestSucceeded: false,
+            detailFetched: false,
+            descriptionExtracted: false,
+            errorCategory: 'challenge' as const,
+            httpStatus: 403,
+          })),
+        })),
+      ],
+      jobs,
+    );
+
+    const result = await discovery.refreshListingDetail({ jobId });
+
+    expect(result.detailFetched).toBe(false);
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({
+        jobId,
+        savedSearchId: 'search-refresh-blocked',
+        matchStatus: 'unverified_source_candidate',
+      }),
+    ]);
+    expect(jobs.listings.get(jobId)?.job.description).toBeNull();
   });
 });
