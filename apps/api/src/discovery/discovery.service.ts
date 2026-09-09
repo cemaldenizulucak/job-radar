@@ -1,15 +1,24 @@
 import { randomUUID } from 'node:crypto';
 
-import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  forwardRef,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { SourceId } from '../common/domain.types.js';
+import { assertAllowedJobSourceUrl } from '../common/job-source-url.js';
 import { hasExplicitSearchLocationFilter, coalesceSubdivisionNames } from '../common/search-location.js';
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
 import { LocationsService } from '../locations/locations.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
 import { JobsService } from '../jobs/jobs.service.js';
-import type { NormalizedJob } from '../jobs/jobs.types.js';
+import { mergeNormalizedJobUpdate } from '../jobs/listing-merge.js';
+import type { CatalogListingRecord, NormalizedJob } from '../jobs/jobs.types.js';
 import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { MatchingService } from '../matching/matching.service.js';
 import { queryMatchKind } from '../matching/match-text.js';
@@ -20,7 +29,7 @@ import type { PersistedJobForNotification } from '../notifications/notifications
 import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { SearchesService } from '../searches/searches.service.js';
-import type { JobSourceAdapter, SourceSearchQuery, SourceJobRaw } from '../sources/job-source.adapter.js';
+import type { SourceSearchQuery, SourceJobRaw } from '../sources/job-source.adapter.js';
 import { sourceErrorCategory } from '../sources/source-errors.js';
 import { SourceRegistry } from '../sources/source-registry.js';
 import { KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS } from '../sources/kariyer-net/kariyer-net-web.config.js';
@@ -32,18 +41,26 @@ import {
   readPositiveIntEnv,
 } from './discovery-window.js';
 import { selectDetailCandidates } from './detail-candidates.js';
+import type { DetailCandidate } from './detail-candidates.js';
 import { recordProvenance } from './source-job-provenance.js';
 import type { SourceQueryProvenance } from './source-job-provenance.js';
 import { DiscoveryRunGate } from './discovery-run-gate.js';
-import { DiscoveryScanCursorStore } from './discovery-scan-cursor.js';
+import {
+  DiscoveryRunStateStore,
+  type DetailQueueEnqueueInput,
+  type DetailQueueItem,
+  type DetailQueueReason,
+} from './discovery-run-state.js';
 import {
   EMPTY_DISCOVERY_SUMMARY,
   FAILED_DISCOVERY_RESULT,
   PENDING_DISCOVERY_RESULT,
   toImmediateDiscoveryResult,
+  type DetailQueueBackfillReport,
   type DiscoveryRunSummary,
   type ImmediateDiscoveryResult,
   type ListingDiagnosis,
+  type ListingDetailRefreshResult,
   type MatchReevaluationPair,
   type MatchReevaluationReport,
 } from './discovery.types.js';
@@ -54,6 +71,10 @@ import {
   listingMatchesDiagnosisTarget,
   parseDiagnosisListingUrl,
 } from './diagnosis-listing-url.js';
+import {
+  countQueryOutcomes,
+  type QueryUnitOutcome,
+} from './query-accounting.js';
 import {
   DEFAULT_MAX_QUERIES_PER_SEARCH_SOURCE,
   DEFAULT_TIME_BUDGET_MS_PER_SEARCH_SOURCE,
@@ -73,10 +94,22 @@ type SearchSourceFetchStat = {
   normalizedJobCount: number;
   queriesAttempted: number;
   queriesCompleted: number;
+  queriesBlocked: number;
+  queriesFailed: number;
   queriesDeferred: number;
   detailsFetched: number;
   detailsFailed: number;
+  detailsSelected: number;
+  detailsAttempted: number;
+  detailsSkipped: number;
+  detailsBackoff: number;
+  detailsQueued: number;
   providerMode: string | null;
+};
+
+type DetailIntent = Omit<DetailQueueEnqueueInput, 'jobId'> & {
+  identity: string;
+  title: string;
 };
 
 @Injectable()
@@ -84,7 +117,6 @@ export class DiscoveryService {
   private readonly logger = new Logger(DiscoveryService.name);
   private readonly runGate = new DiscoveryRunGate();
   private readonly immediateRuns = new Map<string, ImmediateDiscoveryResult>();
-  private readonly scanCursors = new DiscoveryScanCursorStore();
 
   constructor(
     @Inject(forwardRef(() => SearchesService))
@@ -98,6 +130,8 @@ export class DiscoveryService {
     private readonly profilesService: ProfilesService,
     private readonly config: ConfigService,
     private readonly locationsService: LocationsService,
+    @Inject(DiscoveryRunStateStore)
+    private readonly runState: DiscoveryRunStateStore,
   ) {
     void this.profilesService;
   }
@@ -225,6 +259,179 @@ export class DiscoveryService {
     });
   }
 
+  async refreshListingDetail(input: {
+    jobId: string;
+  }): Promise<ListingDetailRefreshResult> {
+    const jobId = input.jobId.trim();
+    if (!jobId) {
+      throw new BadRequestException('jobId is required.');
+    }
+
+    const listing = await this.jobsService.getListingById(jobId);
+    if (!listing) {
+      throw new NotFoundException('Job not found.');
+    }
+
+    let storedUrl: URL;
+    try {
+      storedUrl = assertAllowedJobSourceUrl(listing.canonicalUrl);
+    } catch {
+      throw new BadRequestException('Stored listing URL is not allowed.');
+    }
+
+    const adapter = this.sourceRegistry.get(listing.sourceId);
+    if (!adapter?.isEnabled() || !adapter.enrichMissingDescriptions) {
+      throw new BadRequestException('Listing source cannot fetch details.');
+    }
+
+    const raw: SourceJobRaw = {
+      sourceJobId: listing.sourceJobId,
+      canonicalUrl: storedUrl.toString(),
+      title: listing.title,
+      companyName: listing.companyName,
+      location: listing.location ?? undefined,
+      workModel: listing.workModel ?? undefined,
+      description: listing.description ?? undefined,
+      publishedAt: listing.publishedAt ?? undefined,
+      experienceLevel: listing.experienceLevel ?? undefined,
+      technologies: listing.technologies,
+    };
+
+    let detailFetched = false;
+    let enriched = raw;
+    try {
+      const result = await adapter.enrichMissingDescriptions([raw]);
+      enriched = result.jobs[0] ?? raw;
+      detailFetched = result.detailsFetched > 0;
+    } catch (error) {
+      this.logger.warn({
+        message: 'Listing detail refresh failed',
+        jobId,
+        source: listing.sourceId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+
+    const incoming = normalizeSourceJob(listing.sourceId, enriched);
+    if (!incoming) {
+      throw new BadRequestException('Listing could not be normalized.');
+    }
+
+    const merged = mergeNormalizedJobUpdate(incoming, listing);
+    await this.jobsService.upsertNormalized(merged);
+    const descriptionStored = Boolean(merged.description?.trim());
+
+    const searches = await this.searchesService.getActiveSearches();
+    const matchable = toMatchableJob(jobId, merged);
+    const desired = this.matchingService.matchJobsToSearches(
+      [matchable],
+      searches,
+    );
+    const created = await this.jobsService.syncMatchesForSearches(
+      searches.map((search) => search.id),
+      desired,
+    );
+    const decisions = searches.map((search) => {
+      const decision = this.matchingService.evaluateMatch(matchable, search);
+      return {
+        savedSearchId: search.id,
+        matched: decision.matched,
+        keyword: decision.keyword,
+        location: decision.location,
+      };
+    });
+
+    await this.runState.completeDetail(jobId);
+
+    return {
+      jobId,
+      detailFetched,
+      descriptionStored,
+      matchesCreated: created.length,
+      decisions,
+    };
+  }
+
+  async backfillDetailQueue(
+    options: { dryRun?: boolean } = {},
+  ): Promise<DetailQueueBackfillReport> {
+    const dryRun = options.dryRun !== false;
+    const searches = await this.searchesService.getActiveSearches();
+    const eligible = await this.jobsService.listEmptyDescriptionListings();
+    const ranked = [...eligible].sort((left, right) => {
+      const leftFit = this.locationFitsActiveSearches(left, searches) ? 0 : 1;
+      const rightFit = this.locationFitsActiveSearches(right, searches) ? 0 : 1;
+      if (leftFit !== rightFit) {
+        return leftFit - rightFit;
+      }
+      return left.id.localeCompare(right.id);
+    });
+
+    const items: DetailQueueEnqueueInput[] = ranked.map((listing) => ({
+      jobId: listing.id,
+      sourceId: listing.sourceId,
+      sourceJobId: listing.sourceJobId,
+      sourceUrl: listing.canonicalUrl,
+      priority: this.locationFitsActiveSearches(listing, searches) ? 2 : 3,
+      reason: 'backfill',
+      queryTermKind: null,
+      queryTerm: null,
+      queryLocation: listing.location,
+    }));
+
+    const queuedCount = dryRun
+      ? items.length
+      : (await this.runState.enqueueDetails(items)).queuedCount;
+
+    this.logger.log({
+      message: dryRun
+        ? 'Detail queue backfill preview'
+        : 'Detail queue backfill applied',
+      dryRun,
+      eligibleCount: eligible.length,
+      queuedCount,
+    });
+
+    return {
+      dryRun,
+      eligibleCount: eligible.length,
+      queuedCount,
+      samples: ranked.slice(0, 10).map((listing) => ({
+        jobId: listing.id,
+        title: clipLogTitle(listing.title),
+        sourceId: listing.sourceId,
+        location: listing.location,
+      })),
+    };
+  }
+
+  private locationFitsActiveSearches(
+    listing: Pick<CatalogListingRecord, 'location' | 'title' | 'sourceId' | 'id'>,
+    searches: readonly SavedSearch[],
+  ): boolean {
+    const locationSearches = searches.filter((search) =>
+      hasExplicitSearchLocationFilter(search),
+    );
+    if (locationSearches.length === 0) {
+      return searches.length > 0;
+    }
+
+    const job = {
+      id: listing.id,
+      sourceId: listing.sourceId,
+      title: listing.title,
+      companyName: '',
+      description: null,
+      location: listing.location,
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+    };
+    return locationSearches.some(
+      (search) => this.matchingService.evaluateMatch(job, search).location === 'pass',
+    );
+  }
+
   private async runEnqueuedSearch(savedSearch: SavedSearch): Promise<void> {
     try {
       const summary = await this.runForSavedSearch(savedSearch);
@@ -291,12 +498,15 @@ export class DiscoveryService {
       });
     }
 
-    if (fetched.detailAttempts.length > 0) {
-      await this.jobsService.recordDetailFetchAttempts(
-        fetched.detailAttempts,
-        new Date().toISOString(),
-      );
-    }
+    const detailDrain = await this.enqueueAndDrainDetails({
+      runId,
+      uniqueJobs: fetched.uniqueJobs,
+      persisted,
+      intents: fetched.detailIntents,
+      searches,
+    });
+    jobsInserted += detailDrain.jobsInserted;
+    jobsUpdated += detailDrain.jobsUpdated;
 
     const matchableJobs = mergeJobLists(catalogJobs, persisted);
     const liveMatches = this.matchingService.matchJobsToSearches(
@@ -369,9 +579,19 @@ export class DiscoveryService {
       providerModes: fetched.providerModes,
       queriesAttempted: fetched.queriesAttempted,
       queriesCompleted: fetched.queriesCompleted,
+      queriesBlocked: fetched.queriesBlocked,
+      queriesFailed: fetched.queriesFailed,
       queriesDeferred: fetched.queriesDeferred,
-      detailsFetched: fetched.detailsFetched,
-      detailsFailed: fetched.detailsFailed,
+      detailsFetched: detailDrain.detailsFetched,
+      detailsFailed: detailDrain.detailsFailed,
+      detailsSelected: detailDrain.detailsSelected,
+      detailsAttempted: detailDrain.detailsAttempted,
+      detailsSkipped: detailDrain.detailsSkipped,
+      detailsBackoff: fetched.perSearch.reduce(
+        (total, stat) => total + stat.detailsBackoff,
+        0,
+      ),
+      detailsQueued: detailDrain.detailsQueued,
       kariyerNetPagesFetched: fetched.kariyerNetPagesFetched,
       kariyerNetJobsCollected: fetched.kariyerNetJobsCollected,
       stopReason: fetched.stopReason,
@@ -400,9 +620,19 @@ export class DiscoveryService {
       scanKind: fetched.scanKind,
       queriesAttempted: fetched.queriesAttempted,
       queriesCompleted: fetched.queriesCompleted,
+      queriesBlocked: fetched.queriesBlocked,
+      queriesFailed: fetched.queriesFailed,
       queriesDeferred: fetched.queriesDeferred,
-      detailsFetched: fetched.detailsFetched,
-      detailsFailed: fetched.detailsFailed,
+      detailsFetched: detailDrain.detailsFetched,
+      detailsFailed: detailDrain.detailsFailed,
+      detailsSelected: detailDrain.detailsSelected,
+      detailsAttempted: detailDrain.detailsAttempted,
+      detailsSkipped: detailDrain.detailsSkipped,
+      detailsBackoff: fetched.perSearch.reduce(
+        (total, stat) => total + stat.detailsBackoff,
+        0,
+      ),
+      detailsQueued: detailDrain.detailsQueued,
       providerModes: fetched.providerModes,
     };
   }
@@ -469,15 +699,11 @@ export class DiscoveryService {
     scanKind: ScanKind | 'mixed';
     queriesAttempted: number;
     queriesCompleted: number;
+    queriesBlocked: number;
+    queriesFailed: number;
     queriesDeferred: number;
-    detailsFetched: number;
-    detailsFailed: number;
     providerModes: Record<string, string>;
-    detailAttempts: readonly {
-      sourceId: SourceId;
-      sourceJobId: string;
-      attempts: number;
-    }[];
+    detailIntents: readonly DetailIntent[];
   }> {
     const uniqueJobs = new Map<string, NormalizedJob>();
     let jobsFetched = 0;
@@ -490,14 +716,11 @@ export class DiscoveryService {
     let sourcePartials = 0;
     let queriesAttempted = 0;
     let queriesCompleted = 0;
+    let queriesBlocked = 0;
+    let queriesFailed = 0;
     let queriesDeferred = 0;
-    let detailsFetched = 0;
-    let detailsFailed = 0;
-    const detailAttempts: {
-      sourceId: SourceId;
-      sourceJobId: string;
-      attempts: number;
-    }[] = [];
+    const detailIntents: DetailIntent[] = [];
+    const intentKeys = new Set<string>();
     const providerModes: Record<string, string> = {};
     const scanKinds = new Set<ScanKind>();
     const perSearch: SearchSourceFetchStat[] = [];
@@ -528,19 +751,32 @@ export class DiscoveryService {
           normalizedJobCount: fetched.accepted,
           queriesAttempted: fetched.queriesAttempted,
           queriesCompleted: fetched.queriesCompleted,
+          queriesBlocked: fetched.queriesBlocked,
+          queriesFailed: fetched.queriesFailed,
           queriesDeferred: fetched.queriesDeferred,
-          detailsFetched: fetched.detailsFetched,
-          detailsFailed: fetched.detailsFailed,
+          detailsFetched: 0,
+          detailsFailed: 0,
+          detailsSelected: 0,
+          detailsAttempted: 0,
+          detailsSkipped: fetched.detailsSkipped,
+          detailsBackoff: fetched.detailsBackoff,
+          detailsQueued: fetched.detailIntents.length,
           providerMode: fetched.providerMode,
         });
         jobsFetched += fetched.accepted;
         rawProviderJobs += fetched.raw;
         queriesAttempted += fetched.queriesAttempted;
         queriesCompleted += fetched.queriesCompleted;
+        queriesBlocked += fetched.queriesBlocked;
+        queriesFailed += fetched.queriesFailed;
         queriesDeferred += fetched.queriesDeferred;
-        detailsFetched += fetched.detailsFetched;
-        detailsFailed += fetched.detailsFailed;
-        detailAttempts.push(...fetched.detailAttempts);
+        for (const intent of fetched.detailIntents) {
+          if (intentKeys.has(intent.identity)) {
+            continue;
+          }
+          intentKeys.add(intent.identity);
+          detailIntents.push(intent);
+        }
         if (fetched.providerMode) {
           providerModes[sourceId] = fetched.providerMode;
         }
@@ -580,11 +816,11 @@ export class DiscoveryService {
       scanKind,
       queriesAttempted,
       queriesCompleted,
+      queriesBlocked,
+      queriesFailed,
       queriesDeferred,
-      detailsFetched,
-      detailsFailed,
       providerModes,
-      detailAttempts,
+      detailIntents,
     };
   }
 
@@ -600,20 +836,18 @@ export class DiscoveryService {
     stopReason: string | null;
     queriesAttempted: number;
     queriesCompleted: number;
+    queriesBlocked: number;
+    queriesFailed: number;
     queriesDeferred: number;
-    detailsFetched: number;
-    detailsFailed: number;
+    detailsSkipped: number;
+    detailsBackoff: number;
+    detailIntents: readonly DetailIntent[];
     providerMode: string | null;
     kariyerNet?: {
       pagesFetched: number;
       jobsCollected: number;
       stopReason: string | null;
     };
-    detailAttempts: readonly {
-      sourceId: SourceId;
-      sourceJobId: string;
-      attempts: number;
-    }[];
   }> {
     const adapter = this.sourceRegistry.get(sourceId);
 
@@ -632,21 +866,24 @@ export class DiscoveryService {
         stopReason: null,
         queriesAttempted: 0,
         queriesCompleted: 0,
+        queriesBlocked: 0,
+        queriesFailed: 0,
         queriesDeferred: 0,
-        detailsFetched: 0,
-        detailsFailed: 0,
+        detailsSkipped: 0,
+        detailsBackoff: 0,
+        detailIntents: [],
         providerMode: adapter?.providerMode ?? null,
-        detailAttempts: [],
       };
     }
 
     const units = buildSourceQueryUnits(search);
     const fingerprint = sourceQueryPlanFingerprint(search);
-    const startIndex = this.scanCursors.read(
+    const cursor = await this.runState.readQueryCursor(
       search.id,
       sourceId,
       fingerprint,
-    ).nextIndex;
+    );
+    const startIndex = cursor.nextIndex;
     const planned = selectQueryUnits(units, {
       startIndex,
       maxQueries: this.maxQueriesPerSearchSource(),
@@ -657,16 +894,22 @@ export class DiscoveryService {
     const provenances = new Map<string, SourceQueryProvenance[]>();
     let raw = 0;
     let accepted = 0;
-    let queriesCompleted = 0;
-    let queriesFailed = 0;
     let pagesFetched = 0;
     let stopReason: string | null = null;
     let providerMode = adapter.providerMode ?? null;
-    const deferredFromPlan = [...planned.deferred];
+    const outcomes: QueryUnitOutcome[] = [];
+    let haltRemaining: Extract<QueryUnitOutcome, 'blocked' | 'deferred'> | null =
+      null;
 
     for (const unit of planned.selected) {
+      if (haltRemaining) {
+        outcomes.push(haltRemaining);
+        continue;
+      }
+
       if (Date.now() >= deadline) {
-        deferredFromPlan.push(unit);
+        haltRemaining = 'deferred';
+        outcomes.push('deferred');
         stopReason = preferStopReason(stopReason, 'time_budget');
         continue;
       }
@@ -691,49 +934,53 @@ export class DiscoveryService {
             page: Number.isFinite(job.listPage) ? (job.listPage as number) : 1,
           });
         }
-        queriesCompleted += 1;
+        outcomes.push('completed');
+        if (result.stopReason === 'blocked_after_success') {
+          haltRemaining = 'blocked';
+        }
       } catch (error) {
-        queriesFailed += 1;
+        const errorCategory = sourceErrorCategory(error);
+        const blocking =
+          errorCategory === 'authentication' || errorCategory === 'rate_limit';
+        outcomes.push(blocking ? 'blocked' : 'failed');
+        if (blocking) {
+          haltRemaining = 'blocked';
+          stopReason = preferStopReason(stopReason, 'blocked_after_success');
+        }
         this.logger.error({
-          message: 'Source query failed; keeping other query results',
+          message: blocking
+            ? 'Source query blocked; skipping remaining units'
+            : 'Source query failed; keeping other query results',
           runId: options.runId,
           source: sourceId,
           savedSearchId: search.id,
           providerMode,
           queryOrigin: unit.origin,
-          errorCategory: sourceErrorCategory(error),
+          errorCategory,
         });
       }
     }
 
-    const queriesDeferred = deferredFromPlan.length;
-    if (queriesDeferred > 0 && !stopReason) {
+    const counts = countQueryOutcomes(outcomes);
+    if (planned.deferred.length > 0 && !stopReason) {
       stopReason = 'query_budget';
     }
-    this.scanCursors.write(search.id, sourceId, {
-      fingerprint,
-      nextIndex: nextQueryStartIndex({
-        unitCount: units.length,
-        startIndex,
-        attempted: queriesCompleted + queriesFailed,
-        deferredCount: queriesDeferred,
-      }),
-    });
-
-    const enriched = await this.enrichCollectedDescriptions({
-      search,
+    await this.runState.writeQueryCursor(
+      search.id,
       sourceId,
-      adapter,
-      collected,
-      provenances,
-      deadline,
-      runId: options.runId,
-    });
-    const jobsForNormalize = enriched.jobs;
-    const detailsFetched = enriched.detailsFetched;
-    const detailsFailed = enriched.detailsFailed;
-    const detailAttempts = enriched.detailAttempts;
+      {
+        fingerprint,
+        nextIndex: nextQueryStartIndex({
+          unitCount: units.length,
+          startIndex,
+          attempted: counts.completed + counts.failed,
+          leftoverCount: counts.blocked + counts.deferred,
+        }),
+      },
+      startIndex,
+    );
 
+    const jobsForNormalize = [...collected.values()];
     const now = new Date();
     for (const rawJob of jobsForNormalize) {
       const normalized = normalizeSourceJob(sourceId, rawJob);
@@ -759,11 +1006,51 @@ export class DiscoveryService {
       );
     }
 
+    const catalog = await this.jobsService.listDetailFetchStates(
+      jobsForNormalize.map((job) => ({
+        sourceId,
+        sourceJobId: job.sourceJobId,
+      })),
+    );
+    const withCatalogText = jobsForNormalize.map((job) => {
+      const identity = sourceListingIdentity(sourceId, job.sourceJobId);
+      const stored = catalog.get(identity)?.description?.trim();
+      if (stored && !job.description?.trim()) {
+        return { ...job, description: stored };
+      }
+      return job;
+    });
+    const report = selectDetailCandidates({
+      sourceId,
+      search,
+      jobs: withCatalogText,
+      provenances,
+      catalog,
+      evaluateMatch: (job, currentSearch) =>
+        this.matchingService.evaluateMatch(job, currentSearch),
+      maxDetails: this.maxDetailRequests(sourceId),
+    });
+    const detailIntents = report.ranked.map((candidate) =>
+      toDetailIntent(sourceId, candidate),
+    );
+    this.logDetailSelection({
+      runId: options.runId,
+      sourceId,
+      savedSearchId: search.id,
+      queryCompleted: counts.completed,
+      queryBlocked: counts.blocked,
+      queryFailed: counts.failed,
+      queryDeferred: counts.deferred,
+      queryAttempted: counts.attempted,
+      report,
+    });
+
     const outcome = sourceOutcome({
-      queriesAttempted: planned.selected.length,
-      queriesCompleted,
-      queriesFailed,
-      queriesDeferred,
+      queriesAttempted: counts.attempted,
+      queriesCompleted: counts.completed,
+      queriesBlocked: counts.blocked,
+      queriesFailed: counts.failed,
+      queriesDeferred: counts.deferred,
       stopReason,
     });
 
@@ -775,15 +1062,19 @@ export class DiscoveryService {
       providerMode,
       scanKind: options.scanKind,
       durationMs: Date.now() - startedAt,
-      queriesAttempted: planned.selected.length,
-      queriesCompleted,
-      queriesDeferred,
+      queriesAttempted: counts.attempted,
+      queriesCompleted: counts.completed,
+      queriesBlocked: counts.blocked,
+      queriesFailed: counts.failed,
+      queriesDeferred: counts.deferred,
       fetched: raw,
       normalized: accepted,
       pagesFetched,
-      detailsFetched,
-      detailsFailed,
       jobsCollected: collected.size,
+      detailCandidates: report.ranked.length,
+      detailSelected: report.selected.length,
+      detailSkipped: report.skipped.length,
+      detailBackoff: report.backoffCount,
       stopReason,
     });
 
@@ -792,13 +1083,15 @@ export class DiscoveryService {
       raw,
       outcome,
       stopReason,
-      queriesAttempted: planned.selected.length,
-      queriesCompleted,
-      queriesDeferred,
-      detailsFetched,
-      detailsFailed,
+      queriesAttempted: counts.attempted,
+      queriesCompleted: counts.completed,
+      queriesBlocked: counts.blocked,
+      queriesFailed: counts.failed,
+      queriesDeferred: counts.deferred,
+      detailsSkipped: report.skipped.length,
+      detailsBackoff: report.backoffCount,
+      detailIntents,
       providerMode,
-      detailAttempts,
       kariyerNet:
         sourceId === 'kariyer_net'
           ? {
@@ -810,117 +1103,273 @@ export class DiscoveryService {
     };
   }
 
-  private async enrichCollectedDescriptions(input: {
-    search: SavedSearch;
-    sourceId: SourceId;
-    adapter: JobSourceAdapter;
-    collected: Map<string, SourceJobRaw>;
-    provenances: ReadonlyMap<string, readonly SourceQueryProvenance[]>;
-    deadline: number;
+  private async enqueueAndDrainDetails(input: {
     runId: string;
+    uniqueJobs: readonly NormalizedJob[];
+    persisted: MatchableJob[];
+    intents: readonly DetailIntent[];
+    searches: readonly SavedSearch[];
   }): Promise<{
-    jobs: SourceJobRaw[];
+    jobsInserted: number;
+    jobsUpdated: number;
     detailsFetched: number;
     detailsFailed: number;
-    detailAttempts: readonly {
-      sourceId: SourceId;
-      sourceJobId: string;
-      attempts: number;
-    }[];
+    detailsSelected: number;
+    detailsAttempted: number;
+    detailsSkipped: number;
+    detailsBackoff: number;
+    detailsQueued: number;
   }> {
-    const jobs = [...input.collected.values()];
-    const emptyAttempts: {
-      sourceId: SourceId;
-      sourceJobId: string;
-      attempts: number;
-    }[] = [];
-    if (!input.adapter.enrichMissingDescriptions || jobs.length === 0) {
-      return { jobs, detailsFetched: 0, detailsFailed: 0, detailAttempts: emptyAttempts };
-    }
-
-    if (Date.now() >= input.deadline) {
-      return { jobs, detailsFetched: 0, detailsFailed: 0, detailAttempts: emptyAttempts };
-    }
-
-    const catalog = await this.jobsService.listDetailFetchStates(
-      jobs.map((job) => ({
-        sourceId: input.sourceId,
-        sourceJobId: job.sourceJobId,
-      })),
+    void input.searches;
+    const idByIdentity = new Map(
+      input.persisted.map((job) => [
+        sourceListingIdentity(job.sourceId, job.sourceJobId ?? ''),
+        job.id,
+      ]),
     );
-    const withCatalogText = jobs.map((job) => {
-      const identity = sourceListingIdentity(input.sourceId, job.sourceJobId);
-      const stored = catalog.get(identity)?.description?.trim();
-      if (stored && !job.description?.trim()) {
-        return { ...job, description: stored };
+    const enqueueItems: DetailQueueEnqueueInput[] = [];
+    for (const intent of input.intents) {
+      const jobId = idByIdentity.get(intent.identity);
+      if (!jobId) {
+        continue;
       }
-      return job;
-    });
-
-    const selected = selectDetailCandidates({
-      sourceId: input.sourceId,
-      search: input.search,
-      jobs: withCatalogText,
-      provenances: input.provenances,
-      catalog,
-      evaluateMatch: (job, search) => this.matchingService.evaluateMatch(job, search),
-      maxDetails: this.maxDetailRequests(input.sourceId),
-    });
-
-    if (selected.length === 0) {
-      return { jobs: withCatalogText, detailsFetched: 0, detailsFailed: 0, detailAttempts: [] };
+      enqueueItems.push({ ...intent, jobId });
     }
+    const queued = enqueueItems.length
+      ? await this.runState.enqueueDetails(enqueueItems)
+      : { queuedCount: 0 };
 
+    void input.uniqueJobs;
+    const seenThisRun = new Set(input.persisted.map((job) => job.id));
+
+    const sourceIds = uniqueSourceIds(
+      this.sourceRegistry.list().map((adapter) => adapter.sourceId),
+    );
+
+    let jobsInserted = 0;
+    let jobsUpdated = 0;
     let detailsFetched = 0;
     let detailsFailed = 0;
-    let enrichedSelected = selected.map((item) => item.job);
-    try {
-      const result = await input.adapter.enrichMissingDescriptions(enrichedSelected);
-      enrichedSelected = [...result.jobs];
-      detailsFetched = result.detailsFetched;
-      detailsFailed = result.detailsFailed;
-    } catch (error) {
-      detailsFailed = selected.length;
-      this.logger.warn({
-        message: 'Description enrichment failed; keeping list-card jobs',
-        runId: input.runId,
-        source: input.sourceId,
-        savedSearchId: input.search.id,
-        error: error instanceof Error ? error.message : 'unknown',
-      });
+    let detailsSelected = 0;
+    let detailsAttempted = 0;
+    let detailsSkipped = 0;
+    const nowIso = new Date().toISOString();
+    const persistedById = new Map(input.persisted.map((job) => [job.id, job]));
+    const selectedSamples: {
+      jobId: string;
+      title: string;
+      origin: string | null;
+      location: string | null;
+      priorityReason: string;
+    }[] = [];
+
+    for (const sourceId of sourceIds) {
+      const adapter = this.sourceRegistry.get(sourceId);
+      if (!adapter?.isEnabled() || !adapter.enrichMissingDescriptions) {
+        continue;
+      }
+
+      const due = await this.runState.listDueDetails(
+        sourceId,
+        nowIso,
+        this.maxDetailRequests(sourceId),
+      );
+      detailsSelected += due.length;
+      const toFetch: { item: DetailQueueItem; raw: SourceJobRaw }[] = [];
+
+      for (const item of due) {
+        let listing = persistedById.get(item.jobId) ?? null;
+        if (!listing) {
+          const catalog = await this.jobsService.getListingById(item.jobId);
+          listing = catalog ? toMatchableJob(catalog.id, catalog) : null;
+        }
+        if (listing?.description?.trim()) {
+          await this.runState.completeDetail(item.jobId);
+          detailsSkipped += 1;
+          continue;
+        }
+
+        try {
+          assertAllowedJobSourceUrl(item.sourceUrl);
+        } catch {
+          await this.runState.failDetail(item.jobId, 'invalid_url', nowIso);
+          detailsFailed += 1;
+          continue;
+        }
+
+        toFetch.push({
+          item,
+          raw: {
+            sourceJobId: item.sourceJobId,
+            canonicalUrl: item.sourceUrl,
+            title: listing?.title ?? item.sourceJobId,
+            companyName: listing?.companyName ?? 'Unknown',
+            location: listing?.location ?? item.queryLocation ?? undefined,
+            description: listing?.description ?? undefined,
+            workModel: listing?.workModel ?? undefined,
+            experienceLevel: listing?.experienceLevel ?? undefined,
+            technologies: listing?.technologies,
+          },
+        });
+      }
+
+      if (toFetch.length === 0) {
+        continue;
+      }
+
+      detailsAttempted += toFetch.length;
+      let enrichedJobs: SourceJobRaw[] = toFetch.map((entry) => entry.raw);
+      try {
+        const result = await adapter.enrichMissingDescriptions(
+          toFetch.map((entry) => entry.raw),
+        );
+        enrichedJobs = [...result.jobs];
+      } catch (error) {
+        this.logger.warn({
+          message: 'Description enrichment failed; keeping list-card jobs',
+          runId: input.runId,
+          source: sourceId,
+          error: error instanceof Error ? error.message : 'unknown',
+        });
+        for (const entry of toFetch) {
+          await this.runState.failDetail(entry.item.jobId, 'unavailable', nowIso);
+          detailsFailed += 1;
+        }
+        continue;
+      }
+
+      const bySourceJobId = new Map(
+        enrichedJobs.map((job) => [job.sourceJobId, job]),
+      );
+      for (const entry of toFetch) {
+        const detail = bySourceJobId.get(entry.item.sourceJobId);
+        const description = detail?.description?.trim() ?? '';
+        if (!description) {
+          await this.runState.failDetail(entry.item.jobId, 'empty', nowIso);
+          detailsFailed += 1;
+          continue;
+        }
+
+        const incoming = normalizeSourceJob(sourceId, {
+          ...entry.raw,
+          ...detail,
+          description,
+        });
+        if (!incoming) {
+          await this.runState.failDetail(entry.item.jobId, 'parse', nowIso);
+          detailsFailed += 1;
+          continue;
+        }
+
+        const existing = persistedById.get(entry.item.jobId);
+        const merged = mergeNormalizedJobUpdate(incoming, {
+          description: existing?.description ?? null,
+          publishedAt: existing?.publishedAt ?? null,
+        });
+        const upserted = await this.jobsService.upsertNormalized(merged);
+        if (!seenThisRun.has(upserted.id)) {
+          if (upserted.inserted) {
+            jobsInserted += 1;
+          } else {
+            jobsUpdated += 1;
+          }
+          seenThisRun.add(upserted.id);
+        }
+        const matchable = toMatchableJob(upserted.id, merged);
+        const persistedIndex = input.persisted.findIndex(
+          (job) => job.id === upserted.id,
+        );
+        if (persistedIndex >= 0) {
+          input.persisted[persistedIndex] = matchable;
+        } else {
+          input.persisted.push(matchable);
+        }
+        persistedById.set(upserted.id, matchable);
+        await this.runState.completeDetail(entry.item.jobId);
+        detailsFetched += 1;
+        if (selectedSamples.length < 8) {
+          selectedSamples.push({
+            jobId: entry.item.jobId,
+            title: clipLogTitle(entry.raw.title),
+            origin: entry.item.queryTermKind,
+            location: entry.item.queryLocation,
+            priorityReason: entry.item.reason,
+          });
+        }
+      }
     }
 
-    const byId = new Map(
-      enrichedSelected.map((job) => [job.sourceJobId, job]),
-    );
-    const merged = withCatalogText.map((job) => {
-      const detail = byId.get(job.sourceJobId);
-      if (!detail?.description?.trim()) {
-        return job;
-      }
-      return { ...job, description: detail.description };
+    this.logger.log({
+      message: 'Detail queue drained',
+      runId: input.runId,
+      detailsQueued: queued.queuedCount,
+      detailsSelected,
+      detailsAttempted,
+      detailsFetched,
+      detailsFailed,
+      detailsSkipped,
+      selectedSample: selectedSamples,
     });
+
+    return {
+      jobsInserted,
+      jobsUpdated,
+      detailsFetched,
+      detailsFailed,
+      detailsSelected,
+      detailsAttempted,
+      detailsSkipped,
+      detailsBackoff: 0,
+      detailsQueued: queued.queuedCount,
+    };
+  }
+
+  private logDetailSelection(input: {
+    runId: string;
+    sourceId: SourceId;
+    savedSearchId: string;
+    queryAttempted: number;
+    queryCompleted: number;
+    queryBlocked: number;
+    queryFailed: number;
+    queryDeferred: number;
+    report: ReturnType<typeof selectDetailCandidates>;
+  }): void {
+    const skippedHighPriority = input.report.skipped
+      .filter((item) => item.reason === 'budget')
+      .slice(0, 5)
+      .map((item) => ({
+        identity: item.identity,
+        title: item.title,
+        reason: item.reason,
+      }));
+    const selectedSample = input.report.selected.slice(0, 8).map((item) => ({
+      identity: item.identity,
+      title: clipLogTitle(item.job.title),
+      origin: item.provenances[0]?.origin ?? null,
+      location: item.provenances[0]?.location ?? null,
+      priorityReason: item.priorityReason,
+    }));
 
     this.logger.log({
       message: 'Description detail candidates selected',
       runId: input.runId,
       source: input.sourceId,
-      savedSearchId: input.search.id,
-      candidates: selected.length,
-      detailsFetched,
-      detailsFailed,
+      savedSearchId: input.savedSearchId,
+      candidateCount: input.report.ranked.length,
+      byPriority: input.report.byPriority,
+      selectedCount: input.report.selected.length,
+      skippedCount: input.report.skipped.length,
+      backoffCount: input.report.backoffCount,
+      skippedHasDescription: input.report.skippedHasDescription,
+      selectedSample,
+      skippedHighPrioritySample: skippedHighPriority,
+      queriesAttempted: input.queryAttempted,
+      queriesCompleted: input.queryCompleted,
+      queriesBlocked: input.queryBlocked,
+      queriesFailed: input.queryFailed,
+      queriesDeferred: input.queryDeferred,
     });
-
-    return {
-      jobs: merged,
-      detailsFetched,
-      detailsFailed,
-      detailAttempts: selected.map((item) => ({
-        sourceId: input.sourceId,
-        sourceJobId: item.job.sourceJobId,
-        attempts: (catalog.get(item.identity)?.detailFetchAttempts ?? 0) + 1,
-      })),
-    };
   }
 
   private maxDetailRequests(sourceId: SourceId): number {
@@ -1141,6 +1590,7 @@ const PARTIAL_STOP_REASONS = new Set([
 function sourceOutcome(input: {
   queriesAttempted: number;
   queriesCompleted: number;
+  queriesBlocked: number;
   queriesFailed: number;
   queriesDeferred: number;
   stopReason: string | null;
@@ -1149,12 +1599,17 @@ function sourceOutcome(input: {
     return 'ok';
   }
 
-  if (input.queriesCompleted === 0 && input.queriesFailed > 0) {
+  if (
+    input.queriesCompleted === 0 &&
+    input.queriesFailed > 0 &&
+    input.queriesBlocked === 0
+  ) {
     return 'failed';
   }
 
   if (
     input.queriesFailed > 0 ||
+    input.queriesBlocked > 0 ||
     input.queriesDeferred > 0 ||
     isPartialStopReason(input.stopReason)
   ) {
@@ -1302,4 +1757,40 @@ function toMatchableJob(id: string, job: NormalizedJob): MatchableJob {
     isActive: job.isActive,
     publishedAt: job.publishedAt,
   };
+}
+
+function toDetailIntent(sourceId: SourceId, candidate: DetailCandidate): DetailIntent {
+  const primary =
+    candidate.provenances.find((item) => item.origin === 'profession_variant') ??
+    candidate.provenances[0];
+  return {
+    identity: candidate.identity,
+    sourceId,
+    sourceJobId: candidate.job.sourceJobId,
+    sourceUrl: candidate.job.canonicalUrl,
+    title: candidate.job.title,
+    priority: candidate.priority,
+    reason: queueReasonFrom(candidate.priorityReason),
+    queryTermKind: primary?.origin ?? null,
+    queryTerm: primary?.keyword ?? null,
+    queryLocation: primary?.location ?? null,
+  };
+}
+
+function queueReasonFrom(
+  reason: DetailCandidate['priorityReason'],
+): DetailQueueReason {
+  if (reason === 'profession_variant' || reason === 'user_query') {
+    return reason;
+  }
+  return 'catalog_empty';
+}
+
+function clipLogTitle(title: string): string {
+  const trimmed = title.trim();
+  return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
+}
+
+function uniqueSourceIds(values: readonly SourceId[]): SourceId[] {
+  return [...new Set(values)];
 }

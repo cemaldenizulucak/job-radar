@@ -8,9 +8,12 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ProfilesModule } from '../profiles/profiles.module.js';
 import { SearchesModule } from '../searches/searches.module.js';
 import { SourcesModule } from '../sources/sources.module.js';
+import { SupabaseModule } from '../infrastructure/supabase/supabase.module.js';
 import { DevEndpointsGuard } from '../common/dev-endpoints.guard.js';
 import { DiscoveryController } from './discovery.controller.js';
 import { DiscoveryService } from './discovery.service.js';
+import { DiscoveryRunStateStore } from './discovery-run-state.js';
+import { PostgresDiscoveryRunStateStore } from './discovery-run-state.postgres.js';
 
 @Module({
   imports: [
@@ -22,9 +25,17 @@ import { DiscoveryService } from './discovery.service.js';
     LocationsModule,
     NotificationsModule,
     ProfilesModule,
+    SupabaseModule,
   ],
   controllers: [DiscoveryController],
-  providers: [DiscoveryService, DevEndpointsGuard],
+  providers: [
+    DiscoveryService,
+    DevEndpointsGuard,
+    {
+      provide: DiscoveryRunStateStore,
+      useClass: PostgresDiscoveryRunStateStore,
+    },
+  ],
   exports: [DiscoveryService],
 })
 export class DiscoveryModule {}

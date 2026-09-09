@@ -135,7 +135,7 @@ describe('nextQueryStartIndex', () => {
         unitCount: 3,
         startIndex: 0,
         attempted: 1,
-        deferredCount: 2,
+        leftoverCount: 2,
       }),
     ).toBe(1);
   });
@@ -146,20 +146,20 @@ describe('nextQueryStartIndex', () => {
         unitCount: 3,
         startIndex: 0,
         attempted: 2,
-        deferredCount: 1,
+        leftoverCount: 1,
       }),
     ).toBe(2);
   });
 
-  it('resets when nothing is deferred', () => {
+  it('does not snap back to zero after a full window when later units were blocked', () => {
     expect(
       nextQueryStartIndex({
-        unitCount: 6,
-        startIndex: 2,
-        attempted: 6,
-        deferredCount: 0,
+        unitCount: 8,
+        startIndex: 0,
+        attempted: 5,
+        leftoverCount: 3,
       }),
-    ).toBe(0);
+    ).toBe(5);
   });
 });
 

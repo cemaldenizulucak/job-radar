@@ -198,10 +198,14 @@ export function nextQueryStartIndex(input: {
   unitCount: number;
   startIndex: number;
   attempted: number;
-  deferredCount: number;
+  leftoverCount: number;
 }): number {
-  if (input.unitCount === 0 || input.deferredCount <= 0) {
+  if (input.unitCount === 0) {
     return 0;
+  }
+
+  if (input.leftoverCount <= 0 && input.attempted <= 0) {
+    return ((input.startIndex % input.unitCount) + input.unitCount) % input.unitCount;
   }
 
   return (input.startIndex + input.attempted) % input.unitCount;

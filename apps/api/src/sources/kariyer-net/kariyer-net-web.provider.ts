@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
 import {
+  isAllowedJobSourceUrl,
+  redirectKeepsJobSourceHost,
+} from '../../common/job-source-url.js';
+import {
   isSourceError,
   SourceAuthenticationError,
   SourceParseError,
@@ -216,7 +220,8 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
 
       const url =
         typeof job.canonicalUrl === 'string' ? job.canonicalUrl.trim() : '';
-      if (!url) {
+      if (!url || !isAllowedJobSourceUrl(url)) {
+        detailsFailed += 1;
         continue;
       }
 
@@ -224,6 +229,10 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
 
       try {
         const response = await this.getWithRetry(url);
+        if (!redirectKeepsJobSourceHost(url, response.finalUrl)) {
+          detailsFailed += 1;
+          continue;
+        }
         if (isBlockedHttpStatus(response.status)) {
           detailsFailed += 1;
           continue;

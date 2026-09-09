@@ -4,8 +4,10 @@ import { Public } from '../auth/public.decorator.js';
 import { DevEndpointsGuard } from '../common/dev-endpoints.guard.js';
 import { DiscoveryService } from './discovery.service.js';
 import type {
+  DetailQueueBackfillReport,
   DiscoveryRunSummary,
   ListingDiagnosis,
+  ListingDetailRefreshResult,
   MatchReevaluationReport,
 } from './discovery.types.js';
 
@@ -59,5 +61,35 @@ export class DiscoveryController {
     },
   ): Promise<ListingDiagnosis | null> {
     return this.discoveryService.diagnoseListing(body);
+  }
+
+  /**
+   * Fetches one catalog listing's detail via its stored source URL.
+   * Ignores any client-supplied URL. Disabled unless ENABLE_DEV_ENDPOINTS=true.
+   */
+  @Public()
+  @UseGuards(DevEndpointsGuard)
+  @Post('refresh-listing-detail')
+  refreshListingDetail(
+    @Body() body: { jobId?: string },
+  ): Promise<ListingDetailRefreshResult> {
+    return this.discoveryService.refreshListingDetail({
+      jobId: typeof body?.jobId === 'string' ? body.jobId : '',
+    });
+  }
+
+  /**
+   * Queues existing empty-description catalog rows for detail fetch.
+   * Defaults to dry-run. Set `{ "dryRun": false }` to apply.
+   */
+  @Public()
+  @UseGuards(DevEndpointsGuard)
+  @Post('backfill-detail-queue')
+  backfillDetailQueue(
+    @Body() body?: { dryRun?: boolean },
+  ): Promise<DetailQueueBackfillReport> {
+    return this.discoveryService.backfillDetailQueue({
+      dryRun: body?.dryRun !== false,
+    });
   }
 }

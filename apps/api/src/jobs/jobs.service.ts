@@ -10,6 +10,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import type { SourceId } from '../common/domain.types.js';
+import { isAllowedJobSourceUrl } from '../common/job-source-url.js';
+import { normalizeText } from '../common/normalize-text.js';
 import {
   DEFAULT_JOB_SOURCE_MAX_AGE_DAYS,
   readPositiveIntEnv,
@@ -37,6 +39,7 @@ import {
   type JobFeedRow,
 } from './jobs.mapper.js';
 import type {
+  CatalogListingRecord,
   JobDetail,
   JobDetailFetchState,
   JobListItem,
@@ -1111,6 +1114,55 @@ export class JobsService {
     return jobs;
   }
 
+  async getListingById(jobId: string): Promise<CatalogListingRecord | null> {
+    const trimmed = jobId.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('jobs')
+      .select(MATCHABLE_JOB_SELECT)
+      .eq('id', trimmed)
+      .maybeSingle();
+
+    if (error && error.code !== 'PGRST116') {
+      this.logSupabaseError(error);
+      throw new InternalServerErrorException('Failed to load job listing.');
+    }
+
+    return toCatalogListingRecord(mapMatchableJobRow(data));
+  }
+
+  async listEmptyDescriptionListings(): Promise<CatalogListingRecord[]> {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('jobs')
+      .select(MATCHABLE_JOB_SELECT)
+      .in('source', ['kariyer_net', 'linkedin'])
+      .limit(500);
+
+    if (error) {
+      this.logSupabaseError(error);
+      throw new InternalServerErrorException('Failed to load job listings.');
+    }
+
+    const listings: CatalogListingRecord[] = [];
+    for (const row of Array.isArray(data) ? data : []) {
+      const listing = toCatalogListingRecord(mapMatchableJobRow(row));
+      if (
+        listing &&
+        !listing.description?.trim() &&
+        isAllowedJobSourceUrl(listing.canonicalUrl)
+      ) {
+        listings.push(listing);
+      }
+    }
+
+    return listings;
+  }
+
   async saveMatches(matches: readonly JobSearchMatch[]): Promise<JobSearchMatch[]> {
     const created: JobSearchMatch[] = [];
 
@@ -1639,4 +1691,30 @@ function publishedAtForDatabase(value: string | null): string | null {
 
   const milliseconds = Date.parse(value);
   return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : null;
+}
+
+function toCatalogListingRecord(
+  job: MatchableJob | null,
+): CatalogListingRecord | null {
+  if (!job?.sourceJobId?.trim() || !job.canonicalUrl?.trim()) {
+    return null;
+  }
+
+  return {
+    id: job.id,
+    sourceId: job.sourceId,
+    sourceJobId: job.sourceJobId,
+    canonicalUrl: job.canonicalUrl,
+    title: job.title,
+    companyName: job.companyName,
+    titleNormalized: normalizeText(job.title),
+    companyNormalized: normalizeText(job.companyName),
+    description: job.description,
+    location: job.location,
+    workModel: job.workModel,
+    experienceLevel: job.experienceLevel,
+    technologies: job.technologies,
+    publishedAt: job.publishedAt ?? null,
+    isActive: job.isActive !== false,
+  };
 }

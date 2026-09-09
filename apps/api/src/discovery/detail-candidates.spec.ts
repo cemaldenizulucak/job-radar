@@ -180,7 +180,7 @@ describe('selectDetailCandidates', () => {
             })
           : decision({ title: item.title }),
       maxDetails: 1,
-    });
+    }).selected;
 
     expect(selected.map((item) => item.job.sourceJobId)).toEqual(['quality-1']);
   });
@@ -210,7 +210,7 @@ describe('selectDetailCandidates', () => {
       catalog: new Map(),
       evaluateMatch: () => decision(),
       maxDetails: 2,
-    });
+    }).selected;
 
     const cities = selected.map((item) => item.job.location).sort();
     expect(cities).toEqual(['Manisa', 'İzmir']);
@@ -238,7 +238,7 @@ describe('selectDetailCandidates', () => {
       catalog: new Map(),
       evaluateMatch: () => decision(),
       maxDetails: 8,
-    });
+    }).selected;
 
     expect(selected).toHaveLength(1);
     expect(selected[0]?.job.sourceJobId).toBe('dup-1');
@@ -258,7 +258,7 @@ describe('selectDetailCandidates', () => {
       catalog: new Map(),
       evaluateMatch: () => decision(),
       maxDetails: 8,
-    });
+    }).selected;
 
     expect(selected).toEqual([]);
   });
@@ -282,7 +282,7 @@ describe('selectDetailCandidates', () => {
       catalog: new Map(),
       evaluateMatch,
       maxDetails: 1,
-    });
+    }).selected;
     expect(firstPick).toHaveLength(1);
     const chosen = firstPick[0]?.identity ?? '';
 
@@ -304,7 +304,7 @@ describe('selectDetailCandidates', () => {
       evaluateMatch,
       maxDetails: 1,
       nowMs: Date.parse('2026-09-09T12:00:00.000Z'),
-    });
+    }).selected;
 
     expect(leftover).toHaveLength(1);
     expect(leftover[0]?.identity).not.toBe(chosen);

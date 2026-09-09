@@ -30,7 +30,37 @@ export type DetailCandidate = {
   job: SourceJobRaw;
   provenances: readonly SourceQueryProvenance[];
   priority: number;
+  priorityReason: DetailPriorityReason;
   queryKey: string;
+};
+
+export type DetailPriorityReason =
+  | 'profession_variant'
+  | 'user_query'
+  | 'catalog_empty'
+  | 'other';
+
+export type DetailSkipReason =
+  | 'has_description'
+  | 'backoff'
+  | 'definite_pass'
+  | 'definite_fail'
+  | 'blocked_other'
+  | 'budget';
+
+export type DetailSkipSample = {
+  identity: string;
+  title: string;
+  reason: DetailSkipReason;
+};
+
+export type DetailSelectionReport = {
+  selected: DetailCandidate[];
+  ranked: DetailCandidate[];
+  skipped: DetailSkipSample[];
+  byPriority: Record<number, number>;
+  backoffCount: number;
+  skippedHasDescription: number;
 };
 
 export type EvaluateTitleMatch = (
@@ -139,18 +169,25 @@ export function selectDetailCandidates(input: {
   evaluateMatch: EvaluateTitleMatch;
   maxDetails: number;
   nowMs?: number;
-}): DetailCandidate[] {
+}): DetailSelectionReport {
   const nowMs = input.nowMs ?? Date.now();
   const ranked: DetailCandidate[] = [];
+  const skipped: DetailSkipSample[] = [];
+  let backoffCount = 0;
+  let skippedHasDescription = 0;
 
   for (const job of input.jobs) {
     const identity = sourceListingIdentity(input.sourceId, job.sourceJobId);
     const catalog = input.catalog.get(identity);
     if (hasUsableDescription(job, catalog)) {
+      skippedHasDescription += 1;
+      skipped.push({ identity, title: clipTitle(job.title), reason: 'has_description' });
       continue;
     }
 
     if (!isDetailRetryEligible(catalog, nowMs)) {
+      backoffCount += 1;
+      skipped.push({ identity, title: clipTitle(job.title), reason: 'backoff' });
       continue;
     }
 
@@ -166,6 +203,16 @@ export function selectDetailCandidates(input: {
       catalogEmpty: catalog !== undefined && !catalog.description?.trim(),
     });
     if (priority === null) {
+      skipped.push({
+        identity,
+        title: clipTitle(job.title),
+        reason:
+          certainty === 'definite_pass'
+            ? 'definite_pass'
+            : certainty === 'definite_fail'
+              ? 'definite_fail'
+              : 'blocked_other',
+      });
       continue;
     }
 
@@ -174,6 +221,7 @@ export function selectDetailCandidates(input: {
       job,
       provenances,
       priority,
+      priorityReason: priorityReasonFrom(priority),
       queryKey: primaryQueryKey(provenances),
     });
   }
@@ -192,7 +240,49 @@ export function selectDetailCandidates(input: {
     return stableHash(left.identity) - stableHash(right.identity);
   });
 
-  return takeRoundRobin(ranked, Math.max(0, input.maxDetails));
+  const selected = takeRoundRobin(ranked, Math.max(0, input.maxDetails));
+  const selectedIds = new Set(selected.map((item) => item.identity));
+  for (const candidate of ranked) {
+    if (!selectedIds.has(candidate.identity)) {
+      skipped.push({
+        identity: candidate.identity,
+        title: clipTitle(candidate.job.title),
+        reason: 'budget',
+      });
+    }
+  }
+
+  const byPriority: Record<number, number> = {};
+  for (const candidate of ranked) {
+    byPriority[candidate.priority] = (byPriority[candidate.priority] ?? 0) + 1;
+  }
+
+  return {
+    selected,
+    ranked,
+    skipped,
+    byPriority,
+    backoffCount,
+    skippedHasDescription,
+  };
+}
+
+function priorityReasonFrom(priority: number): DetailPriorityReason {
+  if (priority === 0) {
+    return 'profession_variant';
+  }
+  if (priority === 1) {
+    return 'user_query';
+  }
+  if (priority === 2) {
+    return 'catalog_empty';
+  }
+  return 'other';
+}
+
+function clipTitle(title: string): string {
+  const trimmed = title.trim();
+  return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
 }
 
 function primaryQueryKey(provenances: readonly SourceQueryProvenance[]): string {

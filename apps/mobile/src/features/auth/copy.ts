@@ -12,6 +12,8 @@ export const authCopy = {
   namePlaceholder: 'Adınız',
   emailPlaceholder: 'ornek@eposta.com',
   passwordPlaceholder: 'En az 8 karakter',
+  showPassword: 'Şifreyi göster',
+  hidePassword: 'Şifreyi gizle',
   noAccount: 'Hesabınız yok mu? ',
   hasAccount: 'Zaten hesabınız var mı? ',
   confirmation: 'Hesabınızı onaylamak için e-postanızı kontrol edin, ardından giriş yapın.',

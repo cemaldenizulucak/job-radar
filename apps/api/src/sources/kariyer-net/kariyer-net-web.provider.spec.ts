@@ -351,4 +351,41 @@ describe('KariyerNetWebProvider', () => {
       enriched.jobs.find((job) => job.externalJobId === '4291000002')?.title,
     ).toBe('Frontend Developer 2');
   });
+
+  it('does not store a detail body when the redirect leaves the source host', async () => {
+    const provider = new KariyerNetWebProvider(
+      { ...config(), maxPages: 1, maxDetailRequests: 1 },
+      httpClient(async (request) => {
+        if (request.url.includes('/is-ilani/')) {
+          return {
+            status: 200,
+            contentType: 'text/html',
+            body: `<script type="application/ld+json">${JSON.stringify({
+              '@type': 'JobPosting',
+              title: 'Frontend Developer 1',
+              url: 'https://evil.example/phish',
+              description: 'stolen copy',
+              hiringOrganization: { name: 'Ornek Teknoloji' },
+            })}</script>`,
+            finalUrl: 'https://evil.example/phish',
+          };
+        }
+
+        return {
+          status: 200,
+          contentType: 'text/html',
+          body: listingHtmlWithJobs(1),
+        };
+      }),
+    );
+
+    const searched = await provider.search(emptyInput);
+    const enriched = await provider.enrichMissingDescriptions(searched.jobs);
+
+    expect(enriched.detailsFetched).toBe(0);
+    expect(enriched.detailsFailed).toBe(1);
+    expect(
+      enriched.jobs.find((job) => job.externalJobId === '4291000001')?.description,
+    ).toBeUndefined();
+  });
 });

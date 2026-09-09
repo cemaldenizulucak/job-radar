@@ -35,9 +35,16 @@ export type DiscoveryRunSummary = {
   scanKind: 'first' | 'periodic' | 'user' | 'mixed';
   queriesAttempted: number;
   queriesCompleted: number;
+  queriesBlocked: number;
+  queriesFailed: number;
   queriesDeferred: number;
   detailsFetched: number;
   detailsFailed: number;
+  detailsSelected: number;
+  detailsAttempted: number;
+  detailsSkipped: number;
+  detailsBackoff: number;
+  detailsQueued: number;
   providerModes: Readonly<Record<string, string>>;
 };
 
@@ -64,9 +71,16 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   scanKind: 'periodic',
   queriesAttempted: 0,
   queriesCompleted: 0,
+  queriesBlocked: 0,
+  queriesFailed: 0,
   queriesDeferred: 0,
   detailsFetched: 0,
   detailsFailed: 0,
+  detailsSelected: 0,
+  detailsAttempted: 0,
+  detailsSkipped: 0,
+  detailsBackoff: 0,
+  detailsQueued: 0,
   providerModes: {},
 };
 
@@ -140,6 +154,31 @@ export type ListingDiagnosis = {
   keyword: string | null;
   location: string | null;
   hasDescription: boolean;
+};
+
+export type ListingDetailRefreshResult = {
+  jobId: string;
+  detailFetched: boolean;
+  descriptionStored: boolean;
+  matchesCreated: number;
+  decisions: readonly {
+    savedSearchId: string;
+    matched: boolean;
+    keyword: string | null;
+    location: string | null;
+  }[];
+};
+
+export type DetailQueueBackfillReport = {
+  dryRun: boolean;
+  eligibleCount: number;
+  queuedCount: number;
+  samples: readonly {
+    jobId: string;
+    title: string;
+    sourceId: string;
+    location: string | null;
+  }[];
 };
 
 export type MatchReevaluationPair = {

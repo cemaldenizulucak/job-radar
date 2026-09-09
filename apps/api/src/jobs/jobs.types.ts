@@ -40,6 +40,10 @@ export type JobDetailFetchState = {
   detailFetchAttemptedAt: string | null;
 };
 
+export type CatalogListingRecord = NormalizedJob & {
+  id: string;
+};
+
 export type JobListQuery = {
   userId: string;
   sourceId?: SourceId | 'all';
