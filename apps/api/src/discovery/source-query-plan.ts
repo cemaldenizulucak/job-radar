@@ -5,10 +5,47 @@ import {
   type StructuredSearchLocation,
 } from '../common/search-location.js';
 import { normalizeForSearch } from '../common/normalize-text.js';
+import { tokenizeNormalized } from '../matching/fuzzy-text.js';
 import { toProfessionFieldQueryVariant } from '../matching/profession-forms.js';
+import { PHRASE_END_TOKENS } from '../matching/search-phrases.js';
+import { classifySearchTerm } from '../matching/search-terms.js';
+import { isRoleSearchTerm } from '../matching/search-term-kind.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 
 export const DEFAULT_MAX_QUERIES_PER_SEARCH_SOURCE = 8;
+export const DEFAULT_KARIYER_NET_MAX_QUERIES_PER_HOUR = 4;
+export const MAX_KARIYER_NET_QUERIES_PER_HOUR = 10;
+
+/**
+ * Global Kariyer.net live-query budget for one discovery hour.
+ * Missing, empty, zero, negative, decimal, or non-integer values fall
+ * back to 4. Values above 10 are clamped so a bad env cannot flood the source.
+ */
+export function readKariyerNetMaxQueriesPerHour(
+  raw: string | undefined,
+): number {
+  const trimmed = raw?.trim() ?? '';
+  if (!/^[1-9][0-9]*$/.test(trimmed)) {
+    return DEFAULT_KARIYER_NET_MAX_QUERIES_PER_HOUR;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    return DEFAULT_KARIYER_NET_MAX_QUERIES_PER_HOUR;
+  }
+
+  return Math.min(parsed, MAX_KARIYER_NET_QUERIES_PER_HOUR);
+}
+
+const BROAD_GENERIC_QUERY_TOKENS = new Set([
+  'developer',
+  'gelistirici',
+  'engineer',
+  'programmer',
+  'web',
+  'ui',
+  'arayuz',
+]);
 export const DEFAULT_TIME_BUDGET_MS_PER_SEARCH_SOURCE = 40_000;
 
 export type ScanKind = 'first' | 'periodic' | 'user';
@@ -70,15 +107,36 @@ export function collectSourceQueryPhrases(
         continue;
       }
 
+      if (!shouldEmitLiveSourceQuery(phrase)) {
+        continue;
+      }
+
       push(user, phrase, 'user');
       const variant = toProfessionFieldQueryVariant(phrase);
-      if (variant) {
+      if (variant && shouldEmitLiveSourceQuery(variant)) {
         push(variants, variant, 'profession_variant');
       }
     }
   }
 
-  return [...user, ...variants];
+  return sortSourceQueryPhrases([...user, ...variants]);
+}
+
+/**
+ * Broad tokens and catalog technologies are matched in title/description,
+ * not turned into independent live source queries.
+ */
+export function shouldEmitLiveSourceQuery(phrase: string): boolean {
+  return !isTechnologySourceQuery(phrase) && !isBroadGenericSourceQuery(phrase);
+}
+
+export function isBroadGenericSourceQuery(phrase: string): boolean {
+  const tokens = tokenizeNormalized(normalizeForSearch(phrase));
+  return tokens.length === 1 && BROAD_GENERIC_QUERY_TOKENS.has(tokens[0] ?? '');
+}
+
+export function isTechnologySourceQuery(phrase: string): boolean {
+  return classifySearchTerm(phrase).kind === 'technology';
 }
 
 /**
@@ -246,4 +304,36 @@ function uniqueCityTokens(locations: readonly string[]): string[] {
   }
 
   return cities;
+}
+
+function sortSourceQueryPhrases(
+  phrases: readonly SourceQueryPhrase[],
+): SourceQueryPhrase[] {
+  return phrases
+    .map((phrase, index) => ({ phrase, index }))
+    .sort((left, right) => {
+      const rankDelta =
+        sourceQueryPhraseRank(left.phrase) - sourceQueryPhraseRank(right.phrase);
+      return rankDelta !== 0 ? rankDelta : left.index - right.index;
+    })
+    .map((item) => item.phrase);
+}
+
+function sourceQueryPhraseRank(phrase: SourceQueryPhrase): number {
+  const originBump = phrase.origin === 'user' ? 0 : 10;
+  return originBump + sourceQueryQualityRank(phrase.text);
+}
+
+function sourceQueryQualityRank(phrase: string): number {
+  const tokens = tokenizeNormalized(normalizeForSearch(phrase));
+  if (tokens.length >= 2 && tokens.some((token) => PHRASE_END_TOKENS.has(token))) {
+    return 0;
+  }
+  if (tokens.length >= 2 && isRoleSearchTerm(phrase)) {
+    return 1;
+  }
+  if (isRoleSearchTerm(phrase)) {
+    return 2;
+  }
+  return 3;
 }

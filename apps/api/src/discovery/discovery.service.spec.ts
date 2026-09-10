@@ -1,7 +1,8 @@
 import { DuplicateGroupsService } from '../duplicates/duplicate-groups.service.js';
 import { DuplicatesService } from '../duplicates/duplicates.service.js';
 import type { DuplicateGroup } from '../duplicates/duplicates.types.js';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, InternalServerErrorException, Logger } from '@nestjs/common';
+import { transientQueryClock } from '../infrastructure/supabase/transient-query.js';
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
 import { sourceListingIdentity } from '../jobs/job-identity.js';
 import { mergeNormalizedJobUpdate } from '../jobs/listing-merge.js';
@@ -22,7 +23,7 @@ import { KariyerNetMockProvider } from '../sources/kariyer-net/kariyer-net-mock.
 import { createKariyerNetProvider } from '../sources/kariyer-net/kariyer-net-provider.factory.js';
 import { LinkedInDisabledProvider } from '../sources/linkedin/linkedin-disabled.provider.js';
 import { LinkedInMockProvider } from '../sources/linkedin/linkedin-mock.provider.js';
-import { SourceUnavailableError } from '../sources/source-errors.js';
+import { SourceChallengeError, SourceUnavailableError } from '../sources/source-errors.js';
 import { SourceRegistry } from '../sources/source-registry.js';
 import { LocationsService } from '../locations/locations.service.js';
 import { DiscoveryService } from './discovery.service.js';
@@ -463,6 +464,7 @@ function createDiscovery(
   config: Record<string, string | undefined> = {},
   runState = new MemoryDiscoveryRunStateStore(),
   telegram?: TelegramNotificationService,
+  searchesOverride?: SearchesService,
 ): {
   discovery: DiscoveryService;
   jobs: FakeJobsService;
@@ -491,7 +493,7 @@ function createDiscovery(
     },
   } as unknown as LocationsService;
   const discovery = new DiscoveryService(
-    searchesService,
+    searchesOverride ?? searchesService,
     new SourceRegistry(
       adapters ?? [
         new LinkedInSourceAdapter(new LinkedInMockProvider()),
@@ -528,18 +530,20 @@ describe('DiscoveryService', () => {
         matchesCreated: 4,
         duplicateGroupsCreated: 1,
         notificationsCreated: 1,
-        kariyerNetPagesFetched: 2,
+        kariyerNetPagesFetched: 1,
         kariyerNetJobsCollected: 3,
         sourceAttempts: 2,
         sourceFailures: 0,
         catalogJobsChecked: 0,
-        rawProviderJobs: 12,
+        rawProviderJobs: 6,
         normalizedJobs: 6,
         notifiedJobCount: 4,
-        queriesAttempted: 4,
-        queriesCompleted: 4,
+        queriesAttempted: 2,
+        queriesCompleted: 2,
         queriesDeferred: 0,
         scanKind: 'first',
+        attemptCount: 1,
+        recoveredAfterRetry: false,
       }),
     );
     expect(result.runId).toEqual(expect.any(String));
@@ -700,9 +704,9 @@ describe('DiscoveryService', () => {
     expect(result.sourceAttempts).toBe(1);
     expect(result.sourceFailures).toBe(0);
     expect(result.sourcePartials).toBe(1);
-    expect(result.queriesAttempted).toBe(2);
+    expect(result.queriesAttempted).toBe(1);
     expect(result.queriesCompleted).toBe(1);
-    expect(result.queriesBlocked).toBe(1);
+    expect(result.queriesBlocked).toBe(0);
     expect(result.queriesFailed).toBe(0);
     expect(result.queriesDeferred).toBe(0);
     expect(
@@ -730,7 +734,7 @@ describe('DiscoveryService', () => {
 
     expect(result.jobsFetched).toBe(3);
     expect(result.jobsInserted).toBe(3);
-    expect(result.kariyerNetPagesFetched).toBe(2);
+    expect(result.kariyerNetPagesFetched).toBe(1);
     expect(result.kariyerNetJobsCollected).toBe(3);
     expect(result.stopReason).toBeNull();
     expect(
@@ -1037,7 +1041,7 @@ describe('DiscoveryService', () => {
     };
     const target = search({
       id: 'search-angular',
-      keywords: ['angular'],
+      keywords: ['Angular Developer'],
       locations: ['izmir'],
       sourceIds: ['kariyer_net'],
     });
@@ -2052,7 +2056,9 @@ describe('DiscoveryService', () => {
       subdivisionNames: ['İzmir', 'Manisa'],
       sourceIds: ['kariyer_net'],
     });
-    const { discovery } = createDiscovery([target], [adapter]);
+    const { discovery } = createDiscovery([target], [adapter], undefined, undefined, undefined, undefined, {
+      DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '16',
+    });
 
     await discovery.runForSavedSearch(target);
 
@@ -2889,7 +2895,7 @@ describe('DiscoveryService', () => {
     ).toHaveLength(1);
   });
 
-  it('accounts for blocked leftover queries so attempted equals completed+blocked+failed+deferred', async () => {
+  it('defers leftover Kariyer.net queries after the global hourly budget', async () => {
     let calls = 0;
     const seen: string[] = [];
     const adapter: JobSourceAdapter = {
@@ -2905,22 +2911,6 @@ describe('DiscoveryService', () => {
       search: async (query) => {
         calls += 1;
         seen.push(`${query.keywords[0]}@${query.locations[0] ?? ''}`);
-        if (calls === 9) {
-          return {
-            sourceId: 'kariyer_net',
-            pagesFetched: 1,
-            stopReason: 'blocked_after_success',
-            jobs: [
-              {
-                sourceJobId: `kn-${calls}`,
-                canonicalUrl: `https://www.kariyer.net/is-ilani/kn-${calls}`,
-                title: 'Frontend Developer',
-                companyName: 'Ornek Teknoloji',
-                location: query.locations[0] ?? 'İzmir',
-              },
-            ],
-          };
-        }
         return {
           sourceId: 'kariyer_net',
           jobs: [
@@ -2937,7 +2927,7 @@ describe('DiscoveryService', () => {
     };
     const target = search({
       id: 'search-16',
-      keywords: ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta'],
+      keywords: ['alpha', 'beta', 'gamma', 'delta'],
       countryName: 'Türkiye',
       subdivisionNames: ['İzmir', 'Manisa'],
       sourceIds: ['kariyer_net'],
@@ -2949,15 +2939,17 @@ describe('DiscoveryService', () => {
       undefined,
       undefined,
       undefined,
-      { DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '16' },
+      {
+        DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '16',
+        DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '3',
+      },
     );
 
     const first = await discovery.runForSavedSearch(target);
-    expect(first.queriesAttempted).toBe(16);
-    expect(first.queriesCompleted).toBe(9);
-    expect(first.queriesBlocked).toBe(7);
+    expect(first.queriesCompleted).toBe(3);
+    expect(first.queriesDeferred).toBeGreaterThan(0);
     expect(first.queriesFailed).toBe(0);
-    expect(first.queriesDeferred).toBe(0);
+    expect(first.stopReason).toBe('query_budget');
     expect(
       queryCountsAddUp({
         attempted: first.queriesAttempted,
@@ -2967,7 +2959,7 @@ describe('DiscoveryService', () => {
         deferred: first.queriesDeferred,
       }),
     ).toBe(true);
-    expect(calls).toBe(9);
+    expect(calls).toBe(3);
     const firstWindow = [...seen];
 
     calls = 0;
@@ -2975,6 +2967,92 @@ describe('DiscoveryService', () => {
     await discovery.runForSavedSearch(target);
     expect(seen[0]).not.toBe(firstWindow[0]);
     expect(runState.cursors.size).toBe(1);
+  });
+
+  it('falls back to 4 Kariyer.net queries when the hourly budget env is invalid', async () => {
+    let calls = 0;
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        calls += 1;
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-invalid-budget',
+      keywords: ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'],
+      countryName: 'Türkiye',
+      subdivisionNames: ['İzmir', 'Manisa'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '16',
+        DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '0',
+      },
+    );
+
+    const result = await discovery.runForSavedSearch(target);
+    expect(calls).toBe(4);
+    expect(result.queriesCompleted).toBe(4);
+    expect(result.queriesDeferred).toBeGreaterThan(0);
+  });
+
+  it('clamps an oversized Kariyer.net hourly budget so live queries stay at most 10', async () => {
+    let calls = 0;
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        calls += 1;
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-capped-budget',
+      keywords: ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta', 'theta'],
+      countryName: 'Türkiye',
+      subdivisionNames: ['İzmir', 'Manisa'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '16',
+        DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '999',
+      },
+    );
+
+    const result = await discovery.runForSavedSearch(target);
+    expect(calls).toBe(10);
+    expect(result.queriesCompleted).toBe(10);
+    expect(result.queriesDeferred).toBeGreaterThan(0);
   });
 
   it('does not change listings during a detail-queue backfill dry-run', async () => {
@@ -3531,5 +3609,496 @@ describe('DiscoveryService', () => {
       }),
     ]);
     expect(jobs.listings.get(jobId)?.job.description).toBeNull();
+  });
+
+  it('recovers a scheduled run when saved searches fail with PGRST303 then succeed', async () => {
+    vi.spyOn(transientQueryClock, 'sleep').mockResolvedValue(undefined);
+    vi.spyOn(transientQueryClock, 'random').mockReturnValue(0);
+    let calls = 0;
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(),
+      update: vi.fn(),
+      in: vi.fn(),
+    };
+    builder.select.mockReturnValue(builder);
+    builder.update.mockReturnValue(builder);
+    builder.in.mockResolvedValue({ error: null });
+    builder.eq.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return { data: null, error: { code: 'PGRST303', message: 'JWT issued at future' } };
+      }
+      return {
+        data: [
+          {
+            id: 'search-1',
+            user_id: 'user-1',
+            name: 'Frontend',
+            is_active: true,
+            keywords: ['frontend'],
+            technologies: [],
+            locations: [],
+            work_types: [],
+            experience_levels: [],
+            sources: ['kariyer_net'],
+          },
+        ],
+        error: null,
+      };
+    });
+    const searchesService = new SearchesService({
+      getClient: () => ({ from: () => builder }),
+    } as unknown as SupabaseService);
+    const adapter = idleKariyerAdapter();
+    const { discovery } = createDiscovery(
+      [search({ sourceIds: ['kariyer_net'] })],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      new MemoryDiscoveryRunStateStore(),
+      undefined,
+      searchesService,
+    );
+
+    const result = await discovery.run();
+
+    expect(calls).toBe(2);
+    expect(result.attemptCount).toBe(2);
+    expect(result.recoveredAfterRetry).toBe(true);
+    expect(result.searchesProcessed).toBe(1);
+  });
+
+  it('fails the scheduled run after three persistent PGRST303 errors', async () => {
+    vi.spyOn(transientQueryClock, 'sleep').mockResolvedValue(undefined);
+    let searchCalls = 0;
+    const builder = {
+      select: vi.fn(),
+      eq: vi.fn(async () => {
+        searchCalls += 1;
+        return { data: null, error: { code: 'PGRST303', message: 'JWT issued at future' } };
+      }),
+    };
+    builder.select.mockReturnValue(builder);
+    const searchesService = new SearchesService({
+      getClient: () => ({ from: () => builder }),
+    } as unknown as SupabaseService);
+    let sourceCalls = 0;
+    const adapter: JobSourceAdapter = {
+      ...idleKariyerAdapter(),
+      search: async () => {
+        sourceCalls += 1;
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const { discovery } = createDiscovery(
+      [search({ sourceIds: ['kariyer_net'] })],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      new MemoryDiscoveryRunStateStore(),
+      undefined,
+      searchesService,
+    );
+
+    await expect(discovery.run()).rejects.toBeInstanceOf(InternalServerErrorException);
+    expect(searchCalls).toBe(3);
+    expect(sourceCalls).toBe(0);
+  });
+
+  it('does not query Kariyer.net twice for the same normalized phrase across users', async () => {
+    const received: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(`${query.keywords[0]}@${query.locations[0] ?? ''}`);
+        return {
+          sourceId: 'kariyer_net',
+          jobs: [
+            {
+              sourceJobId: 'shared-1',
+              canonicalUrl: 'https://www.kariyer.net/is-ilani/shared-1',
+              title: 'Frontend Developer',
+              companyName: 'Shared Co',
+              location: 'İzmir',
+              description: 'Frontend Developer React',
+            },
+          ],
+        };
+      },
+    };
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['Frontend Developer'],
+      locations: ['İzmir'],
+      subdivisionNames: ['İzmir'],
+      sourceIds: ['kariyer_net'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['frontend developer'],
+      locations: ['Izmir'],
+      subdivisionNames: ['İzmir'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs } = createDiscovery([userA, userB], [adapter]);
+
+    await discovery.run();
+
+    expect(received).toHaveLength(1);
+    expect(jobs.matches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ savedSearchId: 'search-a' }),
+        expect.objectContaining({ savedSearchId: 'search-b' }),
+      ]),
+    );
+  });
+
+  it('does not emit broad technology words as independent Kariyer.net queries', async () => {
+    const received: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query.keywords[0] ?? '');
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-broad',
+      keywords: ['Frontend Developer', 'developer', 'web', 'UI', 'react'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter]);
+
+    await discovery.runForSavedSearch(target);
+
+    expect(received).toEqual(['Frontend Developer']);
+  });
+
+  it('round-robins Kariyer.net queries so the second user is not starved', async () => {
+    const received: string[] = [];
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async (query) => {
+        received.push(query.keywords[0] ?? '');
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['Alpha Engineer', 'Beta Engineer'],
+      sourceIds: ['kariyer_net'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['Gamma Engineer', 'Delta Engineer'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery(
+      [userA, userB],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '1' },
+    );
+
+    await discovery.run();
+    expect(received).toEqual(['Alpha Engineer']);
+
+    received.length = 0;
+    await discovery.run();
+    expect(received).toEqual(['Gamma Engineer']);
+  });
+
+  it('opens a Kariyer.net circuit breaker after the first challenge and defers the rest', async () => {
+    let calls = 0;
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        calls += 1;
+        throw new SourceChallengeError(
+          'kariyer_net',
+          'Kariyer.net presented a bot check or login wall. JobRadar does not bypass it.',
+        );
+      },
+    };
+    const target = search({
+      id: 'search-challenge',
+      keywords: ['Alpha Engineer', 'Beta Engineer', 'Gamma Engineer'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '8' },
+    );
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(calls).toBe(1);
+    expect(result.queriesBlocked).toBe(1);
+    expect(result.queriesDeferred).toBe(2);
+    expect(result.queriesCompleted).toBe(0);
+    expect(result.queriesFailed).toBe(0);
+    expect(
+      queryCountsAddUp({
+        attempted: result.queriesAttempted,
+        completed: result.queriesCompleted,
+        blocked: result.queriesBlocked,
+        failed: result.queriesFailed,
+        deferred: result.queriesDeferred,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not report a Kariyer.net challenge as authentication', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        throw new SourceChallengeError('kariyer_net', 'challenge');
+      },
+    };
+    const target = search({
+      id: 'search-challenge-category',
+      keywords: ['Frontend Developer'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([target], [adapter]);
+    const errorSpy = vi.spyOn(Logger.prototype, 'error');
+
+    await discovery.runForSavedSearch(target);
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCategory: 'challenge' }),
+    );
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ errorCategory: 'authentication' }),
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('evaluates one source listing against each user saved search separately', async () => {
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({
+        sourceId: 'kariyer_net',
+        jobs: [
+          {
+            sourceJobId: 'izmir-fe',
+            canonicalUrl: 'https://www.kariyer.net/is-ilani/izmir-fe',
+            title: 'Frontend Developer',
+            companyName: 'Izmir Co',
+            location: 'İzmir',
+            description: 'Frontend Developer',
+          },
+        ],
+      }),
+    };
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['Frontend Developer'],
+      locations: ['İzmir'],
+      subdivisionNames: ['İzmir'],
+      sourceIds: ['kariyer_net'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['Frontend Developer'],
+      locations: ['Ankara'],
+      subdivisionNames: ['Ankara'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs } = createDiscovery([userA, userB], [adapter]);
+
+    await discovery.run();
+
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({ savedSearchId: 'search-a', matchStatus: 'verified' }),
+    ]);
+    expect(jobs.matches.some((match) => match.savedSearchId === 'search-b')).toBe(false);
+  });
+
+  it('keeps catalog rematch for one user when another user query is blocked', async () => {
+    const jobs = new FakeJobsService();
+    await jobs.upsertNormalized({
+      sourceId: 'kariyer_net',
+      sourceJobId: 'catalog-fe',
+      canonicalUrl: 'https://www.kariyer.net/is-ilani/catalog-fe',
+      title: 'Frontend Developer',
+      companyName: 'Catalog Co',
+      titleNormalized: 'frontend developer',
+      companyNormalized: 'catalog co',
+      location: 'İzmir',
+      workModel: null,
+      experienceLevel: null,
+      technologies: [],
+      description: 'Frontend Developer',
+      publishedAt: null,
+      isActive: true,
+    });
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        throw new SourceChallengeError('kariyer_net', 'challenge');
+      },
+    };
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['Frontend Developer'],
+      sourceIds: ['kariyer_net'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['Kalite Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery([userA, userB], [adapter], jobs);
+
+    const result = await discovery.run();
+
+    expect(result.catalogJobsChecked).toBe(1);
+    expect(jobs.matches).toEqual([
+      expect.objectContaining({ savedSearchId: 'search-a', matchStatus: 'verified' }),
+    ]);
+    expect(jobs.matches.some((match) => match.savedSearchId === 'search-b')).toBe(false);
+  });
+
+  it('sends Telegram only to the user who owns the matching search', async () => {
+    const notifyNewMatches = vi.fn(async () => undefined);
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => ({
+        sourceId: 'kariyer_net',
+        jobs: [
+          {
+            sourceJobId: 'tg-1',
+            canonicalUrl: 'https://www.kariyer.net/is-ilani/tg-1',
+            title: 'Frontend Developer',
+            companyName: 'Notify Co',
+            location: 'İzmir',
+            description: 'Frontend Developer',
+          },
+        ],
+      }),
+    };
+    const userA = search({
+      id: 'search-a',
+      userId: 'user-a',
+      keywords: ['Frontend Developer'],
+      sourceIds: ['kariyer_net'],
+    });
+    const userB = search({
+      id: 'search-b',
+      userId: 'user-b',
+      keywords: ['Kalite Mühendisi'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery(
+      [userA, userB],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {},
+      new MemoryDiscoveryRunStateStore(),
+      { notifyNewMatches } as unknown as TelegramNotificationService,
+    );
+
+    await discovery.run();
+
+    expect(notifyNewMatches).toHaveBeenCalled();
+    const [payload] = notifyNewMatches.mock.calls[0] as unknown as [
+      {
+        matches: { savedSearchId: string }[];
+        searches: { id: string; userId: string }[];
+      },
+    ];
+    expect(payload.matches.every((match) => match.savedSearchId === 'search-a')).toBe(true);
+    expect(payload.searches.map((item) => item.userId).sort()).toEqual(['user-a', 'user-b']);
   });
 });

@@ -37,7 +37,7 @@ import { ProfilesService } from '../profiles/profiles.service.js';
 import type { SavedSearch } from '../searches/searches.types.js';
 import { SearchesService } from '../searches/searches.service.js';
 import type { SourceSearchQuery, SourceJobRaw, SourceDetailFetchOutcome } from '../sources/job-source.adapter.js';
-import { sourceErrorCategory } from '../sources/source-errors.js';
+import { sourceErrorCategory, isSourceCircuitBreakError } from '../sources/source-errors.js';
 import { SourceRegistry } from '../sources/source-registry.js';
 import { KARIYER_NET_DEFAULT_MAX_DETAIL_REQUESTS } from '../sources/kariyer-net/kariyer-net-web.config.js';
 import {
@@ -85,14 +85,20 @@ import {
 import {
   DEFAULT_MAX_QUERIES_PER_SEARCH_SOURCE,
   DEFAULT_TIME_BUDGET_MS_PER_SEARCH_SOURCE,
+  readKariyerNetMaxQueriesPerHour,
   buildSourceQueryUnits,
   nextQueryStartIndex,
+  queryUnitKey,
   resolveScanKind,
   selectQueryUnits,
   sourceQueryPlanFingerprint,
   type ScanKind,
   type SourceQueryUnit,
 } from './source-query-plan.js';
+import {
+  collectUniqueSourceQueries,
+  scheduleQueriesRoundRobin,
+} from './source-query-schedule.js';
 
 type SearchSourceFetchStat = {
   savedSearchId: string;
@@ -124,6 +130,7 @@ export class DiscoveryService {
   private readonly logger = new Logger(DiscoveryService.name);
   private readonly runGate = new DiscoveryRunGate();
   private readonly immediateRuns = new Map<string, ImmediateDiscoveryResult>();
+  private kariyerNetRoundRobinOffset = 0;
 
   constructor(
     @Inject(forwardRef(() => SearchesService))
@@ -148,7 +155,13 @@ export class DiscoveryService {
   async run(): Promise<DiscoveryRunSummary> {
     return this.runGate.runExclusive(async () => {
       const searches = await this.searchesService.getActiveSearches();
-      return this.execute(searches, { markStale: true, trigger: 'scheduled' });
+      const loadTelemetry = this.searchesService.consumeActiveLoadTelemetry();
+      return this.execute(searches, {
+        markStale: true,
+        trigger: 'scheduled',
+        attemptCount: loadTelemetry.attemptCount,
+        recoveredAfterRetry: loadTelemetry.recoveredAfterRetry,
+      });
     });
   }
 
@@ -534,7 +547,12 @@ export class DiscoveryService {
 
   private async execute(
     searches: readonly SavedSearch[],
-    options: { markStale: boolean; trigger: 'scheduled' | 'user' },
+    options: {
+      markStale: boolean;
+      trigger: 'scheduled' | 'user';
+      attemptCount?: number;
+      recoveredAfterRetry?: boolean;
+    },
   ): Promise<DiscoveryRunSummary> {
     if (searches.length === 0) {
       return { ...EMPTY_DISCOVERY_SUMMARY };
@@ -719,6 +737,8 @@ export class DiscoveryService {
       kariyerNetPagesFetched: fetched.kariyerNetPagesFetched,
       kariyerNetJobsCollected: fetched.kariyerNetJobsCollected,
       stopReason: fetched.stopReason,
+      attemptCount: options.attemptCount ?? 1,
+      recoveredAfterRetry: options.recoveredAfterRetry === true,
     });
 
     return {
@@ -760,6 +780,8 @@ export class DiscoveryService {
       detailsRequested: detailDrain.detailsRequested,
       descriptionsExtracted: detailDrain.descriptionsExtracted,
       providerModes: fetched.providerModes,
+      attemptCount: options.attemptCount ?? 1,
+      recoveredAfterRetry: options.recoveredAfterRetry === true,
     };
   }
 
@@ -890,6 +912,80 @@ export class DiscoveryService {
       .list()
       .map((adapter) => adapter.sourceId);
 
+    const recordFetched = (
+      search: SavedSearch,
+      sourceId: SourceId,
+      fetched: Awaited<ReturnType<DiscoveryService['fetchFromSource']>>,
+      mode: 'full' | 'kariyer-stats' = 'full',
+    ) => {
+      perSearch.push({
+        savedSearchId: search.id,
+        source: sourceId,
+        fetchedJobCount: fetched.raw,
+        normalizedJobCount: fetched.accepted,
+        queriesAttempted: fetched.queriesAttempted,
+        queriesCompleted: fetched.queriesCompleted,
+        queriesBlocked: fetched.queriesBlocked,
+        queriesFailed: fetched.queriesFailed,
+        queriesDeferred: fetched.queriesDeferred,
+        detailsFetched: 0,
+        detailsFailed: 0,
+        detailsSelected: 0,
+        detailsAttempted: 0,
+        detailsSkipped: fetched.detailsSkipped,
+        detailsBackoff: fetched.detailsBackoff,
+        detailsQueued: fetched.detailIntents.length,
+        providerMode: fetched.providerMode,
+      });
+      if (mode === 'full') {
+        jobsFetched += fetched.accepted;
+        rawProviderJobs += fetched.raw;
+        queriesAttempted += fetched.queriesAttempted;
+        queriesCompleted += fetched.queriesCompleted;
+        queriesBlocked += fetched.queriesBlocked;
+        queriesFailed += fetched.queriesFailed;
+        queriesDeferred += fetched.queriesDeferred;
+        if (fetched.kariyerNet) {
+          kariyerNetPagesFetched += fetched.kariyerNet.pagesFetched;
+          kariyerNetJobsCollected += fetched.kariyerNet.jobsCollected;
+        }
+      }
+      for (const intent of fetched.detailIntents) {
+        if (intentKeys.has(intent.identity)) {
+          continue;
+        }
+        intentKeys.add(intent.identity);
+        detailIntents.push(intent);
+      }
+      for (const [identity, items] of fetched.provenances) {
+        const existing = jobProvenances.get(identity) ?? [];
+        jobProvenances.set(identity, [
+          ...existing,
+          ...items.map((item) => ({
+            savedSearchId: search.id,
+            keyword: item.keyword,
+            origin: item.origin,
+            location: item.location,
+          })),
+        ]);
+      }
+      if (fetched.providerMode) {
+        providerModes[sourceId] = fetched.providerMode;
+      }
+      if (fetched.outcome !== 'skipped') {
+        sourceAttempts += 1;
+      }
+      if (fetched.outcome === 'failed') {
+        sourceFailures += 1;
+      }
+      if (fetched.outcome === 'partial') {
+        sourcePartials += 1;
+      }
+      if (fetched.stopReason) {
+        stopReason = preferStopReason(stopReason, fetched.stopReason);
+      }
+    };
+
     for (const search of searches) {
       const scanKind = resolveScanKind({
         trigger: options.trigger,
@@ -900,77 +996,39 @@ export class DiscoveryService {
         search.sourceIds.length > 0 ? search.sourceIds : catalogSourceIds;
 
       for (const sourceId of sourceIds) {
+        if (sourceId === 'kariyer_net') {
+          continue;
+        }
         const fetched = await this.fetchFromSource(
           search,
           sourceId,
           uniqueJobs,
           { runId: options.runId, scanKind },
         );
-        perSearch.push({
-          savedSearchId: search.id,
-          source: sourceId,
-          fetchedJobCount: fetched.raw,
-          normalizedJobCount: fetched.accepted,
-          queriesAttempted: fetched.queriesAttempted,
-          queriesCompleted: fetched.queriesCompleted,
-          queriesBlocked: fetched.queriesBlocked,
-          queriesFailed: fetched.queriesFailed,
-          queriesDeferred: fetched.queriesDeferred,
-          detailsFetched: 0,
-          detailsFailed: 0,
-          detailsSelected: 0,
-          detailsAttempted: 0,
-          detailsSkipped: fetched.detailsSkipped,
-          detailsBackoff: fetched.detailsBackoff,
-          detailsQueued: fetched.detailIntents.length,
-          providerMode: fetched.providerMode,
-        });
-        jobsFetched += fetched.accepted;
-        rawProviderJobs += fetched.raw;
-        queriesAttempted += fetched.queriesAttempted;
-        queriesCompleted += fetched.queriesCompleted;
-        queriesBlocked += fetched.queriesBlocked;
-        queriesFailed += fetched.queriesFailed;
-        queriesDeferred += fetched.queriesDeferred;
-        for (const intent of fetched.detailIntents) {
-          if (intentKeys.has(intent.identity)) {
-            continue;
-          }
-          intentKeys.add(intent.identity);
-          detailIntents.push(intent);
-        }
-        for (const [identity, items] of fetched.provenances) {
-          const existing = jobProvenances.get(identity) ?? [];
-          jobProvenances.set(identity, [
-            ...existing,
-            ...items.map((item) => ({
-              savedSearchId: search.id,
-              keyword: item.keyword,
-              origin: item.origin,
-              location: item.location,
-            })),
-          ]);
-        }
-        if (fetched.providerMode) {
-          providerModes[sourceId] = fetched.providerMode;
-        }
-        if (fetched.outcome !== 'skipped') {
-          sourceAttempts += 1;
-        }
-        if (fetched.outcome === 'failed') {
-          sourceFailures += 1;
-        }
-        if (fetched.outcome === 'partial') {
-          sourcePartials += 1;
-        }
-        if (fetched.stopReason) {
-          stopReason = preferStopReason(stopReason, fetched.stopReason);
-        }
-        if (fetched.kariyerNet) {
-          kariyerNetPagesFetched += fetched.kariyerNet.pagesFetched;
-          kariyerNetJobsCollected += fetched.kariyerNet.jobsCollected;
-        }
+        recordFetched(search, sourceId, fetched);
       }
+    }
+
+    const kariyerRun = await this.fetchKariyerNetForRun(
+      searches,
+      uniqueJobs,
+      options,
+    );
+    for (const item of kariyerRun.items) {
+      scanKinds.add(item.scanKind);
+      recordFetched(item.search, 'kariyer_net', item.fetched, 'kariyer-stats');
+    }
+    jobsFetched += kariyerRun.jobsFetched;
+    rawProviderJobs += kariyerRun.rawProviderJobs;
+    queriesAttempted += kariyerRun.queriesAttempted;
+    queriesCompleted += kariyerRun.queriesCompleted;
+    queriesBlocked += kariyerRun.queriesBlocked;
+    queriesFailed += kariyerRun.queriesFailed;
+    queriesDeferred += kariyerRun.queriesDeferred;
+    kariyerNetPagesFetched += kariyerRun.kariyerNetPagesFetched;
+    kariyerNetJobsCollected += kariyerRun.kariyerNetJobsCollected;
+    if (kariyerRun.stopReason) {
+      stopReason = preferStopReason(stopReason, kariyerRun.stopReason);
     }
 
     const scanKind =
@@ -996,6 +1054,490 @@ export class DiscoveryService {
       providerModes,
       detailIntents,
       jobProvenances,
+    };
+  }
+
+  private kariyerNetMaxQueriesPerHour(): number {
+    return readKariyerNetMaxQueriesPerHour(
+      this.config.get<string>('DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR'),
+    );
+  }
+
+  private async fetchKariyerNetForRun(
+    searches: readonly SavedSearch[],
+    uniqueJobs: Map<string, NormalizedJob>,
+    options: { trigger: 'scheduled' | 'user'; runId: string },
+  ): Promise<{
+    items: {
+      search: SavedSearch;
+      scanKind: ScanKind;
+      fetched: Awaited<ReturnType<DiscoveryService['fetchFromSource']>>;
+    }[];
+    jobsFetched: number;
+    rawProviderJobs: number;
+    queriesAttempted: number;
+    queriesCompleted: number;
+    queriesBlocked: number;
+    queriesFailed: number;
+    queriesDeferred: number;
+    kariyerNetPagesFetched: number;
+    kariyerNetJobsCollected: number;
+    stopReason: string | null;
+  }> {
+    const empty = {
+      items: [] as {
+        search: SavedSearch;
+        scanKind: ScanKind;
+        fetched: Awaited<ReturnType<DiscoveryService['fetchFromSource']>>;
+      }[],
+      jobsFetched: 0,
+      rawProviderJobs: 0,
+      queriesAttempted: 0,
+      queriesCompleted: 0,
+      queriesBlocked: 0,
+      queriesFailed: 0,
+      queriesDeferred: 0,
+      kariyerNetPagesFetched: 0,
+      kariyerNetJobsCollected: 0,
+      stopReason: null as string | null,
+    };
+    const adapter = this.sourceRegistry.get('kariyer_net');
+    const kariyerSearches = searches.filter((search) => {
+      const sourceIds =
+        search.sourceIds.length > 0
+          ? search.sourceIds
+          : this.sourceRegistry.list().map((item) => item.sourceId);
+      return sourceIds.includes('kariyer_net');
+    });
+    if (kariyerSearches.length === 0) {
+      return empty;
+    }
+
+    if (!adapter || !adapter.isEnabled()) {
+      return {
+        ...empty,
+        items: kariyerSearches.map((search) => ({
+          search,
+          scanKind: resolveScanKind({
+            trigger: options.trigger,
+            lastDiscoveredAt: search.lastDiscoveredAt,
+          }),
+          fetched: {
+            accepted: 0,
+            raw: 0,
+            outcome: 'skipped',
+            stopReason: null,
+            queriesAttempted: 0,
+            queriesCompleted: 0,
+            queriesBlocked: 0,
+            queriesFailed: 0,
+            queriesDeferred: 0,
+            detailsSkipped: 0,
+            detailsBackoff: 0,
+            detailIntents: [],
+            provenances: new Map(),
+            providerMode: adapter?.providerMode ?? null,
+          },
+        })),
+      };
+    }
+
+    type PlannedSearch = {
+      search: SavedSearch;
+      scanKind: ScanKind;
+      units: SourceQueryUnit[];
+      fingerprint: string;
+      startIndex: number;
+      selected: SourceQueryUnit[];
+      plannerDeferred: number;
+    };
+
+    const plannedSearches: PlannedSearch[] = [];
+    const scheduledItems: {
+      userId: string;
+      searchId: string;
+      unit: SourceQueryUnit;
+    }[] = [];
+
+    for (const search of kariyerSearches) {
+      const scanKind = resolveScanKind({
+        trigger: options.trigger,
+        lastDiscoveredAt: search.lastDiscoveredAt,
+      });
+      const units = buildSourceQueryUnits(search);
+      const fingerprint = sourceQueryPlanFingerprint(search);
+      const cursor = await this.runState.readQueryCursor(
+        search.id,
+        'kariyer_net',
+        fingerprint,
+      );
+      const planned = selectQueryUnits(units, {
+        startIndex: cursor.nextIndex,
+        maxQueries: this.maxQueriesPerSearchSource(),
+      });
+      plannedSearches.push({
+        search,
+        scanKind,
+        units,
+        fingerprint,
+        startIndex: cursor.nextIndex,
+        selected: planned.selected,
+        plannerDeferred: planned.deferred.length,
+      });
+      for (const unit of planned.selected) {
+        scheduledItems.push({
+          userId: search.userId,
+          searchId: search.id,
+          unit,
+        });
+      }
+    }
+
+    const uniqueQueries = collectUniqueSourceQueries(scheduledItems);
+    const scheduled = scheduleQueriesRoundRobin({
+      queries: uniqueQueries,
+      budget: this.kariyerNetMaxQueriesPerHour(),
+      roundRobinOffset: this.kariyerNetRoundRobinOffset,
+    });
+    this.kariyerNetRoundRobinOffset = scheduled.nextRoundRobinOffset;
+
+    const uniqueResults = new Map<
+      string,
+      {
+        outcome: QueryUnitOutcome;
+        jobs: readonly SourceJobRaw[];
+        pagesFetched: number;
+        stopReason: string | null;
+        providerMode: string | null;
+      }
+    >();
+    const startedAt = Date.now();
+    const deadline = startedAt + this.timeBudgetMs();
+    let circuitOpen = false;
+    let uniqueStopReason: string | null = null;
+    let uniquePages = 0;
+    let uniqueRaw = 0;
+    let providerMode = adapter.providerMode ?? null;
+    const uniqueOutcomes: QueryUnitOutcome[] = [];
+
+    for (const query of scheduled.selected) {
+      if (circuitOpen) {
+        uniqueResults.set(query.key, {
+          outcome: 'deferred',
+          jobs: [],
+          pagesFetched: 0,
+          stopReason: null,
+          providerMode,
+        });
+        uniqueOutcomes.push('deferred');
+        continue;
+      }
+
+      if (Date.now() >= deadline) {
+        uniqueResults.set(query.key, {
+          outcome: 'deferred',
+          jobs: [],
+          pagesFetched: 0,
+          stopReason: null,
+          providerMode,
+        });
+        uniqueOutcomes.push('deferred');
+        uniqueStopReason = preferStopReason(uniqueStopReason, 'time_budget');
+        circuitOpen = true;
+        continue;
+      }
+
+      const owner = query.consumers[0];
+      const ownerSearch =
+        kariyerSearches.find((search) => search.id === owner?.searchId) ??
+        kariyerSearches[0];
+      if (!ownerSearch) {
+        uniqueResults.set(query.key, {
+          outcome: 'deferred',
+          jobs: [],
+          pagesFetched: 0,
+          stopReason: null,
+          providerMode,
+        });
+        uniqueOutcomes.push('deferred');
+        continue;
+      }
+
+      try {
+        const result = await adapter.search(
+          toSourceQuery(ownerSearch, query.unit, this.maxAgeDays()),
+        );
+        providerMode = result.providerMode ?? providerMode;
+        uniqueRaw += result.jobs.length;
+        uniquePages += result.pagesFetched ?? 0;
+        if (result.stopReason) {
+          uniqueStopReason = preferStopReason(uniqueStopReason, result.stopReason);
+        }
+        uniqueResults.set(query.key, {
+          outcome: 'completed',
+          jobs: result.jobs,
+          pagesFetched: result.pagesFetched ?? 0,
+          stopReason: result.stopReason ?? null,
+          providerMode,
+        });
+        uniqueOutcomes.push('completed');
+        if (
+          result.stopReason === 'blocked_after_success' ||
+          result.stopReason === 'challenge'
+        ) {
+          circuitOpen = true;
+        }
+      } catch (error) {
+        const errorCategory = sourceErrorCategory(error);
+        const blocking = isSourceCircuitBreakError(error);
+        uniqueResults.set(query.key, {
+          outcome: blocking ? 'blocked' : 'failed',
+          jobs: [],
+          pagesFetched: 0,
+          stopReason: null,
+          providerMode,
+        });
+        uniqueOutcomes.push(blocking ? 'blocked' : 'failed');
+        if (blocking) {
+          circuitOpen = true;
+          uniqueStopReason = preferStopReason(
+            uniqueStopReason,
+            'blocked_after_success',
+          );
+        }
+        this.logger.error({
+          message: blocking
+            ? 'Kariyer.net query blocked; opening circuit breaker for this run'
+            : 'Kariyer.net query failed; keeping other query results',
+          runId: options.runId,
+          source: 'kariyer_net',
+          savedSearchId: ownerSearch.id,
+          providerMode,
+          queryOrigin: query.unit.origin,
+          errorCategory,
+        });
+      }
+    }
+
+    for (const query of scheduled.deferred) {
+      uniqueResults.set(query.key, {
+        outcome: 'deferred',
+        jobs: [],
+        pagesFetched: 0,
+        stopReason: null,
+        providerMode,
+      });
+      uniqueOutcomes.push('deferred');
+    }
+    if (scheduled.deferred.length > 0) {
+      uniqueStopReason = preferStopReason(uniqueStopReason, 'query_budget');
+    }
+
+    const uniqueCounts = countQueryOutcomes(uniqueOutcomes);
+    const items: {
+      search: SavedSearch;
+      scanKind: ScanKind;
+      fetched: Awaited<ReturnType<DiscoveryService['fetchFromSource']>>;
+    }[] = [];
+    let jobsFetched = 0;
+
+    for (const planned of plannedSearches) {
+      const fetched = await this.materializeKariyerSearch({
+        planned,
+        uniqueResults,
+        uniqueJobs,
+        adapterProviderMode: providerMode,
+        runId: options.runId,
+      });
+      jobsFetched += fetched.accepted;
+      items.push({
+        search: planned.search,
+        scanKind: planned.scanKind,
+        fetched,
+      });
+    }
+
+    return {
+      items,
+      jobsFetched,
+      rawProviderJobs: uniqueRaw,
+      queriesAttempted: uniqueCounts.attempted,
+      queriesCompleted: uniqueCounts.completed,
+      queriesBlocked: uniqueCounts.blocked,
+      queriesFailed: uniqueCounts.failed,
+      queriesDeferred: uniqueCounts.deferred,
+      kariyerNetPagesFetched: uniquePages,
+      kariyerNetJobsCollected: uniqueRaw,
+      stopReason: uniqueStopReason,
+    };
+  }
+
+  private async materializeKariyerSearch(input: {
+    planned: {
+      search: SavedSearch;
+      scanKind: ScanKind;
+      units: SourceQueryUnit[];
+      fingerprint: string;
+      startIndex: number;
+      selected: SourceQueryUnit[];
+      plannerDeferred: number;
+    };
+    uniqueResults: ReadonlyMap<
+      string,
+      {
+        outcome: QueryUnitOutcome;
+        jobs: readonly SourceJobRaw[];
+        pagesFetched: number;
+        stopReason: string | null;
+        providerMode: string | null;
+      }
+    >;
+    uniqueJobs: Map<string, NormalizedJob>;
+    adapterProviderMode: string | null;
+    runId: string;
+  }): Promise<Awaited<ReturnType<DiscoveryService['fetchFromSource']>>> {
+    const { planned, uniqueResults, uniqueJobs } = input;
+    const collected = new Map<string, SourceJobRaw>();
+    const provenances = new Map<string, SourceQueryProvenance[]>();
+    const outcomes: QueryUnitOutcome[] = [];
+    let raw = 0;
+    let pagesFetched = 0;
+    let stopReason: string | null = null;
+    let providerMode = input.adapterProviderMode;
+
+    for (const unit of planned.selected) {
+      const executed = uniqueResults.get(queryUnitKey(unit));
+      const outcome = executed?.outcome ?? 'deferred';
+      outcomes.push(outcome);
+      if (executed?.stopReason) {
+        stopReason = preferStopReason(stopReason, executed.stopReason);
+      }
+      if (executed?.providerMode) {
+        providerMode = executed.providerMode;
+      }
+      if (outcome !== 'completed' || !executed) {
+        continue;
+      }
+      raw += executed.jobs.length;
+      pagesFetched += executed.pagesFetched;
+      for (const job of executed.jobs) {
+        const identity = sourceListingIdentity('kariyer_net', job.sourceJobId);
+        collected.set(identity, preferCollectedJob(collected.get(identity), job));
+        recordProvenance(provenances, identity, {
+          keyword: unit.keyword,
+          origin: unit.origin,
+          location: unit.location,
+          page: Number.isFinite(job.listPage) ? (job.listPage as number) : 1,
+        });
+      }
+    }
+
+    const counts = countQueryOutcomes(outcomes);
+    if (planned.plannerDeferred > 0 && !stopReason) {
+      stopReason = 'query_budget';
+    }
+    await this.runState.writeQueryCursor(
+      planned.search.id,
+      'kariyer_net',
+      {
+        fingerprint: planned.fingerprint,
+        nextIndex: nextQueryStartIndex({
+          unitCount: planned.units.length,
+          startIndex: planned.startIndex,
+          attempted: counts.completed + counts.failed,
+          leftoverCount: counts.blocked + counts.deferred,
+        }),
+      },
+      planned.startIndex,
+    );
+
+    let accepted = 0;
+    const jobsForNormalize = [...collected.values()];
+    const now = new Date();
+    for (const rawJob of jobsForNormalize) {
+      const normalized = normalizeSourceJob('kariyer_net', rawJob);
+      if (!normalized) {
+        continue;
+      }
+      if (!isWithinSourceMaxAge(normalized.publishedAt, this.maxAgeDays(), now)) {
+        continue;
+      }
+      const identity = sourceListingIdentity(
+        normalized.sourceId,
+        normalized.sourceJobId,
+      );
+      if (!uniqueJobs.has(identity)) {
+        accepted += 1;
+      }
+      uniqueJobs.set(identity, normalized);
+    }
+
+    const catalog = await this.jobsService.listDetailFetchStates(
+      jobsForNormalize.map((job) => ({
+        sourceId: 'kariyer_net' as const,
+        sourceJobId: job.sourceJobId,
+      })),
+    );
+    const withCatalogText = jobsForNormalize.map((job) => {
+      const identity = sourceListingIdentity('kariyer_net', job.sourceJobId);
+      const stored = catalog.get(identity)?.description?.trim();
+      if (stored && !job.description?.trim()) {
+        return { ...job, description: stored };
+      }
+      return job;
+    });
+    const report = selectDetailCandidates({
+      sourceId: 'kariyer_net',
+      search: planned.search,
+      jobs: withCatalogText,
+      provenances,
+      catalog,
+      evaluateMatch: (job, currentSearch) =>
+        this.matchingService.evaluateMatch(job, currentSearch),
+      maxDetails: this.maxDetailRequests('kariyer_net'),
+    });
+    const detailIntents = report.ranked.map((candidate) =>
+      toDetailIntent('kariyer_net', candidate),
+    );
+    this.logDetailSelection({
+      runId: input.runId,
+      sourceId: 'kariyer_net',
+      savedSearchId: planned.search.id,
+      queryCompleted: counts.completed,
+      queryBlocked: counts.blocked,
+      queryFailed: counts.failed,
+      queryDeferred: counts.deferred,
+      queryAttempted: counts.attempted,
+      report,
+    });
+
+    return {
+      accepted,
+      raw,
+      outcome: sourceOutcome({
+        queriesAttempted: counts.attempted,
+        queriesCompleted: counts.completed,
+        queriesBlocked: counts.blocked,
+        queriesFailed: counts.failed,
+        queriesDeferred: counts.deferred,
+        stopReason,
+      }),
+      stopReason,
+      queriesAttempted: counts.attempted,
+      queriesCompleted: counts.completed,
+      queriesBlocked: counts.blocked,
+      queriesFailed: counts.failed,
+      queriesDeferred: counts.deferred,
+      detailsSkipped: report.skipped.length,
+      detailsBackoff: report.backoffCount,
+      detailIntents,
+      provenances,
+      providerMode,
+      kariyerNet: {
+        pagesFetched,
+        jobsCollected: collected.size,
+        stopReason,
+      },
     };
   }
 
@@ -1113,15 +1655,14 @@ export class DiscoveryService {
         }
         outcomes.push('completed');
         if (result.stopReason === 'blocked_after_success') {
-          haltRemaining = 'blocked';
+          haltRemaining = sourceId === 'kariyer_net' ? 'deferred' : 'blocked';
         }
       } catch (error) {
         const errorCategory = sourceErrorCategory(error);
-        const blocking =
-          errorCategory === 'authentication' || errorCategory === 'rate_limit';
+        const blocking = isSourceCircuitBreakError(error);
         outcomes.push(blocking ? 'blocked' : 'failed');
         if (blocking) {
-          haltRemaining = 'blocked';
+          haltRemaining = sourceId === 'kariyer_net' ? 'deferred' : 'blocked';
           stopReason = preferStopReason(stopReason, 'blocked_after_success');
         }
         this.logger.error({

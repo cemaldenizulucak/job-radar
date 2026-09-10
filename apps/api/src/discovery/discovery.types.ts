@@ -48,6 +48,8 @@ export type DiscoveryRunSummary = {
   detailsRequested: number;
   descriptionsExtracted: number;
   providerModes: Readonly<Record<string, string>>;
+  attemptCount: number;
+  recoveredAfterRetry: boolean;
 };
 
 export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
@@ -86,6 +88,8 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   detailsRequested: 0,
   descriptionsExtracted: 0,
   providerModes: {},
+  attemptCount: 1,
+  recoveredAfterRetry: false,
 };
 
 export const PENDING_DISCOVERY_RESULT: ImmediateDiscoveryResult = {

@@ -3,8 +3,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  SourceAuthenticationError,
+  SourceChallengeError,
   SourceParseError,
+  SourceRateLimitError,
   SourceUnavailableError,
 } from '../source-errors.js';
 import type { KariyerNetHttpClient } from './kariyer-net-http.client.js';
@@ -114,7 +115,7 @@ describe('KariyerNetWebProvider', () => {
     );
   });
 
-  it('throws SourceAuthenticationError when Kariyer.net blocks the request', async () => {
+  it('throws SourceChallengeError when Kariyer.net blocks the request', async () => {
     const provider = new KariyerNetWebProvider(
       config(),
       httpClient(async () => ({
@@ -125,11 +126,14 @@ describe('KariyerNetWebProvider', () => {
     );
 
     await expect(provider.search(emptyInput)).rejects.toBeInstanceOf(
-      SourceAuthenticationError,
+      SourceChallengeError,
     );
+    await expect(provider.search(emptyInput)).rejects.toMatchObject({
+      category: 'challenge',
+    });
   });
 
-  it('throws SourceAuthenticationError on a challenge page', async () => {
+  it('throws SourceChallengeError on a challenge page', async () => {
     const provider = new KariyerNetWebProvider(
       config(),
       httpClient(async () => ({
@@ -140,8 +144,11 @@ describe('KariyerNetWebProvider', () => {
     );
 
     await expect(provider.search(emptyInput)).rejects.toBeInstanceOf(
-      SourceAuthenticationError,
+      SourceChallengeError,
     );
+    await expect(provider.search(emptyInput)).rejects.toMatchObject({
+      category: 'challenge',
+    });
   });
 
   it('throws SourceParseError on malformed HTML', async () => {
@@ -175,6 +182,61 @@ describe('KariyerNetWebProvider', () => {
       SourceUnavailableError,
     );
     expect(attempts).toBe(2);
+  });
+
+  it('honors Retry-After on HTTP 429 instead of a fixed retry', async () => {
+    let attempts = 0;
+    const sleeps: number[] = [];
+    const provider = new KariyerNetWebProvider(
+      { ...config(), maxPages: 1 },
+      httpClient(async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            status: 429,
+            contentType: 'text/html',
+            body: 'slow down',
+            retryAfterSeconds: 7,
+          };
+        }
+        return {
+          status: 200,
+          contentType: 'text/html',
+          body: fixture('search-listing.html'),
+        };
+      }),
+      {
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      },
+    );
+
+    const result = await provider.search(emptyInput);
+
+    expect(attempts).toBe(2);
+    expect(sleeps).toContain(7000);
+    expect(result.jobs).toHaveLength(2);
+  });
+
+  it('does not retry HTTP 429 when Retry-After is missing', async () => {
+    let attempts = 0;
+    const provider = new KariyerNetWebProvider(
+      config(),
+      httpClient(async () => {
+        attempts += 1;
+        return {
+          status: 429,
+          contentType: 'text/html',
+          body: 'slow down',
+        };
+      }),
+    );
+
+    await expect(provider.search(emptyInput)).rejects.toBeInstanceOf(
+      SourceRateLimitError,
+    );
+    expect(attempts).toBe(1);
   });
 
   it('fetches sequential pages until an empty page', async () => {

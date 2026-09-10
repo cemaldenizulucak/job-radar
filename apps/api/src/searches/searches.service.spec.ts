@@ -1,11 +1,12 @@
 import { InternalServerErrorException } from '@nestjs/common';
 
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
+import { transientQueryClock } from '../infrastructure/supabase/transient-query.js';
 import { SearchesService } from './searches.service.js';
 
 type QueryResult = {
   data: unknown;
-  error: { message: string } | null;
+  error: { message: string; code?: string } | null;
 };
 
 function createSupabase(
@@ -36,23 +37,62 @@ function createSupabase(
   };
 }
 
+function createSupabaseSequence(results: QueryResult[]): {
+  service: SupabaseService;
+  eq: ReturnType<typeof vi.fn>;
+} {
+  let index = 0;
+  const builder: {
+    select: ReturnType<typeof vi.fn>;
+    eq: ReturnType<typeof vi.fn>;
+  } = {
+    select: vi.fn(),
+    eq: vi.fn(),
+  };
+  builder.select.mockReturnValue(builder);
+  builder.eq.mockImplementation(async () => {
+    const result = results[Math.min(index, results.length - 1)] ?? {
+      data: null,
+      error: { message: 'missing' },
+    };
+    index += 1;
+    return result;
+  });
+
+  return {
+    service: {
+      getClient: () => ({ from: vi.fn(() => builder) }),
+    } as unknown as SupabaseService,
+    eq: builder.eq,
+  };
+}
+
+const frontendSearchRow = {
+  id: 'search-1',
+  user_id: 'user-1',
+  name: 'Frontend',
+  is_active: true,
+  keywords: ['frontend'],
+  technologies: [],
+  locations: [],
+  work_types: ['remote'],
+  experience_levels: [],
+  sources: ['linkedin'],
+};
+
 describe('SearchesService', () => {
+  beforeEach(() => {
+    vi.spyOn(transientQueryClock, 'sleep').mockResolvedValue(undefined);
+    vi.spyOn(transientQueryClock, 'random').mockReturnValue(0);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('loads only active saved searches', async () => {
     const { service, from, eq } = createSupabase({
-      data: [
-        {
-          id: 'search-1',
-          user_id: 'user-1',
-          name: 'Frontend',
-          is_active: true,
-          keywords: ['frontend'],
-          technologies: [],
-          locations: [],
-          work_types: ['remote'],
-          experience_levels: [],
-          sources: ['linkedin'],
-        },
-      ],
+      data: [frontendSearchRow],
       error: null,
     });
     const searches = new SearchesService(service);
@@ -68,24 +108,15 @@ describe('SearchesService', () => {
         sourceIds: ['linkedin'],
       }),
     ]);
+    expect(searches.consumeActiveLoadTelemetry()).toEqual({
+      attemptCount: 1,
+      recoveredAfterRetry: false,
+    });
   });
 
   it('lists only the authenticated user searches', async () => {
     const order = vi.fn(async () => ({
-      data: [
-        {
-          id: 'search-1',
-          user_id: 'user-1',
-          name: 'Frontend',
-          is_active: true,
-          keywords: ['frontend'],
-          technologies: [],
-          locations: [],
-          work_types: ['remote'],
-          experience_levels: [],
-          sources: ['linkedin'],
-        },
-      ],
+      data: [frontendSearchRow],
       error: null,
     }));
     const eq = vi.fn(() => ({ order }));
@@ -123,5 +154,54 @@ describe('SearchesService', () => {
       expect(error).toBeInstanceOf(InternalServerErrorException);
       expect(String(error)).not.toContain(secret);
     }
+  });
+
+  it('retries PGRST303 and then returns saved searches', async () => {
+    const { service, eq } = createSupabaseSequence([
+      {
+        data: null,
+        error: { code: 'PGRST303', message: 'JWT issued at future' },
+      },
+      {
+        data: [frontendSearchRow],
+        error: null,
+      },
+    ]);
+    const searches = new SearchesService(service);
+
+    const result = await searches.getActiveSearches();
+
+    expect(eq).toHaveBeenCalledTimes(2);
+    expect(result).toEqual([expect.objectContaining({ id: 'search-1' })]);
+    expect(searches.consumeActiveLoadTelemetry()).toEqual({
+      attemptCount: 2,
+      recoveredAfterRetry: true,
+    });
+  });
+
+  it('fails after three PGRST303 attempts', async () => {
+    const { service, eq } = createSupabase({
+      data: null,
+      error: { code: 'PGRST303', message: 'JWT issued at future' },
+    });
+    const searches = new SearchesService(service);
+
+    await expect(searches.getActiveSearches()).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
+    expect(eq).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry RLS or missing-column errors', async () => {
+    const { service, eq } = createSupabase({
+      data: null,
+      error: { code: 'PGRST204', message: 'column does not exist' },
+    });
+    const searches = new SearchesService(service);
+
+    await expect(searches.getActiveSearches()).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
+    expect(eq).toHaveBeenCalledTimes(1);
   });
 });

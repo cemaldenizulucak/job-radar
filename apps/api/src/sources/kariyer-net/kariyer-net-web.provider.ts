@@ -8,7 +8,7 @@ import { isUsableJobDescription } from '../../jobs/listing-description.js';
 import type { SourceDetailFetchOutcome } from '../detail-fetch.types.js';
 import {
   isSourceError,
-  SourceAuthenticationError,
+  SourceChallengeError,
   SourceParseError,
   SourceRateLimitError,
   SourceUnavailableError,
@@ -16,6 +16,7 @@ import {
 import {
   createKariyerNetFetchClient,
   isTimeoutError,
+  retryAfterWaitMs,
   type KariyerNetHttpClient,
   type KariyerNetHttpResponse,
 } from './kariyer-net-http.client.js';
@@ -123,7 +124,7 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
             break;
           }
 
-          throw new SourceAuthenticationError(
+          throw new SourceChallengeError(
             'kariyer_net',
             'Kariyer.net presented a bot check or login wall. JobRadar does not bypass it.',
           );
@@ -427,6 +428,23 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
           userAgent: this.config.userAgent,
         });
 
+        if (response.status === 429) {
+          const waitMs = retryAfterWaitMs(response.retryAfterSeconds);
+          if (waitMs !== null && attempt < this.config.maxRetries) {
+            await this.clock.sleep(waitMs);
+            lastError = new SourceRateLimitError(
+              'kariyer_net',
+              'Kariyer.net rate-limited the request.',
+            );
+            continue;
+          }
+
+          throw new SourceRateLimitError(
+            'kariyer_net',
+            'Kariyer.net rate-limited the request.',
+          );
+        }
+
         if (response.status >= 500 && attempt < this.config.maxRetries) {
           lastError = new SourceUnavailableError(
             'kariyer_net',
@@ -437,6 +455,9 @@ export class KariyerNetWebProvider implements KariyerNetProvider {
 
         return response;
       } catch (error) {
+        if (error instanceof SourceRateLimitError) {
+          throw error;
+        }
         lastError = error;
         if (!isTimeoutError(error) && attempt >= this.config.maxRetries) {
           break;

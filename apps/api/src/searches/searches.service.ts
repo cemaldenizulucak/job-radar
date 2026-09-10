@@ -7,38 +7,67 @@ import {
 
 import { SupabaseService } from '../infrastructure/supabase/supabase.service.js';
 import {
+  retryTransientQuery,
+  supabaseFailureLogFields,
+  type TransientQueryTelemetry,
+} from '../infrastructure/supabase/transient-query.js';
+import {
   mapSavedSearchRow,
   mapSavedSearchRows,
   SAVED_SEARCH_SELECT,
 } from './searches.mapper.js';
 import type { SavedSearch, SavedSearchWriteInput } from './searches.types.js';
 
-type SafeSupabaseError = {
-  message: string;
-  code?: string;
-  details?: string;
-  hint?: string;
+const EMPTY_LOAD_TELEMETRY: TransientQueryTelemetry = {
+  attemptCount: 1,
+  recoveredAfterRetry: false,
 };
 
 @Injectable()
 export class SearchesService {
   private readonly logger = new Logger(SearchesService.name);
+  private lastActiveLoadTelemetry: TransientQueryTelemetry = EMPTY_LOAD_TELEMETRY;
 
   constructor(private readonly supabase: SupabaseService) {}
 
-  async getActiveSearches(): Promise<SavedSearch[]> {
-    const { data, error } = await this.supabase
-      .getClient()
-      .from('saved_searches')
-      .select(SAVED_SEARCH_SELECT)
-      .eq('is_active', true);
+  consumeActiveLoadTelemetry(): TransientQueryTelemetry {
+    const telemetry = this.lastActiveLoadTelemetry;
+    this.lastActiveLoadTelemetry = EMPTY_LOAD_TELEMETRY;
+    return telemetry;
+  }
 
-    if (error) {
+  async getActiveSearches(): Promise<SavedSearch[]> {
+    try {
+      const loaded = await retryTransientQuery(async () => {
+        const { data, error } = await this.supabase
+          .getClient()
+          .from('saved_searches')
+          .select(SAVED_SEARCH_SELECT)
+          .eq('is_active', true);
+
+        if (error) {
+          throw error;
+        }
+
+        return mapSavedSearchRows(data);
+      });
+      this.lastActiveLoadTelemetry = {
+        attemptCount: loaded.attemptCount,
+        recoveredAfterRetry: loaded.recoveredAfterRetry,
+      };
+      if (loaded.recoveredAfterRetry) {
+        this.logger.warn({
+          message: 'Loaded saved searches after a transient database error',
+          attemptCount: loaded.attemptCount,
+          recoveredAfterRetry: true,
+        });
+      }
+      return loaded.value;
+    } catch (error) {
+      this.lastActiveLoadTelemetry = EMPTY_LOAD_TELEMETRY;
       this.logSupabaseError(error);
       throw new InternalServerErrorException('Failed to load saved searches.');
     }
-
-    return mapSavedSearchRows(data);
   }
 
   async listActive(): Promise<SavedSearch[]> {
@@ -234,12 +263,11 @@ export class SearchesService {
     }
   }
 
-  private logSupabaseError(error: SafeSupabaseError): void {
+  private logSupabaseError(error: unknown): void {
+    const fields = supabaseFailureLogFields(error);
     this.logger.error({
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
+      message: fields.message,
+      code: fields.code,
     });
   }
 }

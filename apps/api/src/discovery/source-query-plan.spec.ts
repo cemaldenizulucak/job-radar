@@ -8,6 +8,7 @@ import {
   selectQueryUnits,
   sourceQueryPlanFingerprint,
   nextQueryStartIndex,
+  readKariyerNetMaxQueriesPerHour,
 } from './source-query-plan.js';
 
 describe('collectSourceQueryPhrases', () => {
@@ -54,8 +55,8 @@ describe('collectSourceQueryPhrases', () => {
 
   it('keeps unknown terms and does not invent technician or specialist variants', () => {
     expect(collectSourceQueryPhrases(['denetçi', 'Kalite Uzmanı'])).toEqual([
-      { text: 'denetçi', origin: 'user' },
       { text: 'Kalite Uzmanı', origin: 'user' },
+      { text: 'denetçi', origin: 'user' },
     ]);
     expect(collectSourceQueryPhrases(['Gıda Teknikeri'])).toEqual([
       { text: 'Gıda Teknikeri', origin: 'user' },
@@ -71,6 +72,18 @@ describe('collectSourceQueryPhrases', () => {
     );
     expect(variant?.text).toBe('Gıda Mühendisliği');
     expect(variant?.text.startsWith('Gıda')).toBe(true);
+  });
+
+  it('does not emit standalone broad or technology terms as live source queries', () => {
+    expect(
+      collectSourceQueryPhrases(['Frontend Developer', 'developer', 'web', 'UI', 'react']),
+    ).toEqual([{ text: 'Frontend Developer', origin: 'user' }]);
+  });
+
+  it('keeps full profession phrases ahead of leftover short terms', () => {
+    expect(
+      collectSourceQueryPhrases(['denetçi', 'Gıda Mühendisi']).map((item) => item.text),
+    ).toEqual(['Gıda Mühendisi', 'denetçi', 'Gıda Mühendisliği']);
   });
 });
 
@@ -207,5 +220,27 @@ describe('resolveScanKind', () => {
     expect(resolveScanKind({ trigger: 'scheduled', lastDiscoveredAt: null })).toBe(
       'first',
     );
+  });
+});
+
+describe('readKariyerNetMaxQueriesPerHour', () => {
+  it('defaults to 4 when the value is missing, empty, or not a positive integer', () => {
+    expect(readKariyerNetMaxQueriesPerHour(undefined)).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('')).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('   ')).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('0')).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('-3')).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('4.5')).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('NaN')).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('abc')).toBe(4);
+  });
+
+  it('uses a positive integer and clamps values above 10', () => {
+    expect(readKariyerNetMaxQueriesPerHour('1')).toBe(1);
+    expect(readKariyerNetMaxQueriesPerHour('4')).toBe(4);
+    expect(readKariyerNetMaxQueriesPerHour('10')).toBe(10);
+    expect(readKariyerNetMaxQueriesPerHour('11')).toBe(10);
+    expect(readKariyerNetMaxQueriesPerHour('999')).toBe(10);
+    expect(readKariyerNetMaxQueriesPerHour(' 8 ')).toBe(8);
   });
 });

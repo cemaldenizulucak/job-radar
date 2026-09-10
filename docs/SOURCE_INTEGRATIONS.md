@@ -39,7 +39,7 @@ It does **not**:
 - crawl job-detail pages
 - run parallel request floods
 
-If Kariyer.net returns 401/403, a challenge page, or a login wall on **page 1**, the provider throws `SourceAuthenticationError` and **stops that source** for the run. LinkedIn and the scheduler continue.
+If Kariyer.net returns 401/403, a challenge page, or a login wall on **page 1**, the provider throws `SourceChallengeError` (`errorCategory = challenge`) and **stops that source** for the run. Remaining Kariyer.net queries in the same run are deferred, not retried aggressively. LinkedIn and the scheduler continue. JobRadar does not bypass CAPTCHA or challenge walls.
 
 If a **later page** is blocked or fails after at least one successful page, the provider **does not fail the source**. It keeps already-fetched jobs, stops pagination, and reports `stopReason = blocked_after_success`. JobRadar does not bypass CAPTCHA or challenge walls.
 
@@ -56,6 +56,7 @@ HTML parsing is **fragile**. Markup changes should fail with `SourceParseError`,
 | `KARIYER_NET_REQUEST_TIMEOUT_MS` | `10000` |
 | `KARIYER_NET_REQUEST_DELAY_MS` | `750` |
 | `KARIYER_NET_MAX_PAGES` | `10` |
+| `DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR` | `4` (clamped at `10`) |
 | `JOB_SOURCE_MAX_AGE_DAYS` | `30` |
 | `JOB_INACTIVE_AFTER_DAYS` | `7` |
 | `DISCOVERY_INTERVAL_HOURS` | `1` |
@@ -80,6 +81,7 @@ KARIYER_NET_PROVIDER=mock
 - Query: `kw` = joined keywords
 - Pages: first page omits `cp`; later pages use `cp=2`, `cp=3`, …
 - Sequential only, with `KARIYER_NET_REQUEST_DELAY_MS` between requests
+- Across users, at most `DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR` unique search requests per hour (default `4`, hard cap `10`). Leftover queries are deferred to later hours.
 - Stop when the oldest reliably parsed `publishedAt` on the page is older than `JOB_SOURCE_MAX_AGE_DAYS`, the page is empty, `KARIYER_NET_MAX_PAGES` is reached, or a later page is blocked after a successful page (`blocked_after_success`)
 - **First-page rolling collection:** Kariyer.net often blocks pagination. Discovery runs every `DISCOVERY_INTERVAL_HOURS` (default 1). Each run observes current page 1; previously seen jobs stay in the database. Listings stay `is_active` until `JOB_INACTIVE_AFTER_DAYS` (default 7) without being seen. The feed shows active jobs published within `JOB_SOURCE_MAX_AGE_DAYS` (default 30), including rows with unknown `published_at`. A single run does not need to fetch the full 30-day catalog.
 - Work type and experience are **not** encoded; JobRadar matching applies them after ingest
@@ -191,6 +193,8 @@ Discovery catches per-source failures and continues other sources:
 | Error | Category |
 | --- | --- |
 | `SourceAuthenticationError` | `authentication` |
+| `SourceBlockedError` | `blocked` |
+| `SourceChallengeError` | `challenge` |
 | `SourceRateLimitError` | `rate_limit` |
 | `SourceUnavailableError` | `unavailable` |
 | `SourceConfigurationError` | `configuration` |

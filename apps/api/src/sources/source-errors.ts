@@ -2,6 +2,8 @@ import type { SourceId } from '../common/domain.types.js';
 
 export type SourceErrorCategory =
   | 'authentication'
+  | 'blocked'
+  | 'challenge'
   | 'rate_limit'
   | 'unavailable'
   | 'configuration'
@@ -27,6 +29,20 @@ export class SourceAuthenticationError extends SourceError {
   constructor(sourceId: SourceId, message: string) {
     super(sourceId, 'authentication', message);
     this.name = 'SourceAuthenticationError';
+  }
+}
+
+export class SourceBlockedError extends SourceError {
+  constructor(sourceId: SourceId, message: string) {
+    super(sourceId, 'blocked', message);
+    this.name = 'SourceBlockedError';
+  }
+}
+
+export class SourceChallengeError extends SourceError {
+  constructor(sourceId: SourceId, message: string) {
+    super(sourceId, 'challenge', message);
+    this.name = 'SourceChallengeError';
   }
 }
 
@@ -64,4 +80,19 @@ export function isSourceError(error: unknown): error is SourceError {
 
 export function sourceErrorCategory(error: unknown): SourceErrorCategory | 'unknown' {
   return isSourceError(error) ? error.category : 'unknown';
+}
+
+export function isSourceCircuitBreakError(error: unknown): boolean {
+  const category = sourceErrorCategory(error);
+  return (
+    category === 'challenge' ||
+    category === 'blocked' ||
+    category === 'rate_limit' ||
+    category === 'authentication'
+  );
+}
+
+export function isSourceChallengeOrBlock(error: unknown): boolean {
+  const category = sourceErrorCategory(error);
+  return category === 'challenge' || category === 'blocked';
 }

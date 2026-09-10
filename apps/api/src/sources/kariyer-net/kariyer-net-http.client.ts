@@ -4,6 +4,7 @@ export type KariyerNetHttpResponse = {
   contentType: string;
   /** Final URL after redirects. Optional on test fakes; live fetch always sets it. */
   finalUrl?: string;
+  retryAfterSeconds?: number | null;
 };
 
 export type KariyerNetHttpRequest = {
@@ -35,6 +36,7 @@ export function createKariyerNetFetchClient(): KariyerNetHttpClient {
         body: await response.text(),
         contentType: response.headers.get('content-type') ?? '',
         finalUrl: response.url,
+        retryAfterSeconds: parseRetryAfterHeader(response.headers.get('retry-after')),
       };
     },
   };
@@ -47,4 +49,40 @@ export function isTimeoutError(error: unknown): boolean {
 
   const name = 'name' in error ? String(error.name) : '';
   return name === 'TimeoutError' || name === 'AbortError';
+}
+
+export const KARIYER_NET_MAX_RETRY_AFTER_MS = 30_000;
+
+export function parseRetryAfterHeader(
+  value: string | null | undefined,
+): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number.parseInt(trimmed, 10);
+    return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+  }
+
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isFinite(dateMs)) {
+    return null;
+  }
+
+  return Math.max(0, Math.ceil((dateMs - Date.now()) / 1000));
+}
+
+export function retryAfterWaitMs(seconds: number | null | undefined): number | null {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
+    return null;
+  }
+
+  const waitMs = seconds * 1000;
+  if (waitMs > KARIYER_NET_MAX_RETRY_AFTER_MS) {
+    return null;
+  }
+
+  return waitMs;
 }
