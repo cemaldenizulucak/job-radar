@@ -14,5 +14,6 @@ describe('JobDetailScreen possible match copy', () => {
     expect(source).toContain('possibleMatchHint');
     expect(source).toContain('isUnverifiedSourceMatch');
     expect(source).not.toContain('açıklamada geçiyor');
+    expect(source).not.toContain('Kariyer.net’te arama kriterinizle');
   });
 });

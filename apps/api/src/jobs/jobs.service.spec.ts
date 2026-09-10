@@ -761,6 +761,515 @@ describe('JobsService listForUser', () => {
     expect(result.items).toEqual([]);
     expect(from).not.toHaveBeenCalledWith('jobs');
   });
+
+  it('returns only verified matches when matchStatus=verified', async () => {
+    const verifiedRow = { ...jobRow, id: 'job-verified' };
+    const unverifiedRow = {
+      ...jobRow,
+      id: 'job-unverified',
+      source: 'kariyer_net',
+      original_url: 'https://kariyer.example/unverified',
+      source_job_id: 'kn-unverified',
+    };
+    const jobsQuery = chainableQuery({ data: [verifiedRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-1' }, { id: 'search-2' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-verified',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+                {
+                  job_id: 'job-unverified',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'unverified_source_candidate',
+                },
+                {
+                  job_id: 'job-verified',
+                  saved_search_id: 'search-2',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'verified',
+    });
+
+    expect(jobsQuery.in).toHaveBeenCalledWith('id', ['job-verified']);
+    expect(result.items.map((item) => item.id)).toEqual(['job-verified']);
+    expect(result.verifiedMatchCount).toBe(1);
+    expect(result.unverifiedMatchCount).toBe(1);
+    expect(result.totalCount).toBe(1);
+  });
+
+  it('returns only unverified source candidates when matchStatus=unverified_source_candidate', async () => {
+    const unverifiedRow = {
+      ...jobRow,
+      id: 'job-unverified',
+      source: 'kariyer_net',
+      original_url: 'https://kariyer.example/unverified',
+      source_job_id: 'kn-unverified',
+    };
+    const jobsQuery = chainableQuery({ data: [unverifiedRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-1' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-verified',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+                {
+                  job_id: 'job-unverified',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'unverified_source_candidate',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'unverified_source_candidate',
+    });
+
+    expect(jobsQuery.in).toHaveBeenCalledWith('id', ['job-unverified']);
+    expect(result.items.map((item) => item.id)).toEqual(['job-unverified']);
+    expect(result.items[0]?.matchStatus).toBe('unverified_source_candidate');
+    expect(result.verifiedMatchCount).toBe(1);
+    expect(result.unverifiedMatchCount).toBe(1);
+  });
+
+  it('counts a job once when it matches multiple saved searches', async () => {
+    const jobsQuery = chainableQuery({ data: [jobRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-1' }, { id: 'search-2' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-1',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+                {
+                  job_id: 'job-1',
+                  saved_search_id: 'search-2',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'verified',
+    });
+
+    expect(jobsQuery.in).toHaveBeenCalledWith('id', ['job-1']);
+    expect(result.verifiedMatchCount).toBe(1);
+    expect(result.unverifiedMatchCount).toBe(0);
+    expect(result.totalCount).toBe(1);
+  });
+
+  it('treats a mixed verified and unverified job as verified only', async () => {
+    const jobsQuery = chainableQuery({ data: [jobRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-1' }, { id: 'search-2' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-1',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+                {
+                  job_id: 'job-1',
+                  saved_search_id: 'search-2',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'unverified_source_candidate',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const verified = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'verified',
+    });
+    const possible = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'unverified_source_candidate',
+    });
+
+    expect(verified.verifiedMatchCount).toBe(1);
+    expect(verified.unverifiedMatchCount).toBe(0);
+    expect(verified.items.map((item) => item.id)).toEqual(['job-1']);
+    expect(possible.items).toEqual([]);
+  });
+
+  it('moves a previously unverified job into the verified tab after it is upgraded', async () => {
+    const jobsQuery = chainableQuery({ data: [jobRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-1' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-1',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const verified = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'verified',
+    });
+    const possible = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'unverified_source_candidate',
+    });
+
+    expect(verified.items.map((item) => item.id)).toEqual(['job-1']);
+    expect(possible.items).toEqual([]);
+    expect(verified.verifiedMatchCount).toBe(1);
+    expect(verified.unverifiedMatchCount).toBe(0);
+  });
+
+  it('keeps source filtering inside a matchStatus tab', async () => {
+    const kariyerRow = {
+      ...jobRow,
+      id: 'job-kn',
+      source: 'kariyer_net',
+      original_url: 'https://kariyer.example/kn',
+      source_job_id: 'kn-1',
+    };
+    const jobsQuery = chainableQuery({ data: [kariyerRow], error: null });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return jobsQuery;
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-1' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-1',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+                {
+                  job_id: 'job-kn',
+                  saved_search_id: 'search-1',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'verified',
+      sourceId: 'kariyer_net',
+    });
+
+    expect(jobsQuery.eq).toHaveBeenCalledWith('source', 'kariyer_net');
+    expect(jobsQuery.in.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining(['job-1', 'job-kn']),
+    );
+    expect(result.verifiedMatchCount).toBe(2);
+    expect(result.items.map((item) => item.id)).toEqual(['job-kn']);
+  });
+
+  it('does not include another user match counts in matchStatus tabs', async () => {
+    const from = vi.fn((table: string) => {
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-a' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                {
+                  job_id: 'job-b',
+                  saved_search_id: 'search-b',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'unverified_source_candidate',
+                },
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const result = await service.listForUser({
+      userId: 'user-a',
+      matchedOnly: true,
+      matchStatus: 'unverified_source_candidate',
+    });
+
+    expect(result.items).toEqual([]);
+    expect(result.verifiedMatchCount).toBe(0);
+    expect(result.unverifiedMatchCount).toBe(0);
+    expect(from).not.toHaveBeenCalledWith('jobs');
+  });
 });
 
 describe('JobsService getByIdForUser match evidence', () => {

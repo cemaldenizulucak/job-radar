@@ -29,7 +29,42 @@ import { LocationsService } from '../locations/locations.service.js';
 import { DiscoveryService } from './discovery.service.js';
 import { MemoryDiscoveryRunStateStore } from './discovery-run-state.js';
 import { EMPTY_DISCOVERY_SUMMARY } from './discovery.types.js';
-import { queryCountsAddUp } from './query-accounting.js';
+import {
+  queryAttemptedWithinBudget,
+  queryCountsAddUp,
+} from './query-accounting.js';
+import type { DiscoveryRunSummary } from './discovery.types.js';
+
+function expectQueryTelemetry(
+  result: Pick<
+    DiscoveryRunSummary,
+    | 'queriesPlanned'
+    | 'queriesAttempted'
+    | 'queriesCompleted'
+    | 'queriesBlocked'
+    | 'queriesFailed'
+    | 'queriesDeferred'
+    | 'queriesPartialBlocked'
+  >,
+  budget?: number,
+) {
+  expect(
+    queryCountsAddUp({
+      planned: result.queriesPlanned,
+      attempted: result.queriesAttempted,
+      completed: result.queriesCompleted,
+      blocked: result.queriesBlocked,
+      failed: result.queriesFailed,
+      deferred: result.queriesDeferred,
+      partialBlocked: result.queriesPartialBlocked,
+    }),
+  ).toBe(true);
+  if (budget !== undefined) {
+    expect(queryAttemptedWithinBudget(result.queriesAttempted, budget)).toBe(
+      true,
+    );
+  }
+}
 
 function search(overrides: Partial<SavedSearch> = {}): SavedSearch {
   return {
@@ -538,9 +573,11 @@ describe('DiscoveryService', () => {
         rawProviderJobs: 6,
         normalizedJobs: 6,
         notifiedJobCount: 4,
+        queriesPlanned: 2,
         queriesAttempted: 2,
         queriesCompleted: 2,
         queriesDeferred: 0,
+        queriesPartialBlocked: 0,
         scanKind: 'first',
         attemptCount: 1,
         recoveredAfterRetry: false,
@@ -705,19 +742,14 @@ describe('DiscoveryService', () => {
     expect(result.sourceFailures).toBe(0);
     expect(result.sourcePartials).toBe(1);
     expect(result.queriesAttempted).toBe(1);
-    expect(result.queriesCompleted).toBe(1);
+    expect(result.queriesCompleted).toBe(0);
     expect(result.queriesBlocked).toBe(0);
     expect(result.queriesFailed).toBe(0);
     expect(result.queriesDeferred).toBe(0);
-    expect(
-      queryCountsAddUp({
-        attempted: result.queriesAttempted,
-        completed: result.queriesCompleted,
-        blocked: result.queriesBlocked,
-        failed: result.queriesFailed,
-        deferred: result.queriesDeferred,
-      }),
-    ).toBe(true);
+    expect(result.queriesPartialBlocked).toBe(1);
+    expect(result.queriesPlanned).toBe(1);
+    expect(result.sourceChallengeObserved).toBe(true);
+    expectQueryTelemetry(result);
     expect(jobs.listings.size).toBe(4);
   });
 
@@ -2170,6 +2202,7 @@ describe('DiscoveryService', () => {
     );
 
     const first = await discovery.runForSavedSearch(target);
+    expect(first.queriesPlanned).toBe(2);
     expect(first.queriesAttempted).toBe(2);
     expect(first.queriesCompleted).toBe(2);
     expect(first.queriesDeferred).toBe(0);
@@ -2301,11 +2334,13 @@ describe('DiscoveryService', () => {
       );
 
       const first = await discovery.runForSavedSearch(target);
-      expect(first.queriesAttempted).toBe(3);
+      expect(first.queriesPlanned).toBe(3);
+      expect(first.queriesAttempted).toBe(1);
       expect(first.queriesCompleted).toBe(1);
       expect(first.queriesDeferred).toBe(2);
       expect(first.sourcePartials).toBe(1);
       expect(first.stopReason).toBe('time_budget');
+      expectQueryTelemetry(first);
       expect(received).toEqual(['alpha']);
 
       received.length = 0;
@@ -2947,18 +2982,11 @@ describe('DiscoveryService', () => {
 
     const first = await discovery.runForSavedSearch(target);
     expect(first.queriesCompleted).toBe(3);
+    expect(first.queriesAttempted).toBe(3);
     expect(first.queriesDeferred).toBeGreaterThan(0);
     expect(first.queriesFailed).toBe(0);
     expect(first.stopReason).toBe('query_budget');
-    expect(
-      queryCountsAddUp({
-        attempted: first.queriesAttempted,
-        completed: first.queriesCompleted,
-        blocked: first.queriesBlocked,
-        failed: first.queriesFailed,
-        deferred: first.queriesDeferred,
-      }),
-    ).toBe(true);
+    expectQueryTelemetry(first, 3);
     expect(calls).toBe(3);
     const firstWindow = [...seen];
 
@@ -3008,8 +3036,10 @@ describe('DiscoveryService', () => {
 
     const result = await discovery.runForSavedSearch(target);
     expect(calls).toBe(4);
+    expect(result.queriesAttempted).toBe(4);
     expect(result.queriesCompleted).toBe(4);
     expect(result.queriesDeferred).toBeGreaterThan(0);
+    expectQueryTelemetry(result, 4);
   });
 
   it('clamps an oversized Kariyer.net hourly budget so live queries stay at most 10', async () => {
@@ -3051,8 +3081,10 @@ describe('DiscoveryService', () => {
 
     const result = await discovery.runForSavedSearch(target);
     expect(calls).toBe(10);
+    expect(result.queriesAttempted).toBe(10);
     expect(result.queriesCompleted).toBe(10);
     expect(result.queriesDeferred).toBeGreaterThan(0);
+    expectQueryTelemetry(result, 10);
   });
 
   it('does not change listings during a detail-queue backfill dry-run', async () => {
@@ -3884,19 +3916,15 @@ describe('DiscoveryService', () => {
     const result = await discovery.runForSavedSearch(target);
 
     expect(calls).toBe(1);
+    expect(result.queriesPlanned).toBe(3);
+    expect(result.queriesAttempted).toBe(1);
     expect(result.queriesBlocked).toBe(1);
     expect(result.queriesDeferred).toBe(2);
     expect(result.queriesCompleted).toBe(0);
     expect(result.queriesFailed).toBe(0);
-    expect(
-      queryCountsAddUp({
-        attempted: result.queriesAttempted,
-        completed: result.queriesCompleted,
-        blocked: result.queriesBlocked,
-        failed: result.queriesFailed,
-        deferred: result.queriesDeferred,
-      }),
-    ).toBe(true);
+    expect(result.queriesPartialBlocked).toBe(0);
+    expect(result.sourceChallengeObserved).toBe(true);
+    expectQueryTelemetry(result, 8);
   });
 
   it('does not report a Kariyer.net challenge as authentication', async () => {
@@ -4100,5 +4128,238 @@ describe('DiscoveryService', () => {
     ];
     expect(payload.matches.every((match) => match.savedSearchId === 'search-a')).toBe(true);
     expect(payload.searches.map((item) => item.userId).sort()).toEqual(['user-a', 'user-b']);
+  });
+
+  it('counts 11 planned Kariyer.net queries with budget 4 and partial challenge as 1 attempt', async () => {
+    let listingCalls = 0;
+    let detailCalls = 0;
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        listingCalls += 1;
+        return {
+          sourceId: 'kariyer_net',
+          pagesFetched: 1,
+          jobsCollected: 4,
+          stopReason: 'blocked_after_success',
+          jobs: [1, 2, 3, 4].map((index) => ({
+            sourceJobId: `quality-partial-${index}`,
+            canonicalUrl: `https://www.kariyer.net/is-ilani/quality-partial-${index}`,
+            title: 'Kalite Mühendisi',
+            companyName: 'Example Food Co',
+            location: 'Manisa',
+            listPage: 1,
+          })),
+        };
+      },
+      enrichMissingDescriptions: async (jobs) => {
+        detailCalls += jobs.length;
+        return {
+          jobs,
+          detailsFetched: 0,
+          detailsFailed: jobs.length,
+        };
+      },
+    };
+    const target = search({
+      id: 'search-partial-budget',
+      keywords: [
+        'Gıda Mühendisi',
+        'Alpha Engineer',
+        'Beta Engineer',
+        'Gamma Engineer',
+        'Delta Engineer',
+        'Epsilon Engineer',
+        'Zeta Engineer',
+        'Eta Engineer',
+        'Theta Engineer',
+        'Iota Engineer',
+      ],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs, runState } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '16',
+        DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '4',
+      },
+    );
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(listingCalls).toBe(1);
+    expect(result.queriesPlanned).toBe(11);
+    expect(result.queriesAttempted).toBe(1);
+    expect(result.queriesDeferred).toBe(10);
+    expect(result.queriesCompleted).toBe(0);
+    expect(result.queriesBlocked).toBe(0);
+    expect(result.queriesPartialBlocked).toBe(1);
+    expect(result.sourceChallengeObserved).toBe(true);
+    expect(result.stopReason).toBe('blocked_after_success');
+    expect(result.detailsAttempted).toBe(0);
+    expect(result.detailsFailed).toBe(0);
+    expect(result.detailsDeferredDueToChallenge).toBe(4);
+    expect(result.jobsInserted).toBe(4);
+    expect(jobs.listings.size).toBe(4);
+    expect(detailCalls).toBe(0);
+    expect(
+      [...runState.queue.values()].filter((item) =>
+        item.sourceJobId.startsWith('quality-partial-'),
+      ),
+    ).toHaveLength(4);
+    expectQueryTelemetry(result, 4);
+  });
+
+  it('does not send more than 4 Kariyer.net provider queries when there is no challenge', async () => {
+    let listingCalls = 0;
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        listingCalls += 1;
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+    };
+    const target = search({
+      id: 'search-budget-no-challenge',
+      keywords: [
+        'Gıda Mühendisi',
+        'Alpha Engineer',
+        'Beta Engineer',
+        'Gamma Engineer',
+        'Delta Engineer',
+        'Epsilon Engineer',
+        'Zeta Engineer',
+        'Eta Engineer',
+        'Theta Engineer',
+        'Iota Engineer',
+      ],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '16',
+        DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '4',
+      },
+    );
+
+    const result = await discovery.runForSavedSearch(target);
+
+    expect(listingCalls).toBe(4);
+    expect(result.queriesPlanned).toBe(11);
+    expect(result.queriesAttempted).toBe(4);
+    expect(result.queriesCompleted).toBe(4);
+    expect(result.queriesDeferred).toBe(7);
+    expect(result.queriesPartialBlocked).toBe(0);
+    expect(result.sourceChallengeObserved).toBe(false);
+    expectQueryTelemetry(result, 4);
+  });
+
+  it('retries queued Kariyer.net details on a later run when there is no challenge', async () => {
+    let listingCalls = 0;
+    let detailCalls = 0;
+    const adapter: JobSourceAdapter = {
+      sourceId: 'kariyer_net',
+      displayName: 'Kariyer.net',
+      capabilities: {
+        supportsKeywordSearch: true,
+        supportsLocation: true,
+        supportsRemoteFilter: false,
+        supportsExperienceLevel: false,
+      },
+      isEnabled: () => true,
+      search: async () => {
+        listingCalls += 1;
+        if (listingCalls === 1) {
+          return {
+            sourceId: 'kariyer_net',
+            pagesFetched: 1,
+            jobsCollected: 1,
+            stopReason: 'blocked_after_success',
+            jobs: [
+              {
+                sourceJobId: 'quality-retry-1',
+                canonicalUrl: 'https://www.kariyer.net/is-ilani/quality-retry-1',
+                title: 'Kalite Mühendisi',
+                companyName: 'Example Food Co',
+                location: 'Manisa',
+                listPage: 1,
+              },
+            ],
+          };
+        }
+
+        return { sourceId: 'kariyer_net', jobs: [] };
+      },
+      enrichMissingDescriptions: async (jobs) => {
+        detailCalls += jobs.length;
+        return {
+          jobs: jobs.map((job) => ({
+            ...job,
+            description: 'Üniversitelerin Gıda Mühendisliği bölümünden mezun',
+          })),
+          detailsFetched: jobs.length,
+          detailsFailed: 0,
+        };
+      },
+    };
+    const target = search({
+      id: 'search-detail-retry',
+      keywords: ['Gıda Mühendisi', 'Alpha Engineer', 'Beta Engineer'],
+      sourceIds: ['kariyer_net'],
+    });
+    const { discovery, jobs, runState } = createDiscovery(
+      [target],
+      [adapter],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        DISCOVERY_MAX_QUERIES_PER_SEARCH_SOURCE: '16',
+        DISCOVERY_KARIYER_NET_MAX_QUERIES_PER_HOUR: '4',
+      },
+    );
+
+    const first = await discovery.runForSavedSearch(target);
+    expect(first.detailsAttempted).toBe(0);
+    expect(first.detailsDeferredDueToChallenge).toBe(1);
+    expect(detailCalls).toBe(0);
+    expect(runState.queue.has('kariyer_net:quality-retry-1')).toBe(true);
+
+    const second = await discovery.runForSavedSearch(target);
+    expect(second.sourceChallengeObserved).toBe(false);
+    expect(second.detailsAttempted).toBe(1);
+    expect(second.detailsDeferredDueToChallenge).toBe(0);
+    expect(detailCalls).toBe(1);
+    expect(
+      jobs.listings.get('kariyer_net:quality-retry-1')?.job.description,
+    ).toContain('Gıda Mühendisliği');
   });
 });

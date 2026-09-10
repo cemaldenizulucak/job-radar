@@ -80,6 +80,7 @@ import {
 } from './diagnosis-listing-url.js';
 import {
   countQueryOutcomes,
+  toQueryTelemetry,
   type QueryUnitOutcome,
 } from './query-accounting.js';
 import {
@@ -105,11 +106,13 @@ type SearchSourceFetchStat = {
   source: SourceId;
   fetchedJobCount: number;
   normalizedJobCount: number;
+  queriesPlanned: number;
   queriesAttempted: number;
   queriesCompleted: number;
   queriesBlocked: number;
   queriesFailed: number;
   queriesDeferred: number;
+  queriesPartialBlocked: number;
   detailsFetched: number;
   detailsFailed: number;
   detailsSelected: number;
@@ -119,6 +122,8 @@ type SearchSourceFetchStat = {
   detailsQueued: number;
   providerMode: string | null;
 };
+
+const EMPTY_QUERY_TELEMETRY = toQueryTelemetry(countQueryOutcomes([]));
 
 type DetailIntent = Omit<DetailQueueEnqueueInput, 'jobId'> & {
   identity: string;
@@ -604,6 +609,7 @@ export class DiscoveryService {
       persisted,
       intents: fetched.detailIntents,
       searches,
+      deferKariyerNetDetailsDueToChallenge: fetched.sourceChallengeObserved,
     });
     jobsInserted += detailDrain.jobsInserted;
     jobsUpdated += detailDrain.jobsUpdated;
@@ -717,11 +723,14 @@ export class DiscoveryService {
       runId,
       scanKind: fetched.scanKind,
       providerModes: fetched.providerModes,
+      queriesPlanned: fetched.queriesPlanned,
       queriesAttempted: fetched.queriesAttempted,
       queriesCompleted: fetched.queriesCompleted,
       queriesBlocked: fetched.queriesBlocked,
       queriesFailed: fetched.queriesFailed,
       queriesDeferred: fetched.queriesDeferred,
+      queriesPartialBlocked: fetched.queriesPartialBlocked,
+      sourceChallengeObserved: fetched.sourceChallengeObserved,
       detailsFetched: detailDrain.detailsFetched,
       detailsFailed: detailDrain.detailsFailed,
       detailsSelected: detailDrain.detailsSelected,
@@ -733,6 +742,7 @@ export class DiscoveryService {
       ),
       detailsQueued: detailDrain.detailsQueued,
       detailsRequested: detailDrain.detailsRequested,
+      detailsDeferredDueToChallenge: detailDrain.detailsDeferredDueToChallenge,
       descriptionsExtracted: detailDrain.descriptionsExtracted,
       kariyerNetPagesFetched: fetched.kariyerNetPagesFetched,
       kariyerNetJobsCollected: fetched.kariyerNetJobsCollected,
@@ -762,11 +772,14 @@ export class DiscoveryService {
       notifiedJobCount,
       runId,
       scanKind: fetched.scanKind,
+      queriesPlanned: fetched.queriesPlanned,
       queriesAttempted: fetched.queriesAttempted,
       queriesCompleted: fetched.queriesCompleted,
       queriesBlocked: fetched.queriesBlocked,
       queriesFailed: fetched.queriesFailed,
       queriesDeferred: fetched.queriesDeferred,
+      queriesPartialBlocked: fetched.queriesPartialBlocked,
+      sourceChallengeObserved: fetched.sourceChallengeObserved,
       detailsFetched: detailDrain.detailsFetched,
       detailsFailed: detailDrain.detailsFailed,
       detailsSelected: detailDrain.detailsSelected,
@@ -778,6 +791,7 @@ export class DiscoveryService {
       ),
       detailsQueued: detailDrain.detailsQueued,
       detailsRequested: detailDrain.detailsRequested,
+      detailsDeferredDueToChallenge: detailDrain.detailsDeferredDueToChallenge,
       descriptionsExtracted: detailDrain.descriptionsExtracted,
       providerModes: fetched.providerModes,
       attemptCount: options.attemptCount ?? 1,
@@ -879,11 +893,14 @@ export class DiscoveryService {
     sourcePartials: number;
     perSearch: readonly SearchSourceFetchStat[];
     scanKind: ScanKind | 'mixed';
+    queriesPlanned: number;
     queriesAttempted: number;
     queriesCompleted: number;
     queriesBlocked: number;
     queriesFailed: number;
     queriesDeferred: number;
+    queriesPartialBlocked: number;
+    sourceChallengeObserved: boolean;
     providerModes: Record<string, string>;
     detailIntents: readonly DetailIntent[];
     jobProvenances: ReadonlyMap<string, readonly SearchScopedProvenance[]>;
@@ -897,11 +914,14 @@ export class DiscoveryService {
     let sourceAttempts = 0;
     let sourceFailures = 0;
     let sourcePartials = 0;
+    let queriesPlanned = 0;
     let queriesAttempted = 0;
     let queriesCompleted = 0;
     let queriesBlocked = 0;
     let queriesFailed = 0;
     let queriesDeferred = 0;
+    let queriesPartialBlocked = 0;
+    let sourceChallengeObserved = false;
     const detailIntents: DetailIntent[] = [];
     const intentKeys = new Set<string>();
     const jobProvenances = new Map<string, SearchScopedProvenance[]>();
@@ -923,11 +943,13 @@ export class DiscoveryService {
         source: sourceId,
         fetchedJobCount: fetched.raw,
         normalizedJobCount: fetched.accepted,
+        queriesPlanned: fetched.queriesPlanned,
         queriesAttempted: fetched.queriesAttempted,
         queriesCompleted: fetched.queriesCompleted,
         queriesBlocked: fetched.queriesBlocked,
         queriesFailed: fetched.queriesFailed,
         queriesDeferred: fetched.queriesDeferred,
+        queriesPartialBlocked: fetched.queriesPartialBlocked,
         detailsFetched: 0,
         detailsFailed: 0,
         detailsSelected: 0,
@@ -940,11 +962,15 @@ export class DiscoveryService {
       if (mode === 'full') {
         jobsFetched += fetched.accepted;
         rawProviderJobs += fetched.raw;
+        queriesPlanned += fetched.queriesPlanned;
         queriesAttempted += fetched.queriesAttempted;
         queriesCompleted += fetched.queriesCompleted;
         queriesBlocked += fetched.queriesBlocked;
         queriesFailed += fetched.queriesFailed;
         queriesDeferred += fetched.queriesDeferred;
+        queriesPartialBlocked += fetched.queriesPartialBlocked;
+        sourceChallengeObserved =
+          sourceChallengeObserved || fetched.sourceChallengeObserved;
         if (fetched.kariyerNet) {
           kariyerNetPagesFetched += fetched.kariyerNet.pagesFetched;
           kariyerNetJobsCollected += fetched.kariyerNet.jobsCollected;
@@ -1020,11 +1046,15 @@ export class DiscoveryService {
     }
     jobsFetched += kariyerRun.jobsFetched;
     rawProviderJobs += kariyerRun.rawProviderJobs;
+    queriesPlanned += kariyerRun.queriesPlanned;
     queriesAttempted += kariyerRun.queriesAttempted;
     queriesCompleted += kariyerRun.queriesCompleted;
     queriesBlocked += kariyerRun.queriesBlocked;
     queriesFailed += kariyerRun.queriesFailed;
     queriesDeferred += kariyerRun.queriesDeferred;
+    queriesPartialBlocked += kariyerRun.queriesPartialBlocked;
+    sourceChallengeObserved =
+      sourceChallengeObserved || kariyerRun.sourceChallengeObserved;
     kariyerNetPagesFetched += kariyerRun.kariyerNetPagesFetched;
     kariyerNetJobsCollected += kariyerRun.kariyerNetJobsCollected;
     if (kariyerRun.stopReason) {
@@ -1046,11 +1076,14 @@ export class DiscoveryService {
       sourcePartials,
       perSearch,
       scanKind,
+      queriesPlanned,
       queriesAttempted,
       queriesCompleted,
       queriesBlocked,
       queriesFailed,
       queriesDeferred,
+      queriesPartialBlocked,
+      sourceChallengeObserved,
       providerModes,
       detailIntents,
       jobProvenances,
@@ -1075,11 +1108,14 @@ export class DiscoveryService {
     }[];
     jobsFetched: number;
     rawProviderJobs: number;
+    queriesPlanned: number;
     queriesAttempted: number;
     queriesCompleted: number;
     queriesBlocked: number;
     queriesFailed: number;
     queriesDeferred: number;
+    queriesPartialBlocked: number;
+    sourceChallengeObserved: boolean;
     kariyerNetPagesFetched: number;
     kariyerNetJobsCollected: number;
     stopReason: string | null;
@@ -1092,11 +1128,8 @@ export class DiscoveryService {
       }[],
       jobsFetched: 0,
       rawProviderJobs: 0,
-      queriesAttempted: 0,
-      queriesCompleted: 0,
-      queriesBlocked: 0,
-      queriesFailed: 0,
-      queriesDeferred: 0,
+      ...EMPTY_QUERY_TELEMETRY,
+      sourceChallengeObserved: false,
       kariyerNetPagesFetched: 0,
       kariyerNetJobsCollected: 0,
       stopReason: null as string | null,
@@ -1127,11 +1160,8 @@ export class DiscoveryService {
             raw: 0,
             outcome: 'skipped',
             stopReason: null,
-            queriesAttempted: 0,
-            queriesCompleted: 0,
-            queriesBlocked: 0,
-            queriesFailed: 0,
-            queriesDeferred: 0,
+            ...EMPTY_QUERY_TELEMETRY,
+            sourceChallengeObserved: false,
             detailsSkipped: 0,
             detailsBackoff: 0,
             detailIntents: [],
@@ -1214,6 +1244,7 @@ export class DiscoveryService {
     const startedAt = Date.now();
     const deadline = startedAt + this.timeBudgetMs();
     let circuitOpen = false;
+    let sourceChallengeObserved = false;
     let uniqueStopReason: string | null = null;
     let uniquePages = 0;
     let uniqueRaw = 0;
@@ -1273,19 +1304,21 @@ export class DiscoveryService {
         if (result.stopReason) {
           uniqueStopReason = preferStopReason(uniqueStopReason, result.stopReason);
         }
+        const outcome = listingQueryOutcome(result.stopReason, result.jobs.length);
         uniqueResults.set(query.key, {
-          outcome: 'completed',
+          outcome,
           jobs: result.jobs,
           pagesFetched: result.pagesFetched ?? 0,
           stopReason: result.stopReason ?? null,
           providerMode,
         });
-        uniqueOutcomes.push('completed');
+        uniqueOutcomes.push(outcome);
         if (
           result.stopReason === 'blocked_after_success' ||
           result.stopReason === 'challenge'
         ) {
           circuitOpen = true;
+          sourceChallengeObserved = true;
         }
       } catch (error) {
         const errorCategory = sourceErrorCategory(error);
@@ -1300,6 +1333,7 @@ export class DiscoveryService {
         uniqueOutcomes.push(blocking ? 'blocked' : 'failed');
         if (blocking) {
           circuitOpen = true;
+          sourceChallengeObserved = true;
           uniqueStopReason = preferStopReason(
             uniqueStopReason,
             'blocked_after_success',
@@ -1361,11 +1395,11 @@ export class DiscoveryService {
       items,
       jobsFetched,
       rawProviderJobs: uniqueRaw,
-      queriesAttempted: uniqueCounts.attempted,
-      queriesCompleted: uniqueCounts.completed,
-      queriesBlocked: uniqueCounts.blocked,
-      queriesFailed: uniqueCounts.failed,
-      queriesDeferred: uniqueCounts.deferred,
+      ...toQueryTelemetry(uniqueCounts),
+      sourceChallengeObserved:
+        sourceChallengeObserved ||
+        uniqueCounts.blocked > 0 ||
+        uniqueCounts.partialBlocked > 0,
       kariyerNetPagesFetched: uniquePages,
       kariyerNetJobsCollected: uniqueRaw,
       stopReason: uniqueStopReason,
@@ -1415,7 +1449,7 @@ export class DiscoveryService {
       if (executed?.providerMode) {
         providerMode = executed.providerMode;
       }
-      if (outcome !== 'completed' || !executed) {
+      if (!executed || !isCollectedListingOutcome(outcome)) {
         continue;
       }
       raw += executed.jobs.length;
@@ -1444,7 +1478,7 @@ export class DiscoveryService {
         nextIndex: nextQueryStartIndex({
           unitCount: planned.units.length,
           startIndex: planned.startIndex,
-          attempted: counts.completed + counts.failed,
+          attempted: counts.completed + counts.failed + counts.partialBlocked,
           leftoverCount: counts.blocked + counts.deferred,
         }),
       },
@@ -1507,6 +1541,7 @@ export class DiscoveryService {
       queryBlocked: counts.blocked,
       queryFailed: counts.failed,
       queryDeferred: counts.deferred,
+      queryPartialBlocked: counts.partialBlocked,
       queryAttempted: counts.attempted,
       report,
     });
@@ -1520,14 +1555,16 @@ export class DiscoveryService {
         queriesBlocked: counts.blocked,
         queriesFailed: counts.failed,
         queriesDeferred: counts.deferred,
+        queriesPartialBlocked: counts.partialBlocked,
         stopReason,
       }),
       stopReason,
-      queriesAttempted: counts.attempted,
-      queriesCompleted: counts.completed,
-      queriesBlocked: counts.blocked,
-      queriesFailed: counts.failed,
-      queriesDeferred: counts.deferred,
+      ...toQueryTelemetry(counts),
+      sourceChallengeObserved:
+        counts.blocked > 0 ||
+        counts.partialBlocked > 0 ||
+        stopReason === 'blocked_after_success' ||
+        stopReason === 'challenge',
       detailsSkipped: report.skipped.length,
       detailsBackoff: report.backoffCount,
       detailIntents,
@@ -1551,11 +1588,14 @@ export class DiscoveryService {
     raw: number;
     outcome: 'skipped' | 'ok' | 'partial' | 'failed';
     stopReason: string | null;
+    queriesPlanned: number;
     queriesAttempted: number;
     queriesCompleted: number;
     queriesBlocked: number;
     queriesFailed: number;
     queriesDeferred: number;
+    queriesPartialBlocked: number;
+    sourceChallengeObserved: boolean;
     detailsSkipped: number;
     detailsBackoff: number;
     detailIntents: readonly DetailIntent[];
@@ -1582,11 +1622,8 @@ export class DiscoveryService {
         raw: 0,
         outcome: 'skipped',
         stopReason: null,
-        queriesAttempted: 0,
-        queriesCompleted: 0,
-        queriesBlocked: 0,
-        queriesFailed: 0,
-        queriesDeferred: 0,
+        ...EMPTY_QUERY_TELEMETRY,
+        sourceChallengeObserved: false,
         detailsSkipped: 0,
         detailsBackoff: 0,
         detailIntents: [],
@@ -1653,16 +1690,19 @@ export class DiscoveryService {
             page: Number.isFinite(job.listPage) ? (job.listPage as number) : 1,
           });
         }
-        outcomes.push('completed');
-        if (result.stopReason === 'blocked_after_success') {
-          haltRemaining = sourceId === 'kariyer_net' ? 'deferred' : 'blocked';
+        outcomes.push(listingQueryOutcome(result.stopReason, result.jobs.length));
+        if (
+          result.stopReason === 'blocked_after_success' ||
+          result.stopReason === 'challenge'
+        ) {
+          haltRemaining = 'deferred';
         }
       } catch (error) {
         const errorCategory = sourceErrorCategory(error);
         const blocking = isSourceCircuitBreakError(error);
         outcomes.push(blocking ? 'blocked' : 'failed');
         if (blocking) {
-          haltRemaining = sourceId === 'kariyer_net' ? 'deferred' : 'blocked';
+          haltRemaining = 'deferred';
           stopReason = preferStopReason(stopReason, 'blocked_after_success');
         }
         this.logger.error({
@@ -1691,7 +1731,7 @@ export class DiscoveryService {
         nextIndex: nextQueryStartIndex({
           unitCount: units.length,
           startIndex,
-          attempted: counts.completed + counts.failed,
+          attempted: counts.completed + counts.failed + counts.partialBlocked,
           leftoverCount: counts.blocked + counts.deferred,
         }),
       },
@@ -1759,6 +1799,7 @@ export class DiscoveryService {
       queryBlocked: counts.blocked,
       queryFailed: counts.failed,
       queryDeferred: counts.deferred,
+      queryPartialBlocked: counts.partialBlocked,
       queryAttempted: counts.attempted,
       report,
     });
@@ -1769,6 +1810,7 @@ export class DiscoveryService {
       queriesBlocked: counts.blocked,
       queriesFailed: counts.failed,
       queriesDeferred: counts.deferred,
+      queriesPartialBlocked: counts.partialBlocked,
       stopReason,
     });
 
@@ -1780,11 +1822,7 @@ export class DiscoveryService {
       providerMode,
       scanKind: options.scanKind,
       durationMs: Date.now() - startedAt,
-      queriesAttempted: counts.attempted,
-      queriesCompleted: counts.completed,
-      queriesBlocked: counts.blocked,
-      queriesFailed: counts.failed,
-      queriesDeferred: counts.deferred,
+      ...toQueryTelemetry(counts),
       fetched: raw,
       normalized: accepted,
       pagesFetched,
@@ -1801,11 +1839,12 @@ export class DiscoveryService {
       raw,
       outcome,
       stopReason,
-      queriesAttempted: counts.attempted,
-      queriesCompleted: counts.completed,
-      queriesBlocked: counts.blocked,
-      queriesFailed: counts.failed,
-      queriesDeferred: counts.deferred,
+      ...toQueryTelemetry(counts),
+      sourceChallengeObserved:
+        counts.blocked > 0 ||
+        counts.partialBlocked > 0 ||
+        stopReason === 'blocked_after_success' ||
+        stopReason === 'challenge',
       detailsSkipped: report.skipped.length,
       detailsBackoff: report.backoffCount,
       detailIntents,
@@ -1828,6 +1867,7 @@ export class DiscoveryService {
     persisted: MatchableJob[];
     intents: readonly DetailIntent[];
     searches: readonly SavedSearch[];
+    deferKariyerNetDetailsDueToChallenge: boolean;
   }): Promise<{
     jobsInserted: number;
     jobsUpdated: number;
@@ -1839,6 +1879,7 @@ export class DiscoveryService {
     detailsBackoff: number;
     detailsQueued: number;
     detailsRequested: number;
+    detailsDeferredDueToChallenge: number;
     descriptionsExtracted: number;
     detailErrorByJobId: Map<string, string | null>;
   }> {
@@ -1877,6 +1918,12 @@ export class DiscoveryService {
     let detailsSkipped = 0;
     let detailsRequested = 0;
     let descriptionsExtracted = 0;
+    const kariyerQueuedCount = enqueueItems.filter(
+      (item) => item.sourceId === 'kariyer_net',
+    ).length;
+    const detailsDeferredDueToChallenge = input.deferKariyerNetDetailsDueToChallenge
+      ? kariyerQueuedCount
+      : 0;
     const detailErrorByJobId = new Map<string, string | null>();
     const nowIso = new Date().toISOString();
     const persistedById = new Map(input.persisted.map((job) => [job.id, job]));
@@ -1891,6 +1938,19 @@ export class DiscoveryService {
     for (const sourceId of sourceIds) {
       const adapter = this.sourceRegistry.get(sourceId);
       if (!adapter?.isEnabled() || !adapter.enrichMissingDescriptions) {
+        continue;
+      }
+
+      if (
+        sourceId === 'kariyer_net' &&
+        input.deferKariyerNetDetailsDueToChallenge
+      ) {
+        this.logger.log({
+          message:
+            'Skipping Kariyer.net detail HTTP after a listing challenge; leaving jobs on the detail queue',
+          runId: input.runId,
+          detailsDeferredDueToChallenge,
+        });
         continue;
       }
 
@@ -2060,6 +2120,7 @@ export class DiscoveryService {
       detailsFailed,
       detailsSkipped,
       detailsRequested,
+      detailsDeferredDueToChallenge,
       descriptionsExtracted,
       selectedSample: selectedSamples,
     });
@@ -2075,6 +2136,7 @@ export class DiscoveryService {
       detailsBackoff: 0,
       detailsQueued: queued.queuedCount,
       detailsRequested,
+      detailsDeferredDueToChallenge,
       descriptionsExtracted,
       detailErrorByJobId,
     };
@@ -2089,6 +2151,7 @@ export class DiscoveryService {
     queryBlocked: number;
     queryFailed: number;
     queryDeferred: number;
+    queryPartialBlocked?: number;
     report: ReturnType<typeof selectDetailCandidates>;
   }): void {
     const skippedHighPriority = input.report.skipped
@@ -2125,6 +2188,7 @@ export class DiscoveryService {
       queriesBlocked: input.queryBlocked,
       queriesFailed: input.queryFailed,
       queriesDeferred: input.queryDeferred,
+      queriesPartialBlocked: input.queryPartialBlocked ?? 0,
     });
   }
 
@@ -2349,16 +2413,17 @@ function sourceOutcome(input: {
   queriesBlocked: number;
   queriesFailed: number;
   queriesDeferred: number;
+  queriesPartialBlocked?: number;
   stopReason: string | null;
 }): 'ok' | 'partial' | 'failed' {
-  if (input.queriesAttempted === 0) {
-    return 'ok';
-  }
+  const partialBlocked = input.queriesPartialBlocked ?? 0;
 
   if (
     input.queriesCompleted === 0 &&
     input.queriesFailed > 0 &&
-    input.queriesBlocked === 0
+    input.queriesBlocked === 0 &&
+    partialBlocked === 0 &&
+    input.queriesDeferred === 0
   ) {
     return 'failed';
   }
@@ -2367,6 +2432,7 @@ function sourceOutcome(input: {
     input.queriesFailed > 0 ||
     input.queriesBlocked > 0 ||
     input.queriesDeferred > 0 ||
+    partialBlocked > 0 ||
     isPartialStopReason(input.stopReason)
   ) {
     return 'partial';
@@ -2377,6 +2443,25 @@ function sourceOutcome(input: {
 
 function isPartialStopReason(reason: string | null | undefined): boolean {
   return Boolean(reason && PARTIAL_STOP_REASONS.has(reason));
+}
+
+function listingQueryOutcome(
+  stopReason: string | null | undefined,
+  jobCount: number,
+): QueryUnitOutcome {
+  if (stopReason === 'blocked_after_success') {
+    return 'partial_blocked';
+  }
+
+  if (stopReason === 'challenge') {
+    return jobCount > 0 ? 'partial_blocked' : 'blocked';
+  }
+
+  return 'completed';
+}
+
+function isCollectedListingOutcome(outcome: QueryUnitOutcome): boolean {
+  return outcome === 'completed' || outcome === 'partial_blocked';
 }
 
 function preferStopReason(

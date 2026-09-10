@@ -14,6 +14,19 @@ export function parseMatchStatus(value: unknown): MatchStatus {
   return MATCH_STATUS.verified;
 }
 
+export function parseMatchStatusFilter(
+  value: unknown,
+): MatchStatus | undefined {
+  if (
+    value === MATCH_STATUS.verified ||
+    value === MATCH_STATUS.unverifiedSourceCandidate
+  ) {
+    return value;
+  }
+
+  return undefined;
+}
+
 export function isVerifiedMatchStatus(
   value: MatchStatus | null | undefined,
 ): boolean {

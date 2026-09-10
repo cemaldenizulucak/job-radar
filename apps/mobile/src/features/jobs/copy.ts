@@ -5,6 +5,8 @@ export const jobsCopy = {
   source: 'Kaynak',
   savedSearches: 'Kayıtlı aramalar',
   matched: 'Eşleşenler',
+  matchedListings: 'Eşleşen İlanlar',
+  possibleMatches: 'Olası Eşleşmeler',
   allResults: 'Tüm sonuçlar',
   all: 'Tümü',
   summaryTotal: 'Toplam',
@@ -24,6 +26,8 @@ export const jobsCopy = {
   jobsLoaded: 'İlanlar yüklendi',
   lastScan: 'Son tarama',
   emptyMatched: 'Bu aramaya uygun ilan bulunamadı.',
+  emptyVerified: 'Henüz doğrulanmış bir eşleşme bulunamadı.',
+  emptyPossible: 'Şu anda doğrulanmayı bekleyen ilan bulunmuyor.',
   emptyAll: 'Henüz ilan bulunamadı.',
   emptyFilter: 'Bu filtre için henüz eşleşen ilan yok.',
   locationUnknown: 'Konum belirtilmedi',
@@ -77,7 +81,7 @@ export const jobsCopy = {
   matchEvidenceLabel: 'Kanıt',
   possibleMatchBadge: 'Olası eşleşme',
   possibleMatchHint:
-    'İlan Kariyer.net’te arama kriterinizle bulundu ancak açıklama doğrulanamadı.',
+    'İlan arama kriterinizle bulundu ancak ilan açıklaması doğrulanamadı.',
 } as const;
 
 export function isUnverifiedSourceMatch(
@@ -110,10 +114,19 @@ export function jobsUiError(error: unknown, fallback: string): string {
   return fallback;
 }
 
+export function matchResultsTabLabel(
+  view: 'matched' | 'possible',
+  count: number,
+): string {
+  const base =
+    view === 'matched' ? jobsCopy.matchedListings : jobsCopy.possibleMatches;
+  return `${base} (${count})`;
+}
+
 export function jobsEmptyMessage(input: {
   itemCount: number;
   visibleCount: number;
-  resultsView: 'matched' | 'all';
+  resultsView: 'matched' | 'possible' | 'all';
   isDiscovering?: boolean;
 }): string | null {
   if (input.isDiscovering) {
@@ -125,7 +138,13 @@ export function jobsEmptyMessage(input: {
   }
 
   if (input.itemCount === 0) {
-    return input.resultsView === 'all' ? jobsCopy.emptyAll : jobsCopy.emptyMatched;
+    if (input.resultsView === 'all') {
+      return jobsCopy.emptyAll;
+    }
+    if (input.resultsView === 'possible') {
+      return jobsCopy.emptyPossible;
+    }
+    return jobsCopy.emptyVerified;
   }
 
   return jobsCopy.emptyFilter;

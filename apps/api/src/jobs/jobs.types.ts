@@ -49,6 +49,7 @@ export type JobListQuery = {
   userId: string;
   sourceId?: SourceId | 'all';
   savedSearchId?: string;
+  matchStatus?: MatchStatus;
   matchedOnly?: boolean;
   includeInactive?: boolean;
   cursor?: string;
@@ -125,4 +126,6 @@ export type JobListResult = {
   lastDiscoveryAt: string | null;
   totalCount: number;
   savedSearchCounts: readonly { id: string; count: number }[];
+  verifiedMatchCount: number;
+  unverifiedMatchCount: number;
 };

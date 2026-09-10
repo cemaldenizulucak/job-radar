@@ -1,6 +1,6 @@
 import type { ChipTabItem } from '@/components/chip-tabs';
 
-import { jobsCopy } from '../copy';
+import { jobsCopy, isUnverifiedSourceMatch } from '../copy';
 import type {
   JobApplicationStatus,
   JobListItem,
@@ -94,12 +94,19 @@ export function filterJobs(
   jobs: readonly JobListItem[],
   sourceId: JobSourceId | 'all',
   savedSearchId: string | 'all',
+  matchStatus: 'verified' | 'unverified_source_candidate' | 'all' = 'all',
 ): JobListItem[] {
   return jobs.filter((job) => {
     const matchesSource = sourceId === 'all' || job.sourceId === sourceId;
     const matchesSearch =
       savedSearchId === 'all' || job.matchedSearchIds.includes(savedSearchId);
-    return matchesSource && matchesSearch;
+    const matchesStatus =
+      matchStatus === 'all'
+        ? true
+        : matchStatus === 'unverified_source_candidate'
+          ? isUnverifiedSourceMatch(job.matchStatus)
+          : job.isMatched && !isUnverifiedSourceMatch(job.matchStatus);
+    return matchesSource && matchesSearch && matchesStatus;
   });
 }
 

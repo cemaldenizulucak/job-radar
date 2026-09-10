@@ -18,7 +18,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { JobCard } from '../components/job-card';
 import { JobListSkeleton } from '../components/job-list-skeleton';
 import { JobsHeader } from '../components/jobs-header';
-import { jobsCopy, jobsEmptyMessage } from '../copy';
+import { jobsCopy, jobsEmptyMessage, matchResultsTabLabel } from '../copy';
 import { useJobs } from '../hooks/useJobs';
 import { usePendingDiscovery } from '../hooks/usePendingDiscovery';
 import { useJobsFilterStore, type JobsResultsView } from '../stores/jobs-filter.store';
@@ -32,13 +32,22 @@ import {
 } from '../utils/job-labels';
 import { getJobSourceAppearance } from '../utils/job-source-appearance';
 
-const RESULTS_TABS = [
-  { id: 'matched', label: jobsCopy.matched },
-  { id: 'all', label: jobsCopy.allResults },
-] as const;
+const ALL_RESULTS_TAB = { id: 'all', label: jobsCopy.allResults } as const;
 
 function isResultsView(id: string): id is JobsResultsView {
-  return id === 'matched' || id === 'all';
+  return id === 'matched' || id === 'possible' || id === 'all';
+}
+
+function matchStatusForResultsView(
+  resultsView: JobsResultsView,
+): 'verified' | 'unverified_source_candidate' | 'all' {
+  if (resultsView === 'matched') {
+    return 'verified';
+  }
+  if (resultsView === 'possible') {
+    return 'unverified_source_candidate';
+  }
+  return 'all';
 }
 
 function jobRelevanceLabel(
@@ -78,10 +87,12 @@ export function JobsScreen() {
     lastDiscoveryAt,
     totalCount,
     savedSearchCounts,
+    verifiedMatchCount,
+    unverifiedMatchCount,
     isLoading,
     error,
     refetch,
-  } = useJobs(userId, resultsView === 'matched', selectedSearchId);
+  } = useJobs(userId, resultsView !== 'all', selectedSearchId);
   const isDiscovering = usePendingDiscovery(refetch);
   const { unreadCount, refetch: refetchNotifications } = useNotifications(userId);
   const { isFavorite, error: favoriteError, toggleFavorite } = useFavoriteToggle();
@@ -119,20 +130,27 @@ export function JobsScreen() {
     void refetchSearches();
   }, [feedRefreshEpoch, refetch, refetchSearches, searchCatalogEpoch]);
 
+  const matchStatus = matchStatusForResultsView(resultsView);
   const sourceCounts = useMemo(
-    () => countJobsBySourceForSearch(items, selectedSearchId),
-    [items, selectedSearchId],
+    () =>
+      countJobsBySourceForSearch(
+        filterJobs(items, 'all', selectedSearchId, matchStatus),
+        'all',
+      ),
+    [items, matchStatus, selectedSearchId],
   );
   const sourceTabs = useMemo(
     () =>
-      buildSourceTabs(filterJobs(items, 'all', selectedSearchId)).map((tab) => ({
-        ...tab,
-        selectedColor:
-          tab.id === 'all'
-            ? undefined
-            : getJobSourceAppearance(tab.id, theme.scheme).accentColor,
-      })),
-    [items, selectedSearchId, theme.scheme],
+      buildSourceTabs(filterJobs(items, 'all', selectedSearchId, matchStatus)).map(
+        (tab) => ({
+          ...tab,
+          selectedColor:
+            tab.id === 'all'
+              ? undefined
+              : getJobSourceAppearance(tab.id, theme.scheme).accentColor,
+        }),
+      ),
+    [items, matchStatus, selectedSearchId, theme.scheme],
   );
   const searchTabs = useMemo(
     () => [
@@ -147,14 +165,32 @@ export function JobsScreen() {
     ],
     [items, savedSearchCounts, searches, totalCount],
   );
+  const resultsTabs = useMemo(
+    () => [
+      {
+        id: 'matched',
+        label: matchResultsTabLabel('matched', verifiedMatchCount),
+      },
+      {
+        id: 'possible',
+        label: matchResultsTabLabel('possible', unverifiedMatchCount),
+      },
+      ALL_RESULTS_TAB,
+    ],
+    [unverifiedMatchCount, verifiedMatchCount],
+  );
   const jobs = useMemo(
-    () => filterJobs(items, sourceId, selectedSearchId),
-    [items, selectedSearchId, sourceId],
+    () => filterJobs(items, sourceId, selectedSearchId, matchStatus),
+    [items, matchStatus, selectedSearchId, sourceId],
+  );
+  const tabItemCount = useMemo(
+    () => filterJobs(items, 'all', selectedSearchId, matchStatus).length,
+    [items, matchStatus, selectedSearchId],
   );
 
   const lastScanLabel = lastDiscoveryAt ? formatJobDateLabel(lastDiscoveryAt) : '—';
   const emptyMessage = jobsEmptyMessage({
-    itemCount: items.length,
+    itemCount: tabItemCount,
     visibleCount: jobs.length,
     resultsView,
     isDiscovering,
@@ -186,7 +222,7 @@ export function JobsScreen() {
           {jobsCopy.results}
         </ThemedText>
         <ChipTabs
-          items={RESULTS_TABS}
+          items={resultsTabs}
           selectedId={resultsView}
           onSelect={(id) => {
             if (isResultsView(id)) {

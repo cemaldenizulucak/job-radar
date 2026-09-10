@@ -63,3 +63,56 @@ describe('countJobsBySourceForSearch', () => {
     expect(countJobsBySourceForSearch(items, 'search-gida').kariyerNet).toBe(1);
   });
 });
+
+describe('filterJobs match status tabs', () => {
+  const items = [
+    job({
+      id: 'verified-li',
+      sourceId: 'linkedin',
+      matchStatus: 'verified',
+    }),
+    job({
+      id: 'possible-kn',
+      sourceId: 'kariyer_net',
+      canonicalUrl: 'https://example.com/possible',
+      matchStatus: 'unverified_source_candidate',
+    }),
+    job({
+      id: 'verified-kn',
+      sourceId: 'kariyer_net',
+      canonicalUrl: 'https://example.com/verified-kn',
+      matchStatus: 'verified',
+      matchedSearchIds: ['search-gida', 'search-other'],
+    }),
+  ];
+
+  it('shows verified jobs only on the matched tab', () => {
+    expect(
+      filterJobs(items, 'all', 'all', 'verified').map((item) => item.id),
+    ).toEqual(['verified-li', 'verified-kn']);
+  });
+
+  it('shows unverified jobs only on the possible-matches tab', () => {
+    expect(
+      filterJobs(items, 'all', 'all', 'unverified_source_candidate').map(
+        (item) => item.id,
+      ),
+    ).toEqual(['possible-kn']);
+  });
+
+  it('counts a multi-search job once on the verified tab', () => {
+    const verified = filterJobs(items, 'all', 'all', 'verified');
+    expect(verified.filter((item) => item.id === 'verified-kn')).toHaveLength(1);
+  });
+
+  it('keeps LinkedIn and Kariyer.net filters inside each match tab', () => {
+    expect(
+      filterJobs(items, 'kariyer_net', 'all', 'verified').map((item) => item.id),
+    ).toEqual(['verified-kn']);
+    expect(
+      filterJobs(items, 'kariyer_net', 'all', 'unverified_source_candidate').map(
+        (item) => item.id,
+      ),
+    ).toEqual(['possible-kn']);
+  });
+});

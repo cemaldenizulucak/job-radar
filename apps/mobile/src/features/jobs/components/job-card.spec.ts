@@ -15,6 +15,7 @@ describe('JobCard favorite control', () => {
     expect(source).toContain('paddingRight: 52');
     expect(source).toContain('numberOfLines={2}');
     expect(source).toContain('possibleMatchBadge');
+    expect(source).toContain('possibleMatchHint');
     expect(source).not.toContain('açıklamada geçiyor');
   });
 });

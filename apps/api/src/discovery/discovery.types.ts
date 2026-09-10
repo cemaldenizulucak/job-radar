@@ -33,11 +33,14 @@ export type DiscoveryRunSummary = {
   notifiedJobCount: number;
   runId: string;
   scanKind: 'first' | 'periodic' | 'user' | 'mixed';
+  queriesPlanned: number;
   queriesAttempted: number;
   queriesCompleted: number;
   queriesBlocked: number;
   queriesFailed: number;
   queriesDeferred: number;
+  queriesPartialBlocked: number;
+  sourceChallengeObserved: boolean;
   detailsFetched: number;
   detailsFailed: number;
   detailsSelected: number;
@@ -46,6 +49,7 @@ export type DiscoveryRunSummary = {
   detailsBackoff: number;
   detailsQueued: number;
   detailsRequested: number;
+  detailsDeferredDueToChallenge: number;
   descriptionsExtracted: number;
   providerModes: Readonly<Record<string, string>>;
   attemptCount: number;
@@ -73,11 +77,14 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   notifiedJobCount: 0,
   runId: '',
   scanKind: 'periodic',
+  queriesPlanned: 0,
   queriesAttempted: 0,
   queriesCompleted: 0,
   queriesBlocked: 0,
   queriesFailed: 0,
   queriesDeferred: 0,
+  queriesPartialBlocked: 0,
+  sourceChallengeObserved: false,
   detailsFetched: 0,
   detailsFailed: 0,
   detailsSelected: 0,
@@ -86,6 +93,7 @@ export const EMPTY_DISCOVERY_SUMMARY: DiscoveryRunSummary = {
   detailsBackoff: 0,
   detailsQueued: 0,
   detailsRequested: 0,
+  detailsDeferredDueToChallenge: 0,
   descriptionsExtracted: 0,
   providerModes: {},
   attemptCount: 1,
@@ -132,7 +140,13 @@ export function immediateDiscoveryStatus(
     return 'failed';
   }
 
-  if (summary.sourceFailures > 0 || summary.sourcePartials > 0 || summary.queriesDeferred > 0) {
+  if (
+    summary.sourceFailures > 0 ||
+    summary.sourcePartials > 0 ||
+    summary.queriesDeferred > 0 ||
+    summary.queriesPartialBlocked > 0 ||
+    summary.sourceChallengeObserved
+  ) {
     return 'partial';
   }
 

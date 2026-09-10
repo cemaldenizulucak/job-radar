@@ -141,6 +141,11 @@ export function JobCard({
               {jobsCopy.matchedSearchLabel}: {relevanceLabel}
             </ThemedText>
           ) : null}
+          {isUnverifiedSourceMatch(job.matchStatus) ? (
+            <ThemedText type="meta" themeColor="textSecondary" numberOfLines={3}>
+              {jobsCopy.possibleMatchHint}
+            </ThemedText>
+          ) : null}
         </View>
 
         {showDuplicate ? (

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 import type { JobSourceId } from '../types/job.types';
 
-export type JobsResultsView = 'matched' | 'all';
+export type JobsResultsView = 'matched' | 'possible' | 'all';
 
 type JobsFilterState = {
   sourceId: JobSourceId | 'all';

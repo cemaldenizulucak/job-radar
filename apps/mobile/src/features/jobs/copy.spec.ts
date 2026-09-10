@@ -1,12 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { jobsEmptyMessage, isUnverifiedSourceMatch, matchKindLabel } from './copy';
+import {
+  jobsEmptyMessage,
+  isUnverifiedSourceMatch,
+  matchKindLabel,
+  matchResultsTabLabel,
+} from './copy';
 
 describe('jobsEmptyMessage', () => {
-  it('uses the matched empty copy when the matched feed has no jobs', () => {
+  it('uses the verified empty copy when the matched tab has no jobs', () => {
     expect(
       jobsEmptyMessage({ itemCount: 0, visibleCount: 0, resultsView: 'matched' }),
-    ).toBe('Bu aramaya uygun ilan bulunamadı.');
+    ).toBe('Henüz doğrulanmış bir eşleşme bulunamadı.');
+  });
+
+  it('uses the possible-match empty copy when that tab has no jobs', () => {
+    expect(
+      jobsEmptyMessage({
+        itemCount: 0,
+        visibleCount: 0,
+        resultsView: 'possible',
+      }),
+    ).toBe('Şu anda doğrulanmayı bekleyen ilan bulunmuyor.');
   });
 
   it('uses the all-results empty copy when nothing is collected', () => {
@@ -30,6 +45,13 @@ describe('jobsEmptyMessage', () => {
         isDiscovering: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe('matchResultsTabLabel', () => {
+  it('puts the user-specific count in the tab title', () => {
+    expect(matchResultsTabLabel('matched', 12)).toBe('Eşleşen İlanlar (12)');
+    expect(matchResultsTabLabel('possible', 3)).toBe('Olası Eşleşmeler (3)');
   });
 });
 

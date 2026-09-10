@@ -74,6 +74,8 @@ export async function listJobs(
   lastDiscoveryAt: string | null;
   totalCount: number;
   savedSearchCounts: readonly { id: string; count: number }[];
+  verifiedMatchCount: number;
+  unverifiedMatchCount: number;
 }> {
   const matchedOnly = options.matchedOnly ?? true;
   const savedSearchId =
@@ -98,6 +100,8 @@ export async function listJobs(
       lastDiscoveryAt: payload.lastDiscoveryAt ?? null,
       totalCount: payload.totalCount ?? items.length,
       savedSearchCounts: payload.savedSearchCounts ?? [],
+      verifiedMatchCount: payload.verifiedMatchCount ?? 0,
+      unverifiedMatchCount: payload.unverifiedMatchCount ?? 0,
     };
   } catch (error) {
     throw toServiceError(error);

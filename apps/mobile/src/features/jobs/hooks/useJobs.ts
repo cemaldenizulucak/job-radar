@@ -24,6 +24,8 @@ export function useJobs(
   const [savedSearchCounts, setSavedSearchCounts] = useState<
     readonly { id: string; count: number }[]
   >([]);
+  const [verifiedMatchCount, setVerifiedMatchCount] = useState(0);
+  const [unverifiedMatchCount, setUnverifiedMatchCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const seenUserIdRef = useRef(userId);
@@ -43,6 +45,8 @@ export function useJobs(
       setLastDiscoveryAt(null);
       setTotalCount(0);
       setSavedSearchCounts([]);
+      setVerifiedMatchCount(0);
+      setUnverifiedMatchCount(0);
       setError(jobsCopy.signedInRequired);
       setIsLoading(false);
       return;
@@ -59,6 +63,8 @@ export function useJobs(
       setLastDiscoveryAt(feed.lastDiscoveryAt);
       setTotalCount(feed.totalCount);
       setSavedSearchCounts(feed.savedSearchCounts);
+      setVerifiedMatchCount(feed.verifiedMatchCount);
+      setUnverifiedMatchCount(feed.unverifiedMatchCount);
     } catch (caught) {
       setError(toFeedError(caught));
     } finally {
@@ -75,6 +81,8 @@ export function useJobs(
     lastDiscoveryAt,
     totalCount,
     savedSearchCounts,
+    verifiedMatchCount,
+    unverifiedMatchCount,
     isLoading,
     error,
     refetch,
