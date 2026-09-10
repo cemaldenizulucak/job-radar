@@ -4,38 +4,27 @@ import { SymbolView } from 'expo-symbols';
 import { BrandLogo } from '@/components/brand-logo';
 import { ThemedText } from '@/components/themed-text';
 import { BRAND_NAME } from '@/constants/branding';
-import { Radius, Spacing, cardElevation } from '@/constants/theme';
+import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 import { jobsCopy } from '../copy';
-import { getJobSourceAppearance } from '../utils/job-source-appearance';
 
 type JobsHeaderProps = {
-  lastScanLabel: string;
-  statusLabel: string;
+  statusLine: string;
   unreadNotificationCount: number;
-  totalCount: number;
-  linkedInCount: number;
-  kariyerCount: number;
   onPressNotifications: () => void;
   onPressFavorites: () => void;
 };
 
 export function JobsHeader({
-  lastScanLabel,
-  statusLabel,
+  statusLine,
   unreadNotificationCount,
-  totalCount,
-  linkedInCount,
-  kariyerCount,
   onPressNotifications,
   onPressFavorites,
 }: JobsHeaderProps) {
   const theme = useTheme();
   const badgeLabel =
     unreadNotificationCount > 99 ? '99+' : String(unreadNotificationCount);
-  const linkedIn = getJobSourceAppearance('linkedin', theme.scheme);
-  const kariyer = getJobSourceAppearance('kariyer_net', theme.scheme);
 
   return (
     <View style={styles.header}>
@@ -85,67 +74,8 @@ export function JobsHeader({
           </Pressable>
         </View>
       </View>
-      <View style={styles.metaRow}>
-        <View style={[styles.dot, { backgroundColor: theme.success }]} />
-        <ThemedText type="meta" themeColor="textSecondary">
-          {statusLabel}
-        </ThemedText>
-        <ThemedText type="meta" themeColor="textSecondary">
-          ·
-        </ThemedText>
-        <ThemedText type="meta" themeColor="textSecondary">
-          {jobsCopy.lastScan} {lastScanLabel}
-        </ThemedText>
-      </View>
-      <View style={styles.summaryRow}>
-        <SummaryPill
-          label={jobsCopy.summaryTotal}
-          value={totalCount}
-          accent={theme.accent}
-          background={theme.accentMuted}
-        />
-        <SummaryPill
-          label="LinkedIn"
-          value={linkedInCount}
-          accent={linkedIn.accentColor}
-          background={linkedIn.badgeBackground}
-        />
-        <SummaryPill
-          label="Kariyer.net"
-          value={kariyerCount}
-          accent={kariyer.accentColor}
-          background={kariyer.badgeBackground}
-        />
-      </View>
-    </View>
-  );
-}
-
-function SummaryPill({
-  label,
-  value,
-  accent,
-  background,
-}: {
-  label: string;
-  value: number;
-  accent: string;
-  background: string;
-}) {
-  const theme = useTheme();
-
-  return (
-    <View
-      style={[
-        styles.summaryPill,
-        cardElevation(theme.scheme),
-        { backgroundColor: background, borderColor: theme.border },
-      ]}>
-      <ThemedText type="meta" style={{ color: accent }}>
-        {label}
-      </ThemedText>
-      <ThemedText type="cardTitle" style={{ color: accent }}>
-        {value}
+      <ThemedText type="meta" themeColor="textSecondary" numberOfLines={1}>
+        {statusLine}
       </ThemedText>
     </View>
   );
@@ -153,7 +83,7 @@ function SummaryPill({
 
 const styles = StyleSheet.create({
   header: {
-    gap: Spacing.two,
+    gap: Spacing.one,
   },
   titleRow: {
     flexDirection: 'row',
@@ -188,27 +118,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-  },
-  summaryPill: {
-    flex: 1,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.two,
-    gap: Spacing.half,
   },
 });

@@ -120,12 +120,21 @@ export type JobTabs = {
   savedSearches: readonly { id: string; name: string; count: number }[];
 };
 
+export type JobSourceCounts = {
+  all: number;
+  linkedin: number;
+  kariyer_net: number;
+};
+
 export type JobListResult = {
   items: readonly JobListItem[];
   nextCursor: string | null;
   lastDiscoveryAt: string | null;
   totalCount: number;
   savedSearchCounts: readonly { id: string; count: number }[];
+  savedSearchAllCount: number;
+  sourceCounts: JobSourceCounts;
   verifiedMatchCount: number;
   unverifiedMatchCount: number;
+  allMatchCount: number;
 };

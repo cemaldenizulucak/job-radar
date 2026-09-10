@@ -5,6 +5,8 @@ import type { JobListItem } from './jobs.types.js';
 export const JOB_FEED_SELECT =
   'id, title, company, description, location, work_model, experience_level, technologies, source, source_job_id, original_url, published_at, discovered_at, duplicate_group_id, created_at';
 
+export const JOB_SOURCE_SELECT = 'id, source';
+
 export const MATCHABLE_JOB_SELECT =
   'id, title, company, description, location, work_model, experience_level, technologies, source, source_job_id, original_url, is_active, published_at';
 

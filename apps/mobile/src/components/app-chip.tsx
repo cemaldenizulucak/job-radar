@@ -13,7 +13,9 @@ type AppChipProps = {
   selectedTextColor?: string;
   onPress?: () => void;
   disabled?: boolean;
+  compact?: boolean;
   accessibilityRole?: 'button' | 'tab';
+  accessibilityLabel?: string;
 };
 
 export function AppChip({
@@ -24,7 +26,9 @@ export function AppChip({
   selectedTextColor,
   onPress,
   disabled = false,
+  compact = false,
   accessibilityRole = 'button',
+  accessibilityLabel,
 }: AppChipProps) {
   const theme = useTheme();
   const fill = selectedColor ?? theme.accent;
@@ -35,11 +39,13 @@ export function AppChip({
   return (
     <Pressable
       accessibilityRole={accessibilityRole}
+      accessibilityLabel={accessibilityLabel ?? (count === undefined ? label : `${label} ${count}`)}
       accessibilityState={{ selected, disabled }}
       disabled={disabled || !onPress}
       onPress={onPress}
       style={({ pressed }) => [
         styles.chip,
+        compact ? styles.compact : null,
         {
           backgroundColor,
           borderColor: selected ? fill : theme.border,
@@ -68,5 +74,11 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     borderWidth: 1,
     minHeight: 40,
+  },
+  compact: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
+    minHeight: 36,
+    gap: 4,
   },
 });

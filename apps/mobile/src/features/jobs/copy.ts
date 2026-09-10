@@ -3,13 +3,19 @@ export const jobsCopy = {
   screenTitle: 'İş İlanları',
   results: 'Sonuçlar',
   source: 'Kaynak',
-  savedSearches: 'Kayıtlı aramalar',
-  matched: 'Eşleşenler',
+  savedSearches: 'Kayıtlı arama',
+  savedSearchSelector: 'Kayıtlı arama',
+  matched: 'Eşleşen',
   matchedListings: 'Eşleşen İlanlar',
+  possibleShort: 'Olası',
   possibleMatches: 'Olası Eşleşmeler',
   allResults: 'Tüm sonuçlar',
   all: 'Tümü',
   summaryTotal: 'Toplam',
+  resultCount: (count: number) => `${count} ilan`,
+  clearFilters: 'Filtreleri temizle',
+  possibleMatchesExplainer:
+    'Bu ilanların açıklaması henüz doğrulanamadı.',
   newBadge: 'Yeni',
   unreadA11y: 'Okunmadı',
   favorite: 'Favori',
@@ -29,7 +35,8 @@ export const jobsCopy = {
   emptyVerified: 'Henüz doğrulanmış bir eşleşme bulunamadı.',
   emptyPossible: 'Şu anda doğrulanmayı bekleyen ilan bulunmuyor.',
   emptyAll: 'Henüz ilan bulunamadı.',
-  emptyFilter: 'Bu filtre için henüz eşleşen ilan yok.',
+  emptyFilter: 'Seçili filtrelerle eşleşen ilan yok.',
+  emptyFilterHint: 'Kaynak veya kayıtlı arama filtresini temizleyip tekrar deneyin.',
   locationUnknown: 'Konum belirtilmedi',
   workModelRemote: 'Uzaktan',
   workModelHybrid: 'Hibrit',
@@ -115,12 +122,29 @@ export function jobsUiError(error: unknown, fallback: string): string {
 }
 
 export function matchResultsTabLabel(
-  view: 'matched' | 'possible',
-  count: number,
+  view: 'matched' | 'possible' | 'all',
+  count: number | null,
 ): string {
   const base =
-    view === 'matched' ? jobsCopy.matchedListings : jobsCopy.possibleMatches;
-  return `${base} (${count})`;
+    view === 'matched'
+      ? jobsCopy.matched
+      : view === 'possible'
+        ? jobsCopy.possibleShort
+        : jobsCopy.allResults;
+  return count === null ? base : `${base} (${count})`;
+}
+
+export function sourceFilterLabel(
+  sourceId: 'all' | 'linkedin' | 'kariyer_net',
+  count: number | null,
+): string {
+  const base =
+    sourceId === 'all'
+      ? jobsCopy.all
+      : sourceId === 'linkedin'
+        ? 'LinkedIn'
+        : 'Kariyer.net';
+  return count === null ? base : `${base} (${count})`;
 }
 
 export function jobsEmptyMessage(input: {
@@ -128,13 +152,20 @@ export function jobsEmptyMessage(input: {
   visibleCount: number;
   resultsView: 'matched' | 'possible' | 'all';
   isDiscovering?: boolean;
+  isLoading?: boolean;
+  hasError?: boolean;
+  hasActiveFilters?: boolean;
 }): string | null {
-  if (input.isDiscovering) {
+  if (input.isDiscovering || input.isLoading || input.hasError) {
     return null;
   }
 
   if (input.visibleCount > 0) {
     return null;
+  }
+
+  if (input.hasActiveFilters) {
+    return jobsCopy.emptyFilter;
   }
 
   if (input.itemCount === 0) {

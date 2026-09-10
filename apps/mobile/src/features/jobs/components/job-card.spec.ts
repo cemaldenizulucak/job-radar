@@ -12,10 +12,12 @@ describe('JobCard favorite control', () => {
 
     expect(source).toContain('FavoriteHeartButton');
     expect(source.indexOf('FavoriteHeartButton')).toBeLessThan(source.indexOf('onPress={onPress}'));
-    expect(source).toContain('paddingRight: 52');
+    expect(source).toContain('paddingRight: 56');
     expect(source).toContain('numberOfLines={2}');
     expect(source).toContain('possibleMatchBadge');
-    expect(source).toContain('possibleMatchHint');
+    expect(source).toContain('jobCardScheduleLabel');
+    expect(source).not.toContain('possibleMatchHint');
+    expect(source).not.toContain('workModelUnknown');
     expect(source).not.toContain('açıklamada geçiyor');
   });
 });

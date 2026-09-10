@@ -1206,11 +1206,115 @@ describe('JobsService listForUser', () => {
     });
 
     expect(jobsQuery.eq).toHaveBeenCalledWith('source', 'kariyer_net');
-    expect(jobsQuery.in.mock.calls[0]?.[1]).toEqual(
+    expect(jobsQuery.in).toHaveBeenCalledWith(
+      'id',
       expect.arrayContaining(['job-1', 'job-kn']),
     );
     expect(result.verifiedMatchCount).toBe(2);
+    expect(result.totalCount).toBe(1);
     expect(result.items.map((item) => item.id)).toEqual(['job-kn']);
+  });
+
+  it('keeps filter counters on the full dataset when the page is smaller', async () => {
+    const verifiedJobs = Array.from({ length: 22 }, (_, index) => ({
+      ...jobRow,
+      id: `verified-${index}`,
+      source: index < 4 ? 'linkedin' : 'kariyer_net',
+      original_url: `https://example.com/verified-${index}`,
+      source_job_id: `verified-${index}`,
+    }));
+    const unverifiedJobs = Array.from({ length: 43 }, (_, index) => ({
+      ...jobRow,
+      id: `unverified-${index}`,
+      source: index < 10 ? 'linkedin' : 'kariyer_net',
+      original_url: `https://example.com/unverified-${index}`,
+      source_job_id: `unverified-${index}`,
+    }));
+    const catalogJobs = [...verifiedJobs, ...unverifiedJobs];
+    const catalogQuery = chainableQuery({ data: catalogJobs, error: null });
+    const feedQuery = chainableQuery({
+      data: verifiedJobs.slice(0, 5),
+      error: null,
+    });
+    const from = vi.fn((table: string) => {
+      if (table === 'jobs') {
+        return {
+          select: (columns: string) =>
+            columns === 'id, source' ? catalogQuery : feedQuery,
+        };
+      }
+
+      if (table === 'saved_searches') {
+        return {
+          select: () => ({
+            eq: () =>
+              Promise.resolve({
+                data: [{ id: 'search-gida' }],
+                error: null,
+              }),
+          }),
+        };
+      }
+
+      if (table === 'job_search_matches') {
+        return {
+          select: () =>
+            Promise.resolve({
+              data: [
+                ...verifiedJobs.map((job) => ({
+                  job_id: job.id,
+                  saved_search_id: 'search-gida',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'verified',
+                })),
+                ...unverifiedJobs.map((job) => ({
+                  job_id: job.id,
+                  saved_search_id: 'search-gida',
+                  matched_at: '2026-09-01T12:00:00.000Z',
+                  match_status: 'unverified_source_candidate',
+                })),
+              ],
+              error: null,
+            }),
+        };
+      }
+
+      return {
+        select: () => {
+          const result = Promise.resolve({ data: [], error: null });
+          return Object.assign(result, { eq: () => result, in: () => result });
+        },
+      };
+    });
+
+    const service = new JobsService(
+      {
+        getClient: () => ({ from }),
+      } as unknown as SupabaseService,
+      { get: () => undefined } as never,
+    );
+
+    const verified = await service.listForUser({
+      userId: 'user-1',
+      matchedOnly: true,
+      matchStatus: 'verified',
+      limit: 5,
+    });
+
+    expect(verified.items).toHaveLength(5);
+    expect(verified.verifiedMatchCount).toBe(22);
+    expect(verified.unverifiedMatchCount).toBe(43);
+    expect(verified.allMatchCount).toBe(65);
+    expect(verified.totalCount).toBe(22);
+    expect(verified.savedSearchAllCount).toBe(22);
+    expect(verified.savedSearchCounts).toEqual([
+      { id: 'search-gida', count: 22 },
+    ]);
+    expect(verified.sourceCounts).toEqual({
+      all: 22,
+      linkedin: 4,
+      kariyer_net: 18,
+    });
   });
 
   it('does not include another user match counts in matchStatus tabs', async () => {

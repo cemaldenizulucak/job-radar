@@ -194,7 +194,9 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
           {job.companyName}
         </ThemedText>
         <ThemedText type="meta" themeColor="textSecondary" numberOfLines={2}>
-          {formatLocation(job.location)} · {workModelLabel(job.workModel)}
+          {[formatLocation(job.location), workModelLabel(job.workModel)]
+            .filter((part): part is string => Boolean(part))
+            .join(' · ')}
         </ThemedText>
       </View>
 
@@ -202,7 +204,10 @@ export function JobDetailScreen({ job, onJobChange }: JobDetailScreenProps) {
         <DetailRow label={jobsCopy.source} value={sourceLabel(job.sourceId)} />
         <DetailRow label={jobsCopy.publishedAt} value={publishedLabel} />
         <DetailRow label={jobsCopy.discoveredAt} value={discoveredLabel} />
-        <DetailRow label={jobsCopy.workModel} value={workModelLabel(job.workModel)} />
+        <DetailRow
+          label={jobsCopy.workModel}
+          value={workModelLabel(job.workModel) ?? jobsCopy.workModelUnknown}
+        />
         <ThemedText type="sectionTitle">{jobsCopy.description}</ThemedText>
         <ThemedText themeColor="textSecondary">
           {job.description?.trim() ? job.description : jobsCopy.descriptionMissing}

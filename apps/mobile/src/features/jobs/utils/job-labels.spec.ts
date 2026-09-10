@@ -4,6 +4,8 @@ import type { JobListItem } from '../types/job.types';
 import {
   countJobsBySourceForSearch,
   filterJobs,
+  jobCardScheduleLabel,
+  workModelLabel,
 } from './job-labels';
 
 function job(overrides: Partial<JobListItem>): JobListItem {
@@ -114,5 +116,14 @@ describe('filterJobs match status tabs', () => {
         (item) => item.id,
       ),
     ).toEqual(['possible-kn']);
+  });
+});
+
+describe('jobCardScheduleLabel', () => {
+  it('omits unknown work-model copy from the card', () => {
+    expect(workModelLabel(null)).toBeNull();
+    expect(workModelLabel('unknown')).toBeNull();
+    expect(jobCardScheduleLabel(null, 'Bugün')).toBe('Bugün');
+    expect(jobCardScheduleLabel('hybrid', 'Bugün')).toBe('Hibrit · Bugün');
   });
 });

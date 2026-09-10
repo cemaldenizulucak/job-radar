@@ -35,9 +35,15 @@ import { decideListingWrite, sourceListingIdentity } from './job-identity.js';
 import { mergeNormalizedJobUpdate } from './listing-merge.js';
 import { attachFavoriteState } from './attach-favorite-state.js';
 import { applyJobNewness, resolveJobNewWindowHours } from './job-newness.js';
-import { clampJobFeedLimit, JOB_FEED_MAX_LIMIT } from './job-feed-visibility.js';
+import { clampJobFeedLimit } from './job-feed-visibility.js';
+import {
+  computeJobFeedCounters,
+  EMPTY_JOB_FEED_COUNTERS,
+  jobLevelMatchStatus,
+} from './job-feed-counters.js';
 import {
   JOB_FEED_SELECT,
+  JOB_SOURCE_SELECT,
   MATCHABLE_JOB_SELECT,
   mapJobFeedRow,
   mapMatchableJobRow,
@@ -91,7 +97,19 @@ export class JobsService {
     const searchMatches = savedSearchId
       ? userMatches.filter((match) => match.savedSearchId === savedSearchId)
       : userMatches;
-    const matchCounts = countJobsByMatchStatus(searchMatches);
+    const jobSources = await this.loadJobSources(
+      uniqueStrings(userMatches.map((match) => match.jobId)),
+      query.includeInactive === true,
+    );
+    const counters = computeJobFeedCounters({
+      matches: userMatches,
+      jobSources,
+      query: {
+        matchStatus: query.matchStatus,
+        sourceId: query.sourceId,
+        savedSearchId,
+      },
+    });
     const matchedSearchIdsByJob = groupMatchIds(userMatches);
     const scopedQuery = { ...query, savedSearchId };
     const scopedJobIds = resolveScopedJobIds(scopedQuery, searchMatches);
@@ -99,14 +117,9 @@ export class JobsService {
     if (scopedJobIds && scopedJobIds.length === 0) {
       return {
         ...emptyJobListResult(),
+        ...counters,
         lastDiscoveryAt: resolveLastDiscoveryAt(savedSearchId, searchMeta),
         totalCount: 0,
-        savedSearchCounts: countMatchesBySearch(
-          userMatches,
-          query.matchStatus ? new Set() : undefined,
-        ),
-        verifiedMatchCount: matchCounts.verified,
-        unverifiedMatchCount: matchCounts.unverified,
       };
     }
 
@@ -172,22 +185,16 @@ export class JobsService {
     });
 
     const totalCount =
-      query.matchedOnly || savedSearchId
-        ? (scopedJobIds ?? uniqueStrings(searchMatches.map((match) => match.jobId)))
-            .length
+      query.matchedOnly || savedSearchId || query.matchStatus
+        ? counters.totalCount
         : items.length;
 
     return {
       items: page,
       nextCursor: items.length > limit ? page[page.length - 1]?.id ?? null : null,
       lastDiscoveryAt: resolveLastDiscoveryAt(savedSearchId, searchMeta),
+      ...counters,
       totalCount,
-      savedSearchCounts: countMatchesBySearch(
-        userMatches,
-        query.matchStatus && scopedJobIds ? new Set(scopedJobIds) : undefined,
-      ),
-      verifiedMatchCount: matchCounts.verified,
-      unverifiedMatchCount: matchCounts.unverified,
     };
   }
 
@@ -198,32 +205,33 @@ export class JobsService {
   ): Promise<JobTabs> {
     const result = await this.listForUser({
       userId,
-      limit: JOB_FEED_MAX_LIMIT,
+      limit: 1,
       matchedOnly,
       includeInactive,
     });
-    const items = result.items;
-    const counts = savedSearchCounts(items);
-    const names = await this.loadSearchNames(counts.map((item) => item.id));
+    const names = await this.loadSearchNames(
+      result.savedSearchCounts.map((item) => item.id),
+    );
 
     return {
-      allCount: items.length,
+      allCount: result.sourceCounts.all,
       sources: [
-        { id: 'all', label: 'All', count: items.length },
+        { id: 'all', label: 'All', count: result.sourceCounts.all },
         {
           id: 'linkedin',
           label: 'LinkedIn',
-          count: items.filter((item) => item.sourceId === 'linkedin').length,
+          count: result.sourceCounts.linkedin,
         },
         {
           id: 'kariyer_net',
           label: 'Kariyer.net',
-          count: items.filter((item) => item.sourceId === 'kariyer_net').length,
+          count: result.sourceCounts.kariyer_net,
         },
       ],
-      savedSearches: counts.map((item) => ({
-        ...item,
-        name: names.get(item.id) ?? item.name,
+      savedSearches: result.savedSearchCounts.map((item) => ({
+        id: item.id,
+        name: names.get(item.id) ?? item.id,
+        count: item.count,
       })),
     };
   }
@@ -814,6 +822,57 @@ export class JobsService {
     });
 
     return Array.isArray(data) ? data : [];
+  }
+
+  private async loadJobSources(
+    jobIds: readonly string[],
+    includeInactive: boolean,
+  ): Promise<Map<string, SourceId>> {
+    const sources = new Map<string, SourceId>();
+    const uniqueJobIds = uniqueStrings(jobIds);
+    if (uniqueJobIds.length === 0) {
+      return sources;
+    }
+
+    const publishedCutoff = sourceMaxAgeCutoff(this.maxAgeDays()).toISOString();
+
+    for (const ids of chunkStrings(uniqueJobIds, 200)) {
+      let request = this.supabase
+        .getClient()
+        .from('jobs')
+        .select(JOB_SOURCE_SELECT);
+
+      if (!includeInactive) {
+        request = request.eq('is_active', true);
+      }
+
+      request = request.or(
+        `published_at.is.null,published_at.gte."${publishedCutoff}"`,
+      );
+
+      const { data, error } = await request.in('id', ids).limit(ids.length);
+      if (error) {
+        this.logSupabaseError(error);
+        continue;
+      }
+
+      if (!Array.isArray(data)) {
+        continue;
+      }
+
+      for (const row of data) {
+        if (!isRecord(row)) {
+          continue;
+        }
+        const id = readString(row, 'id');
+        const sourceId = readSourceIdValue(row.source);
+        if (id && sourceId) {
+          sources.set(id, sourceId);
+        }
+      }
+    }
+
+    return sources;
   }
 
   private async loadMatches(
@@ -1642,10 +1701,7 @@ function emptyJobListResult(): JobListResult {
     items: [],
     nextCursor: null,
     lastDiscoveryAt: null,
-    totalCount: 0,
-    savedSearchCounts: [],
-    verifiedMatchCount: 0,
-    unverifiedMatchCount: 0,
+    ...EMPTY_JOB_FEED_COUNTERS,
   };
 }
 
@@ -1676,36 +1732,16 @@ function resolveLastDiscoveryAt(
   return latest;
 }
 
-function countMatchesBySearch(
-  matches: readonly JobMatchRow[],
-  allowedJobIds?: ReadonlySet<string>,
-): { id: string; count: number }[] {
-  const jobsBySearch = new Map<string, Set<string>>();
-
-  for (const match of matches) {
-    if (allowedJobIds && !allowedJobIds.has(match.jobId)) {
-      continue;
-    }
-    const jobs = jobsBySearch.get(match.savedSearchId) ?? new Set<string>();
-    jobs.add(match.jobId);
-    jobsBySearch.set(match.savedSearchId, jobs);
-  }
-
-  return [...jobsBySearch.entries()].map(([id, jobs]) => ({
-    id,
-    count: jobs.size,
-  }));
-}
-
-type JobMatchRow = {
-  jobId: string;
-  savedSearchId: string;
-  matchedAt: Date | null;
-  matchStatus: MatchStatus;
-};
-
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function chunkStrings(values: readonly string[], size: number): string[][] {
+  const chunks: string[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function uniqueSourceKeys(
@@ -1765,40 +1801,12 @@ function emptyMatchedSearch(id: string, name: string): MatchedSearchSummary {
   };
 }
 
-function jobLevelMatchStatus(matches: readonly JobMatchRow[]): MatchStatus {
-  const unverifiedOnly =
-    matches.length > 0 &&
-    matches.every(
-      (match) => match.matchStatus === MATCH_STATUS.unverifiedSourceCandidate,
-    );
-  return unverifiedOnly
-    ? MATCH_STATUS.unverifiedSourceCandidate
-    : MATCH_STATUS.verified;
-}
-
-function countJobsByMatchStatus(matches: readonly JobMatchRow[]): {
-  verified: number;
-  unverified: number;
-} {
-  const byJob = new Map<string, JobMatchRow[]>();
-  for (const match of matches) {
-    const list = byJob.get(match.jobId) ?? [];
-    list.push(match);
-    byJob.set(match.jobId, list);
-  }
-
-  let verified = 0;
-  let unverified = 0;
-  for (const jobMatches of byJob.values()) {
-    if (jobLevelMatchStatus(jobMatches) === MATCH_STATUS.unverifiedSourceCandidate) {
-      unverified += 1;
-    } else {
-      verified += 1;
-    }
-  }
-
-  return { verified, unverified };
-}
+type JobMatchRow = {
+  jobId: string;
+  savedSearchId: string;
+  matchedAt: Date | null;
+  matchStatus: MatchStatus;
+};
 
 function attachMatchStatuses(
   items: readonly JobListItem[],
@@ -1884,24 +1892,6 @@ function attachDuplicateGroupSizes(
     duplicateGroupSize: row.duplicateGroupId
       ? (sizes.get(row.duplicateGroupId) ?? 1)
       : 1,
-  }));
-}
-
-function savedSearchCounts(
-  items: readonly JobListItem[],
-): { id: string; name: string; count: number }[] {
-  const counts = new Map<string, number>();
-
-  for (const item of items) {
-    for (const searchId of item.matchedSearchIds) {
-      counts.set(searchId, (counts.get(searchId) ?? 0) + 1);
-    }
-  }
-
-  return [...counts.entries()].map(([id, count]) => ({
-    id,
-    name: id,
-    count,
   }));
 }
 

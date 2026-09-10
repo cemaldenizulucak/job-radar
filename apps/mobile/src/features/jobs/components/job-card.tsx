@@ -17,8 +17,8 @@ import {
 import { formatJobListingDate } from '../utils/job-dates';
 import {
   formatLocation,
+  jobCardScheduleLabel,
   sourceLabel,
-  workModelLabel,
 } from '../utils/job-labels';
 import { getJobSourceAppearance } from '../utils/job-source-appearance';
 
@@ -46,6 +46,10 @@ export function JobCard({
   const showDuplicate = job.duplicateGroupSize > 1;
   const source = sourceLabel(job.sourceId);
   const sourceAppearance = getJobSourceAppearance(job.sourceId, theme.scheme);
+  const scheduleLabel = jobCardScheduleLabel(
+    job.workModel,
+    formatJobListingDate(job.publishedAt, job.firstDiscoveredAt),
+  );
 
   return (
     <View
@@ -86,44 +90,19 @@ export function JobCard({
           styles.content,
           { opacity: onPress ? pressOpacity(pressed) : 1 },
         ]}>
-        <View style={styles.topRow}>
-          {appearance.isUnread ? (
-            <View
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-              style={[styles.unreadDot, { backgroundColor: theme.accent }]}
-            />
-          ) : null}
-          {appearance.showNewBadge ? (
-            <AppBadge
-              label={jobsCopy.newBadge}
-              backgroundColor={theme.accent}
-              textColor={theme.onAccent}
-            />
-          ) : null}
-          <AppBadge
-            label={source}
-            backgroundColor={sourceAppearance.badgeBackground}
-            textColor={sourceAppearance.badgeTextColor}
-          />
-          {isUnverifiedSourceMatch(job.matchStatus) ? (
-            <AppBadge
-              label={jobsCopy.possibleMatchBadge}
-              backgroundColor={theme.warningMuted}
-              textColor={theme.text}
-            />
-          ) : null}
-        </View>
-
         <View style={styles.body}>
           <ThemedText
             type="cardTitle"
             numberOfLines={2}
             ellipsizeMode="tail"
-            style={{ fontWeight: appearance.titleWeight }}>
+            style={styles.title}>
             {job.title}
           </ThemedText>
-          <ThemedText type="smallBold" numberOfLines={1} ellipsizeMode="tail">
+          <ThemedText
+            type="meta"
+            themeColor="textSecondary"
+            numberOfLines={1}
+            ellipsizeMode="tail">
             {job.companyName}
           </ThemedText>
         </View>
@@ -133,20 +112,47 @@ export function JobCard({
             {formatLocation(job.location)}
           </ThemedText>
           <ThemedText type="meta" themeColor="textSecondary" numberOfLines={1}>
-            {workModelLabel(job.workModel)} ·{' '}
-            {formatJobListingDate(job.publishedAt, job.firstDiscoveredAt)}
+            {scheduleLabel}
           </ThemedText>
-          {relevanceLabel ? (
-            <ThemedText type="meta" themeColor="textSecondary" numberOfLines={2}>
-              {jobsCopy.matchedSearchLabel}: {relevanceLabel}
-            </ThemedText>
+        </View>
+
+        <View style={styles.badgeRow}>
+          {appearance.isUnread ? (
+            <View
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+              style={[styles.unreadDot, { backgroundColor: theme.accent }]}
+            />
           ) : null}
+          {appearance.showNewBadge ? (
+            <AppBadge
+              compact
+              label={jobsCopy.newBadge}
+              backgroundColor={theme.accent}
+              textColor={theme.onAccent}
+            />
+          ) : null}
+          <AppBadge
+            compact
+            label={source}
+            backgroundColor={sourceAppearance.badgeBackground}
+            textColor={sourceAppearance.badgeTextColor}
+          />
           {isUnverifiedSourceMatch(job.matchStatus) ? (
-            <ThemedText type="meta" themeColor="textSecondary" numberOfLines={3}>
-              {jobsCopy.possibleMatchHint}
-            </ThemedText>
+            <AppBadge
+              compact
+              label={jobsCopy.possibleMatchBadge}
+              backgroundColor={theme.warningMuted}
+              textColor={theme.text}
+            />
           ) : null}
         </View>
+
+        {relevanceLabel ? (
+          <ThemedText type="meta" themeColor="textSecondary" numberOfLines={2}>
+            {jobsCopy.matchedSearchLabel}: {relevanceLabel}
+          </ThemedText>
+        ) : null}
 
         {showDuplicate ? (
           <ThemedText type="meta" themeColor="textSecondary">
@@ -174,26 +180,29 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: Spacing.three,
-    paddingRight: 52,
+    paddingRight: 56,
     gap: Spacing.two,
   },
-  topRow: {
+  body: {
+    gap: 2,
+    paddingRight: Spacing.two,
+  },
+  title: {
+    flexShrink: 1,
+  },
+  meta: {
+    gap: 2,
+  },
+  badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: Spacing.two,
-    minHeight: 24,
-    paddingRight: Spacing.two,
+    gap: Spacing.one,
+    minHeight: 20,
   },
   unreadDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-  },
-  body: {
-    gap: Spacing.one,
-  },
-  meta: {
-    gap: Spacing.half,
   },
 });

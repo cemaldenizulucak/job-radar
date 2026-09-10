@@ -49,8 +49,17 @@ export const jobListResponseSchema = z.object({
   savedSearchCounts: z
     .array(z.object({ id: z.string(), count: z.number().int().nonnegative() }))
     .optional(),
+  savedSearchAllCount: z.number().int().nonnegative().optional(),
+  sourceCounts: z
+    .object({
+      all: z.number().int().nonnegative(),
+      linkedin: z.number().int().nonnegative(),
+      kariyer_net: z.number().int().nonnegative(),
+    })
+    .optional(),
   verifiedMatchCount: z.number().int().nonnegative().optional(),
   unverifiedMatchCount: z.number().int().nonnegative().optional(),
+  allMatchCount: z.number().int().nonnegative().optional(),
 });
 
 export const jobDetailSchema = jobListItemSchema.extend({

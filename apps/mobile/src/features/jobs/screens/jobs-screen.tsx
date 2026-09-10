@@ -1,6 +1,6 @@
 import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ChipTabs } from '@/components/chip-tabs';
 import { EmptyState } from '@/components/empty-state';
@@ -18,36 +18,23 @@ import { useTheme } from '@/hooks/use-theme';
 import { JobCard } from '../components/job-card';
 import { JobListSkeleton } from '../components/job-list-skeleton';
 import { JobsHeader } from '../components/jobs-header';
-import { jobsCopy, jobsEmptyMessage, matchResultsTabLabel } from '../copy';
+import { SavedSearchSelector } from '../components/saved-search-selector';
+import {
+  jobsCopy,
+  jobsEmptyMessage,
+  matchResultsTabLabel,
+  sourceFilterLabel,
+} from '../copy';
 import { useJobs } from '../hooks/useJobs';
 import { usePendingDiscovery } from '../hooks/usePendingDiscovery';
 import { useJobsFilterStore, type JobsResultsView } from '../stores/jobs-filter.store';
 import type { JobListItem } from '../types/job.types';
-import {
-  countJobsBySourceForSearch,
-  buildSourceTabs,
-  filterJobs,
-  formatJobDateLabel,
-  isSourceFilter,
-} from '../utils/job-labels';
+import { hasActiveListingFilters } from '../utils/jobs-feed-query';
+import { formatJobDateLabel, isSourceFilter } from '../utils/job-labels';
 import { getJobSourceAppearance } from '../utils/job-source-appearance';
-
-const ALL_RESULTS_TAB = { id: 'all', label: jobsCopy.allResults } as const;
 
 function isResultsView(id: string): id is JobsResultsView {
   return id === 'matched' || id === 'possible' || id === 'all';
-}
-
-function matchStatusForResultsView(
-  resultsView: JobsResultsView,
-): 'verified' | 'unverified_source_candidate' | 'all' {
-  if (resultsView === 'matched') {
-    return 'verified';
-  }
-  if (resultsView === 'possible') {
-    return 'unverified_source_candidate';
-  }
-  return 'all';
 }
 
 function jobRelevanceLabel(
@@ -75,6 +62,7 @@ export function JobsScreen() {
   const setSourceId = useJobsFilterStore((state) => state.setSourceId);
   const setSavedSearchId = useJobsFilterStore((state) => state.setSavedSearchId);
   const setResultsView = useJobsFilterStore((state) => state.setResultsView);
+  const clearListingFilters = useJobsFilterStore((state) => state.clearListingFilters);
   const searchCatalogEpoch = useJobsFilterStore((state) => state.searchCatalogEpoch);
   const feedRefreshEpoch = useJobsFilterStore((state) => state.feedRefreshEpoch);
   const { items: searches, refetch: refetchSearches } = useSavedSearches();
@@ -83,16 +71,20 @@ export function JobsScreen() {
       ? savedSearchId
       : 'all';
   const {
-    items,
+    items: jobs,
     lastDiscoveryAt,
     totalCount,
     savedSearchCounts,
+    savedSearchAllCount,
+    sourceCounts,
     verifiedMatchCount,
     unverifiedMatchCount,
+    allMatchCount,
+    countsReady,
     isLoading,
     error,
     refetch,
-  } = useJobs(userId, resultsView !== 'all', selectedSearchId);
+  } = useJobs(userId, resultsView, sourceId, selectedSearchId);
   const isDiscovering = usePendingDiscovery(refetch);
   const { unreadCount, refetch: refetchNotifications } = useNotifications(userId);
   const { isFavorite, error: favoriteError, toggleFavorite } = useFavoriteToggle();
@@ -100,10 +92,18 @@ export function JobsScreen() {
     () => new Map(searches.map((search) => [search.id, search.name])),
     [searches],
   );
+  const hasFilters = hasActiveListingFilters({
+    sourceId,
+    savedSearchId: selectedSearchId,
+  });
+  const displayCount = useCallback(
+    (count: number) => (countsReady ? count : null),
+    [countsReady],
+  );
 
   useFocusEffect(
     useCallback(() => {
-      void refetch();
+      void refetch({ silent: true });
       void refetchSearches();
       void refetchNotifications();
     }, [refetch, refetchNotifications, refetchSearches]),
@@ -117,9 +117,9 @@ export function JobsScreen() {
 
   useEffect(() => {
     useFavoritesStatusStore.getState().hydrate(
-      items.map((job) => ({ jobId: job.id, isFavorite: job.isFavorite })),
+      jobs.map((job) => ({ jobId: job.id, isFavorite: job.isFavorite })),
     );
-  }, [items]);
+  }, [jobs]);
 
   useEffect(() => {
     if (searchCatalogEpoch === 0 && feedRefreshEpoch === 0) {
@@ -130,98 +130,91 @@ export function JobsScreen() {
     void refetchSearches();
   }, [feedRefreshEpoch, refetch, refetchSearches, searchCatalogEpoch]);
 
-  const matchStatus = matchStatusForResultsView(resultsView);
-  const sourceCounts = useMemo(
-    () =>
-      countJobsBySourceForSearch(
-        filterJobs(items, 'all', selectedSearchId, matchStatus),
-        'all',
-      ),
-    [items, matchStatus, selectedSearchId],
-  );
   const sourceTabs = useMemo(
     () =>
-      buildSourceTabs(filterJobs(items, 'all', selectedSearchId, matchStatus)).map(
-        (tab) => ({
-          ...tab,
-          selectedColor:
-            tab.id === 'all'
-              ? undefined
-              : getJobSourceAppearance(tab.id, theme.scheme).accentColor,
-        }),
-      ),
-    [items, matchStatus, selectedSearchId, theme.scheme],
+      (
+        [
+          { id: 'all' as const, count: sourceCounts.all },
+          { id: 'linkedin' as const, count: sourceCounts.linkedin },
+          { id: 'kariyer_net' as const, count: sourceCounts.kariyer_net },
+        ] as const
+      ).map((tab) => ({
+        id: tab.id,
+        label: sourceFilterLabel(tab.id, displayCount(tab.count)),
+        selectedColor:
+          tab.id === 'all'
+            ? undefined
+            : getJobSourceAppearance(tab.id, theme.scheme).accentColor,
+      })),
+    [displayCount, sourceCounts, theme.scheme],
   );
-  const searchTabs = useMemo(
+  const searchOptions = useMemo(
     () => [
-      { id: 'all', label: jobsCopy.all, count: totalCount },
+      {
+        id: 'all',
+        name: jobsCopy.all,
+        count: displayCount(savedSearchAllCount),
+      },
       ...searches.map((search) => ({
         id: search.id,
-        label: search.name,
-        count:
-          savedSearchCounts.find((item) => item.id === search.id)?.count ??
-          items.filter((job) => job.matchedSearchIds.includes(search.id)).length,
+        name: search.name,
+        count: displayCount(
+          savedSearchCounts.find((item) => item.id === search.id)?.count ?? 0,
+        ),
       })),
     ],
-    [items, savedSearchCounts, searches, totalCount],
+    [displayCount, savedSearchAllCount, savedSearchCounts, searches],
   );
   const resultsTabs = useMemo(
     () => [
       {
         id: 'matched',
-        label: matchResultsTabLabel('matched', verifiedMatchCount),
+        label: matchResultsTabLabel('matched', displayCount(verifiedMatchCount)),
       },
       {
         id: 'possible',
-        label: matchResultsTabLabel('possible', unverifiedMatchCount),
+        label: matchResultsTabLabel('possible', displayCount(unverifiedMatchCount)),
       },
-      ALL_RESULTS_TAB,
+      {
+        id: 'all',
+        label: matchResultsTabLabel('all', displayCount(allMatchCount)),
+      },
     ],
-    [unverifiedMatchCount, verifiedMatchCount],
-  );
-  const jobs = useMemo(
-    () => filterJobs(items, sourceId, selectedSearchId, matchStatus),
-    [items, matchStatus, selectedSearchId, sourceId],
-  );
-  const tabItemCount = useMemo(
-    () => filterJobs(items, 'all', selectedSearchId, matchStatus).length,
-    [items, matchStatus, selectedSearchId],
+    [allMatchCount, displayCount, unverifiedMatchCount, verifiedMatchCount],
   );
 
   const lastScanLabel = lastDiscoveryAt ? formatJobDateLabel(lastDiscoveryAt) : '—';
+  const statusLine = isDiscovering
+    ? jobsCopy.searchingFeed
+    : isLoading
+      ? jobsCopy.loadingFeed
+      : error
+        ? jobsCopy.feedError
+        : `${jobsCopy.lastScan} ${lastScanLabel}`;
   const emptyMessage = jobsEmptyMessage({
-    itemCount: tabItemCount,
-    visibleCount: jobs.length,
+    itemCount: countsReady ? totalCount : 0,
+    visibleCount: countsReady ? jobs.length : 0,
     resultsView,
     isDiscovering,
+    isLoading,
+    hasError: Boolean(error),
+    hasActiveFilters: hasFilters,
   });
+  const showSkeleton = (isLoading || !countsReady) && !error && !isDiscovering;
+  const showList = !error && countsReady && jobs.length > 0;
 
   return (
     <ScreenScaffold>
       <JobsHeader
-        lastScanLabel={isLoading ? '…' : error ? '—' : lastScanLabel}
-        statusLabel={
-          isDiscovering
-            ? jobsCopy.searchingFeed
-            : isLoading
-              ? jobsCopy.loadingFeed
-              : error
-                ? jobsCopy.feedError
-                : jobsCopy.jobsLoaded
-        }
+        statusLine={statusLine}
         unreadNotificationCount={unreadCount}
-        totalCount={sourceCounts.total}
-        linkedInCount={sourceCounts.linkedin}
-        kariyerCount={sourceCounts.kariyerNet}
         onPressNotifications={() => router.push('/jobs/notifications' as Href)}
         onPressFavorites={() => router.push('/jobs/favorites' as Href)}
       />
 
-      <View style={styles.section}>
-        <ThemedText type="sectionTitle" themeColor="textSecondary">
-          {jobsCopy.results}
-        </ThemedText>
+      <View style={styles.filters}>
         <ChipTabs
+          compact
           items={resultsTabs}
           selectedId={resultsView}
           onSelect={(id) => {
@@ -230,13 +223,13 @@ export function JobsScreen() {
             }
           }}
         />
-      </View>
-
-      <View style={styles.section}>
-        <ThemedText type="sectionTitle" themeColor="textSecondary">
-          {jobsCopy.source}
-        </ThemedText>
+        {resultsView === 'possible' ? (
+          <ThemedText type="meta" themeColor="textSecondary">
+            {jobsCopy.possibleMatchesExplainer}
+          </ThemedText>
+        ) : null}
         <ChipTabs
+          compact
           items={sourceTabs}
           selectedId={sourceId}
           onSelect={(id) => {
@@ -245,36 +238,33 @@ export function JobsScreen() {
             }
           }}
         />
-      </View>
-
-      {searchTabs.length > 1 ? (
-        <View style={styles.section}>
-          <ThemedText type="sectionTitle" themeColor="textSecondary">
-            {jobsCopy.savedSearches}
-          </ThemedText>
-          <ChipTabs
-            items={searchTabs}
+        {searchOptions.length > 1 ? (
+          <SavedSearchSelector
+            options={searchOptions}
             selectedId={selectedSearchId}
             onSelect={(id) => {
               setSavedSearchId(id === 'all' ? 'all' : id);
             }}
           />
+        ) : null}
+      </View>
+
+      {countsReady && !error ? (
+        <View style={styles.summaryRow}>
+          <ThemedText type="smallBold">{jobsCopy.resultCount(totalCount)}</ThemedText>
+          {hasFilters ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={jobsCopy.clearFilters}
+              onPress={clearListingFilters}
+              hitSlop={8}>
+              <ThemedText type="linkPrimary">{jobsCopy.clearFilters}</ThemedText>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
-      {isDiscovering ? (
-        <View style={styles.searching}>
-          <ActivityIndicator color={theme.accent} />
-          <ThemedText type="smallBold">{jobsCopy.searchingFeed}</ThemedText>
-          <ThemedText type="meta" themeColor="textSecondary">
-            {jobsCopy.searchingFeedHint}
-          </ThemedText>
-        </View>
-      ) : null}
-
-      {isLoading && !isDiscovering && jobs.length === 0 ? (
-        <JobListSkeleton />
-      ) : null}
+      {showSkeleton ? <JobListSkeleton /> : null}
 
       {error ? (
         <ErrorState
@@ -285,8 +275,11 @@ export function JobsScreen() {
         />
       ) : null}
 
-      {!isLoading && !error && !isDiscovering && emptyMessage ? (
-        <EmptyState title={emptyMessage} />
+      {!error && emptyMessage ? (
+        <EmptyState
+          title={emptyMessage}
+          message={hasFilters ? jobsCopy.emptyFilterHint : undefined}
+        />
       ) : null}
 
       {favoriteError ? (
@@ -295,7 +288,7 @@ export function JobsScreen() {
         </ThemedText>
       ) : null}
 
-      {!error && jobs.length > 0 ? (
+      {showList ? (
         <View style={styles.list}>
           {jobs.map((job) => (
             <JobCard
@@ -318,13 +311,15 @@ export function JobsScreen() {
 }
 
 const styles = StyleSheet.create({
-  section: {
-    gap: Spacing.one,
-  },
-  searching: {
-    alignItems: 'center',
+  filters: {
     gap: Spacing.two,
-    paddingVertical: Spacing.four,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+    minHeight: 24,
   },
   list: {
     gap: Spacing.three,

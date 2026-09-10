@@ -66,7 +66,7 @@ export function FavoritesScreen() {
           message={favoritesCopy.subtitle}
           icon={
             <SymbolView
-              name={{ ios: 'heart', android: 'favorite_border', web: 'favorite_border' }}
+              name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
               size={36}
               tintColor={theme.textSecondary}
             />

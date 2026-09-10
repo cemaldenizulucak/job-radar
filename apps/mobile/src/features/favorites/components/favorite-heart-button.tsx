@@ -88,13 +88,9 @@ export function FavoriteHeartButton({
       ]}>
       <Animated.View style={{ transform: [{ scale }] }}>
         <SymbolView
-          name={
-            isFavorite
-              ? { ios: 'heart.fill', android: 'favorite', web: 'favorite' }
-              : { ios: 'heart', android: 'favorite_border', web: 'favorite_border' }
-          }
+          name={{ ios: 'heart.fill', android: 'favorite', web: 'favorite' }}
           size={22}
-          tintColor={isFavorite ? theme.danger : theme.textSecondary}
+          tintColor={isFavorite ? '#F43F5E' : theme.textSecondary}
         />
       </Animated.View>
     </Pressable>

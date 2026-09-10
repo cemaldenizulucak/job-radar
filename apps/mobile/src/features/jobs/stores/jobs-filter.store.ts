@@ -14,6 +14,7 @@ type JobsFilterState = {
   setSourceId: (sourceId: JobSourceId | 'all') => void;
   setSavedSearchId: (savedSearchId: string | 'all') => void;
   setResultsView: (resultsView: JobsResultsView) => void;
+  clearListingFilters: () => void;
   clearSavedSearchIfSelected: (deletedId: string) => void;
   applyDiscoveryNotificationTarget: (savedSearchId: string | null) => void;
   bumpSearchCatalog: () => void;
@@ -32,6 +33,7 @@ export const useJobsFilterStore = create<JobsFilterState>((set) => ({
   setSourceId: (sourceId) => set({ sourceId }),
   setSavedSearchId: (savedSearchId) => set({ savedSearchId }),
   setResultsView: (resultsView) => set({ resultsView }),
+  clearListingFilters: () => set({ sourceId: 'all', savedSearchId: 'all' }),
   applyDiscoveryNotificationTarget: (savedSearchId) =>
     set((state) => ({
       resultsView: 'matched' as const,

@@ -13,7 +13,7 @@ export function sourceLabel(sourceId: JobSourceId): string {
   return sourceId === 'linkedin' ? 'LinkedIn' : 'Kariyer.net';
 }
 
-export function workModelLabel(workModel: WorkModel | null): string {
+export function workModelLabel(workModel: WorkModel | null): string | null {
   if (workModel === 'remote') {
     return jobsCopy.workModelRemote;
   }
@@ -26,7 +26,15 @@ export function workModelLabel(workModel: WorkModel | null): string {
     return jobsCopy.workModelOnsite;
   }
 
-  return jobsCopy.workModelUnknown;
+  return null;
+}
+
+export function jobCardScheduleLabel(
+  workModel: WorkModel | null,
+  dateLabel: string,
+): string {
+  const model = workModelLabel(workModel);
+  return model ? `${model} · ${dateLabel}` : dateLabel;
 }
 
 export function isSourceFilter(id: string): id is JobSourceId | 'all' {

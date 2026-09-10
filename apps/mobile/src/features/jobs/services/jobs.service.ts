@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import { ApiClientError, apiGet, apiPatch } from '@/lib/api-client';
 
 import type { JobDetail, JobListItem } from '../types/job.types';
+import type { JobsFeedQuery } from '../utils/jobs-feed-query';
 import { jobDetailSchema, jobListItemSchema, jobListResponseSchema } from '../validation/job.schema';
 
 export class JobsServiceError extends Error {
@@ -64,44 +65,62 @@ function mapJobDetail(parsed: ReturnType<typeof jobDetailSchema.parse>): JobDeta
   };
 }
 
-export async function listJobs(
-  options: {
-    matchedOnly?: boolean;
-    savedSearchId?: string | 'all';
-  } = {},
-): Promise<{
+export type JobListFeed = {
   items: JobListItem[];
   lastDiscoveryAt: string | null;
   totalCount: number;
   savedSearchCounts: readonly { id: string; count: number }[];
+  savedSearchAllCount: number;
+  sourceCounts: {
+    all: number;
+    linkedin: number;
+    kariyer_net: number;
+  };
   verifiedMatchCount: number;
   unverifiedMatchCount: number;
-}> {
-  const matchedOnly = options.matchedOnly ?? true;
-  const savedSearchId =
-    options.savedSearchId && options.savedSearchId !== 'all'
-      ? options.savedSearchId
-      : undefined;
+  allMatchCount: number;
+};
+
+export async function listJobs(
+  options: JobsFeedQuery = { matchedOnly: true },
+): Promise<JobListFeed> {
   try {
     const params = new URLSearchParams({
       limit: '200',
-      matchedOnly: matchedOnly ? 'true' : 'false',
+      matchedOnly: options.matchedOnly ? 'true' : 'false',
     });
-    if (savedSearchId) {
-      params.set('savedSearchId', savedSearchId);
+    if (options.savedSearchId) {
+      params.set('savedSearchId', options.savedSearchId);
+    }
+    if (options.sourceId) {
+      params.set('sourceId', options.sourceId);
+    }
+    if (options.matchStatus) {
+      params.set('matchStatus', options.matchStatus);
     }
 
     const payload = jobListResponseSchema.parse(
       await apiGet(`/v1/jobs?${params.toString()}`),
     );
     const items = payload.items.map(mapJobListItem);
+    const verifiedMatchCount = payload.verifiedMatchCount ?? 0;
+    const unverifiedMatchCount = payload.unverifiedMatchCount ?? 0;
     return {
       items,
       lastDiscoveryAt: payload.lastDiscoveryAt ?? null,
       totalCount: payload.totalCount ?? items.length,
       savedSearchCounts: payload.savedSearchCounts ?? [],
-      verifiedMatchCount: payload.verifiedMatchCount ?? 0,
-      unverifiedMatchCount: payload.unverifiedMatchCount ?? 0,
+      savedSearchAllCount:
+        payload.savedSearchAllCount ?? payload.totalCount ?? items.length,
+      sourceCounts: payload.sourceCounts ?? {
+        all: items.length,
+        linkedin: items.filter((item) => item.sourceId === 'linkedin').length,
+        kariyer_net: items.filter((item) => item.sourceId === 'kariyer_net').length,
+      },
+      verifiedMatchCount,
+      unverifiedMatchCount,
+      allMatchCount:
+        payload.allMatchCount ?? verifiedMatchCount + unverifiedMatchCount,
     };
   } catch (error) {
     throw toServiceError(error);

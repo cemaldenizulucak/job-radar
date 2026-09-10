@@ -6,18 +6,27 @@ import { describe, expect, it } from 'vitest';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 
-describe('JobsScreen match tabs', () => {
-  it('splits verified and possible matches into separate tabs with user counts', () => {
+describe('JobsScreen listing layout', () => {
+  it('uses scoped API counters and a compact filter layout', () => {
     const source = readFileSync(join(dir, 'jobs-screen.tsx'), 'utf8');
 
     expect(source).toContain("id: 'matched'");
     expect(source).toContain("id: 'possible'");
+    expect(source).toContain("id: 'all'");
     expect(source).toContain('matchResultsTabLabel');
+    expect(source).toContain('sourceFilterLabel');
     expect(source).toContain('verifiedMatchCount');
     expect(source).toContain('unverifiedMatchCount');
-    expect(source).toContain("return 'verified'");
-    expect(source).toContain("resultsView !== 'all'");
-    expect(source).toContain('filterJobs(items, sourceId, selectedSearchId, matchStatus)');
+    expect(source).toContain('allMatchCount');
+    expect(source).toContain('savedSearchAllCount');
+    expect(source).toContain('sourceCounts');
+    expect(source).toContain('SavedSearchSelector');
+    expect(source).toContain('clearListingFilters');
+    expect(source).toContain('possibleMatchesExplainer');
+    expect(source).toContain('countsReady');
+    expect(source).not.toContain('SummaryPill');
+    expect(source).not.toContain('summaryTotal');
+    expect(source).not.toContain('filterJobs(');
     expect(source).not.toContain('açıklamada geçiyor');
   });
 });

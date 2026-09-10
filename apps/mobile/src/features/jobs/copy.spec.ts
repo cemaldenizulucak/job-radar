@@ -33,7 +33,18 @@ describe('jobsEmptyMessage', () => {
   it('uses the filter empty copy when a search tab has no visible jobs', () => {
     expect(
       jobsEmptyMessage({ itemCount: 4, visibleCount: 0, resultsView: 'matched' }),
-    ).toBe('Bu filtre için henüz eşleşen ilan yok.');
+    ).toBe('Seçili filtrelerle eşleşen ilan yok.');
+  });
+
+  it('explains an empty filtered result even when the tab itself has jobs', () => {
+    expect(
+      jobsEmptyMessage({
+        itemCount: 0,
+        visibleCount: 0,
+        resultsView: 'matched',
+        hasActiveFilters: true,
+      }),
+    ).toBe('Seçili filtrelerle eşleşen ilan yok.');
   });
 
   it('does not show an empty-match message while discovery is still running', () => {
@@ -46,12 +57,36 @@ describe('jobsEmptyMessage', () => {
       }),
     ).toBeNull();
   });
+
+  it('keeps loading and error distinct from zero results', () => {
+    expect(
+      jobsEmptyMessage({
+        itemCount: 0,
+        visibleCount: 0,
+        resultsView: 'matched',
+        isLoading: true,
+      }),
+    ).toBeNull();
+    expect(
+      jobsEmptyMessage({
+        itemCount: 0,
+        visibleCount: 0,
+        resultsView: 'matched',
+        hasError: true,
+      }),
+    ).toBeNull();
+  });
 });
 
 describe('matchResultsTabLabel', () => {
   it('puts the user-specific count in the tab title', () => {
-    expect(matchResultsTabLabel('matched', 12)).toBe('Eşleşen İlanlar (12)');
-    expect(matchResultsTabLabel('possible', 3)).toBe('Olası Eşleşmeler (3)');
+    expect(matchResultsTabLabel('matched', 12)).toBe('Eşleşen (12)');
+    expect(matchResultsTabLabel('possible', 3)).toBe('Olası (3)');
+    expect(matchResultsTabLabel('all', 65)).toBe('Tüm sonuçlar (65)');
+  });
+
+  it('omits counts while a new filter scope is loading', () => {
+    expect(matchResultsTabLabel('matched', null)).toBe('Eşleşen');
   });
 });
 

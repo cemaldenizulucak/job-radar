@@ -4,6 +4,12 @@ import { jobsCopy, jobsUiError } from '../copy';
 import { getJob, listJobs, markJobSeen } from '../services/jobs.service';
 import { useJobsSeenStore } from '../stores/jobs-seen.store';
 import type { JobDetail, JobListItem } from '../types/job.types';
+import {
+  isCurrentFeedRequest,
+  jobsFeedFilterKey,
+  jobsFeedQueryFromFilters,
+  type JobsFeedFilters,
+} from '../utils/jobs-feed-query';
 
 function toFeedError(error: unknown): string {
   return jobsUiError(error, jobsCopy.feedError);
@@ -13,22 +19,47 @@ function toJobError(error: unknown): string {
   return jobsUiError(error, jobsCopy.jobNotFound);
 }
 
+export type JobsFeedCounts = {
+  totalCount: number;
+  savedSearchCounts: readonly { id: string; count: number }[];
+  savedSearchAllCount: number;
+  sourceCounts: {
+    all: number;
+    linkedin: number;
+    kariyer_net: number;
+  };
+  verifiedMatchCount: number;
+  unverifiedMatchCount: number;
+  allMatchCount: number;
+};
+
+const EMPTY_COUNTS: JobsFeedCounts = {
+  totalCount: 0,
+  savedSearchCounts: [],
+  savedSearchAllCount: 0,
+  sourceCounts: { all: 0, linkedin: 0, kariyer_net: 0 },
+  verifiedMatchCount: 0,
+  unverifiedMatchCount: 0,
+  allMatchCount: 0,
+};
+
 export function useJobs(
   userId: string | undefined,
-  matchedOnly = true,
-  savedSearchId: string | 'all' = 'all',
+  resultsView: JobsFeedFilters['resultsView'] = 'all',
+  sourceId: JobsFeedFilters['sourceId'] = 'all',
+  savedSearchId: JobsFeedFilters['savedSearchId'] = 'all',
 ) {
   const [items, setItems] = useState<JobListItem[]>([]);
   const [lastDiscoveryAt, setLastDiscoveryAt] = useState<string | null>(null);
-  const [totalCount, setTotalCount] = useState(0);
-  const [savedSearchCounts, setSavedSearchCounts] = useState<
-    readonly { id: string; count: number }[]
-  >([]);
-  const [verifiedMatchCount, setVerifiedMatchCount] = useState(0);
-  const [unverifiedMatchCount, setUnverifiedMatchCount] = useState(0);
+  const [counts, setCounts] = useState<JobsFeedCounts>(EMPTY_COUNTS);
+  const [loadedFilterKey, setLoadedFilterKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const seenUserIdRef = useRef(userId);
+  const requestIdRef = useRef(0);
+  const filters: JobsFeedFilters = { resultsView, sourceId, savedSearchId };
+  const filterKey = jobsFeedFilterKey(filters);
+  const countsReady = loadedFilterKey === filterKey;
 
   useEffect(() => {
     if (seenUserIdRef.current === userId) {
@@ -40,13 +71,15 @@ export function useJobs(
   }, [userId]);
 
   const refetch = useCallback(async (options?: { silent?: boolean }) => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const nextFilterKey = jobsFeedFilterKey(filters);
+
     if (!userId) {
       setItems([]);
       setLastDiscoveryAt(null);
-      setTotalCount(0);
-      setSavedSearchCounts([]);
-      setVerifiedMatchCount(0);
-      setUnverifiedMatchCount(0);
+      setCounts(EMPTY_COUNTS);
+      setLoadedFilterKey(null);
       setError(jobsCopy.signedInRequired);
       setIsLoading(false);
       return;
@@ -54,23 +87,38 @@ export function useJobs(
 
     if (!options?.silent) {
       setIsLoading(true);
+      setLoadedFilterKey(null);
     }
     setError(null);
 
     try {
-      const feed = await listJobs({ matchedOnly, savedSearchId });
+      const feed = await listJobs(jobsFeedQueryFromFilters(filters));
+      if (!isCurrentFeedRequest(requestId, requestIdRef.current)) {
+        return;
+      }
       setItems(feed.items);
       setLastDiscoveryAt(feed.lastDiscoveryAt);
-      setTotalCount(feed.totalCount);
-      setSavedSearchCounts(feed.savedSearchCounts);
-      setVerifiedMatchCount(feed.verifiedMatchCount);
-      setUnverifiedMatchCount(feed.unverifiedMatchCount);
+      setCounts({
+        totalCount: feed.totalCount,
+        savedSearchCounts: feed.savedSearchCounts,
+        savedSearchAllCount: feed.savedSearchAllCount,
+        sourceCounts: feed.sourceCounts,
+        verifiedMatchCount: feed.verifiedMatchCount,
+        unverifiedMatchCount: feed.unverifiedMatchCount,
+        allMatchCount: feed.allMatchCount,
+      });
+      setLoadedFilterKey(nextFilterKey);
     } catch (caught) {
+      if (!isCurrentFeedRequest(requestId, requestIdRef.current)) {
+        return;
+      }
       setError(toFeedError(caught));
     } finally {
-      setIsLoading(false);
+      if (isCurrentFeedRequest(requestId, requestIdRef.current)) {
+        setIsLoading(false);
+      }
     }
-  }, [matchedOnly, savedSearchId, userId]);
+  }, [filters.resultsView, filters.savedSearchId, filters.sourceId, userId]);
 
   useEffect(() => {
     void refetch();
@@ -79,10 +127,14 @@ export function useJobs(
   return {
     items,
     lastDiscoveryAt,
-    totalCount,
-    savedSearchCounts,
-    verifiedMatchCount,
-    unverifiedMatchCount,
+    totalCount: counts.totalCount,
+    savedSearchCounts: counts.savedSearchCounts,
+    savedSearchAllCount: counts.savedSearchAllCount,
+    sourceCounts: counts.sourceCounts,
+    verifiedMatchCount: counts.verifiedMatchCount,
+    unverifiedMatchCount: counts.unverifiedMatchCount,
+    allMatchCount: counts.allMatchCount,
+    countsReady,
     isLoading,
     error,
     refetch,
